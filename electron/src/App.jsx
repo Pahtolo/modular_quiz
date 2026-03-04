@@ -644,15 +644,21 @@ function App() {
                 </button>
               </div>
               <QuizTree nodes={quizTreeRoots} selectedPath={selectedQuizPath} onSelect={setSelectedQuizPath} />
-              <button type="button" className="primary" disabled={!selectedQuizPath} onClick={() => startSelectedQuiz()}>
-                Start Selected Quiz
-              </button>
             </aside>
 
             <section className="card quiz-card">
               <div className="row between">
                 <h2>{quiz ? quiz.title : 'Quiz'}</h2>
                 <div className="score">{quiz ? `Score: ${quizScore}/${maxScore}` : 'No quiz loaded'}</div>
+              </div>
+
+              <div className="row between quiz-start-row">
+                <div className="selected-quiz-label">
+                  <strong>Selected quiz:</strong> {selectedQuizPath ? selectedQuizPath.split('/').slice(-1)[0] : 'None'}
+                </div>
+                <button type="button" className="primary" disabled={!selectedQuizPath} onClick={() => startSelectedQuiz()}>
+                  Start Selected Quiz
+                </button>
               </div>
 
               <label className="field">
