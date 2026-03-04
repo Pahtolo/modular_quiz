@@ -1,0 +1,55 @@
+{
+  "name": "modular-quiz-electron",
+  "version": "0.1.0",
+  "description": "Electron + React frontend for Modular Quiz",
+  "main": "main.cjs",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
+    "build:renderer": "vite build",
+    "build:sidecar": "bash scripts/build_sidecar.sh",
+    "build": "npm run build:renderer && electron-builder --dir",
+    "dist": "npm run build:renderer && npm run build:sidecar && electron-builder"
+  },
+  "dependencies": {
+    "katex": "^0.16.25",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.2.1",
+    "electron": "^34.5.8",
+    "electron-builder": "^26.0.20",
+    "vite": "^6.2.0",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.modularquiz.app",
+    "productName": "Modular Quiz",
+    "asar": true,
+    "afterPack": "scripts/afterPack.cjs",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "renderer/dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/backend/modular-quiz-api",
+        "to": "backend/modular-quiz-api"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "identity": null,
+      "category": "public.app-category.education"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+
+# Electron
+/electron/node_modules/
+/electron/renderer/dist/
+/electron/dist/
+/electron/build/
+
+# Python envs
+.venv/
+venv/

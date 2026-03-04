@@ -1,0 +1,130 @@
+{
+  "title": "Growth of Functions Quiz (Warmup)",
+  "instructions": "Answer each question. MCQs are auto-graded. Short answers are graded by Claude (default) or self-grading.",
+  "questions": [
+    {
+      "id": "Q1",
+      "type": "mcq",
+      "prompt": "Big-O notation gives a(n):",
+      "options": [
+        "Exact running time in seconds",
+        "Asymptotic upper bound",
+        "Lower bound only",
+        "Average-case only"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q2",
+      "type": "mcq",
+      "prompt": "If $T(n)=O(g(n))$ and $T(n)=\\Omega(g(n))$, then $T(n)=$:",
+      "options": [
+        "$o(g(n))$",
+        "$\\Theta(g(n))$",
+        "$O(1)$",
+        "$2^{g(n)}$"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q3",
+      "type": "mcq",
+      "prompt": "Which grows faster for sufficiently large $n$?",
+      "options": [
+        "$\\log n$",
+        "$n$",
+        "same growth always",
+        "depends on constant factors forever"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q4",
+      "type": "mcq",
+      "prompt": "Simplify $O(n^2 + n + 1)$:",
+      "options": [
+        "$O(n)$",
+        "$O(n^2)$",
+        "$O(n^3)$",
+        "$O(\\log n)$"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q5",
+      "type": "mcq",
+      "prompt": "A single loop from $1..n$ with $O(1)$ body is:",
+      "options": [
+        "$O(1)$",
+        "$O(\\log n)$",
+        "$O(n)$",
+        "$O(n^2)$"
+      ],
+      "answer": "C"
+    },
+    {
+      "id": "Q6",
+      "type": "mcq",
+      "prompt": "Two nested loops each running $n$ times usually give:",
+      "options": [
+        "$O(n)$",
+        "$O(n \\log n)$",
+        "$O(n^2)$",
+        "$O(2^n)$"
+      ],
+      "answer": "C"
+    },
+    {
+      "id": "Q7",
+      "type": "mcq",
+      "prompt": "Recursive factorial uses $O(n)$ extra space mainly because of:",
+      "options": [
+        "input array",
+        "recursion call stack",
+        "hash table",
+        "adjacency matrix"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q8",
+      "type": "mcq",
+      "prompt": "For Maximum Subsequence Sum, the linear-time method is commonly:",
+      "options": [
+        "Merge's method",
+        "Kadane-style one-pass update",
+        "Binary search on sums",
+        "Floyd-Warshall"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q9",
+      "type": "short",
+      "prompt": "In 1-2 sentences, explain the difference between $O(g(n))$ and $\\Theta(g(n))$.",
+      "expected": "$O(g(n))$ says $T(n)$ grows no faster than a constant multiple of $g(n)$; $\\Theta(g(n))$ says $T(n)$ grows at the same asymptotic rate (both upper and lower bounded by $g(n)$).",
+      "points": 2
+    },
+    {
+      "id": "Q10",
+      "type": "short",
+      "prompt": "Determine the asymptotic runtime: $3n^2 + 7n + 20$.",
+      "expected": "$\\Theta(n^2)$.",
+      "points": 2
+    },
+    {
+      "id": "Q11",
+      "type": "short",
+      "prompt": "Suppose an algorithm does $O(n)$ preprocessing, then an $O(n^2)$ phase. What is total asymptotic runtime and why?",
+      "expected": "$O(n^2)$. The sum $O(n)+O(n^2)$ is dominated by the larger term.",
+      "points": 2
+    },
+    {
+      "id": "Q12",
+      "type": "short",
+      "prompt": "For array [-2, 11, -4, 13, -5, -2], what is the maximum subsequence sum?",
+      "expected": "20, achieved by subsequence [11, -4, 13].",
+      "points": 2
+    }
+  ]
+}

@@ -1,0 +1,396 @@
+{
+  "title": "Machine Vision Lecture 3 Quiz: Image Enhancement and Spatial Filtering",
+  "instructions": "Answer all 30 multiple-choice questions. Select the best single answer for each item.",
+  "questions": [
+    {
+      "id": "Q1",
+      "type": "mcq",
+      "prompt": "Which best captures the main purpose of image enhancement in machine vision?",
+      "options": [
+        "To replace segmentation with classification.",
+        "To improve image quality or interpretability before downstream tasks.",
+        "To convert all images to binary format.",
+        "To guarantee real-time performance on any hardware."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q2",
+      "type": "mcq",
+      "prompt": "What is the key distinction between spatial-domain and frequency-domain enhancement?",
+      "options": [
+        "Spatial methods use color images only, while frequency methods use grayscale only.",
+        "Spatial methods operate directly on pixels, while frequency methods operate after a transform.",
+        "Spatial methods are nonlinear only, while frequency methods are linear only.",
+        "Spatial methods require larger kernels than frequency methods."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q3",
+      "type": "mcq",
+      "prompt": "In Lecture 3, the unified spatial enhancement framework is written as:",
+      "options": [
+        "$f(x,y)=T[g(x,y)]$",
+        "$T(x,y)=f(x,y)+g(x,y)$",
+        "$g(x,y)=T[f(x,y)]$",
+        "$g(x,y)=f(x,y)-T$"
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q4",
+      "type": "mcq",
+      "prompt": "A point processing operation is characterized by:",
+      "options": [
+        "Using only the current pixel intensity to produce output at that location.",
+        "Using a Fourier transform on $8\\times 8$ blocks.",
+        "Using a neighborhood that is always at least $3\\times 3$.",
+        "Combining histogram equalization with Sobel filtering."
+      ],
+      "answer": "A",
+      "points": 1
+    },
+    {
+      "id": "Q5",
+      "type": "mcq",
+      "prompt": "For normalized intensity in $[0,1]$, the negative transformation is:",
+      "options": [
+        "$s = r^2$",
+        "$s = \\log(1+r)$",
+        "$s = 1 - r$",
+        "$s = \\frac{r}{1+r}$"
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q6",
+      "type": "mcq",
+      "prompt": "Thresholding is primarily used to:",
+      "options": [
+        "Estimate gradient orientation.",
+        "Perform binary segmentation into foreground and background.",
+        "Compute local variance maps.",
+        "Generate Gaussian kernels."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q7",
+      "type": "mcq",
+      "prompt": "Which family of point transforms has the form $s = c\\,\\log(1 + r)$?",
+      "options": [
+        "Linear transform",
+        "Log transform",
+        "Affine geometric transform",
+        "Median transform"
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q8",
+      "type": "mcq",
+      "prompt": "Why is the $+1$ included in $\\log(1+r)$?",
+      "options": [
+        "To force output values above 1.",
+        "To make the transform invertible only for integer images.",
+        "To avoid the undefined $\\log(0)$ at $r=0$.",
+        "To guarantee histogram flattening."
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q9",
+      "type": "mcq",
+      "prompt": "The log transform is especially useful when an image has:",
+      "options": [
+        "Very low dynamic range only.",
+        "A wide dynamic range with large high-intensity values dominating display.",
+        "Only salt-and-pepper noise.",
+        "Noisy boundaries after segmentation."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q10",
+      "type": "mcq",
+      "prompt": "The power-law (gamma) transformation is:",
+      "options": [
+        "$s = c\\,r^{\\gamma}$",
+        "$s = c + \\gamma r$",
+        "$s = \\frac{\\gamma}{r + c}$",
+        "$s = c\\,\\exp(\\gamma r)$"
+      ],
+      "answer": "A",
+      "points": 1
+    },
+    {
+      "id": "Q11",
+      "type": "mcq",
+      "prompt": "For $\\gamma < 1$ in a power-law transform, the typical visual effect is:",
+      "options": [
+        "Darkening of midtones and shadows.",
+        "No perceptual change.",
+        "Brightening, especially in darker ranges.",
+        "Only edge sharpening."
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q12",
+      "type": "mcq",
+      "prompt": "For $\\gamma > 1$ in a power-law transform, the typical visual effect is:",
+      "options": [
+        "Brightening of dark tones.",
+        "Darkening due to compression of brighter intensities.",
+        "Binary thresholding.",
+        "Uniform histogram output by definition."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q13",
+      "type": "mcq",
+      "prompt": "Most consumer displays are modeled with approximately which $\\gamma$?",
+      "options": [
+        "0.45",
+        "1.0",
+        "2.2",
+        "4.0"
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q14",
+      "type": "mcq",
+      "prompt": "To compensate a display gamma near $2.2$, image pre-correction typically uses gamma near:",
+      "options": [
+        "2.2",
+        "0.45",
+        "1.8",
+        "0.1"
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q15",
+      "type": "mcq",
+      "prompt": "Contrast stretching mainly aims to:",
+      "options": [
+        "Remove isolated impulse noise by sorting.",
+        "Expand a narrow intensity range to improve visible contrast.",
+        "Estimate object connectivity.",
+        "Compute first derivatives in x and y."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q16",
+      "type": "mcq",
+      "prompt": "In gray-level slicing, the preserving variant differs from binary slicing because it:",
+      "options": [
+        "Keeps non-target pixels at their original values.",
+        "Always sets all non-target pixels to white.",
+        "Works only on color channels independently.",
+        "Requires a Fourier magnitude image."
+      ],
+      "answer": "A",
+      "points": 1
+    },
+    {
+      "id": "Q17",
+      "type": "mcq",
+      "prompt": "In 8-bit bit-plane slicing, which planes usually carry most coarse visual structure?",
+      "options": [
+        "Least significant planes (bits 0-2).",
+        "Middle planes only (bits 3-4).",
+        "Most significant planes (bits 5-7).",
+        "All planes carry exactly equal visual significance."
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q18",
+      "type": "mcq",
+      "prompt": "A common reason to hide data in the least significant bit plane is that it:",
+      "options": [
+        "Guarantees cryptographic security.",
+        "Usually causes little visible distortion.",
+        "Improves edge localization.",
+        "Eliminates shot noise."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q19",
+      "type": "mcq",
+      "prompt": "For discrete levels $r_k$, the histogram is defined as:",
+      "options": [
+        "$h(r_k) = \\frac{r_k}{n}$",
+        "$h(r_k) = n_k$",
+        "$h(r_k) = \\sum_j p(r_j)$",
+        "$h(r_k) = \\log(r_k)$"
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q20",
+      "type": "mcq",
+      "prompt": "The normalized histogram (PMF) is:",
+      "options": [
+        "$p(r_k) = \\frac{n_k}{n}$",
+        "$p(r_k) = \\frac{n}{n_k}$",
+        "$p(r_k) = \\frac{r_k}{L}$",
+        "$p(r_k) = r_k^2$"
+      ],
+      "answer": "A",
+      "points": 1
+    },
+    {
+      "id": "Q21",
+      "type": "mcq",
+      "prompt": "If a histogram has two strong peaks separated by a valley, the valley is often used as:",
+      "options": [
+        "A sharpening coefficient.",
+        "A threshold candidate for segmentation.",
+        "A Sobel orientation estimate.",
+        "A Laplacian sign convention."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q22",
+      "type": "mcq",
+      "prompt": "Histogram equalization maps intensities using the:",
+      "options": [
+        "Inverse FFT magnitude.",
+        "Local gradient direction.",
+        "Cumulative distribution function (CDF).",
+        "Median absolute deviation."
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q23",
+      "type": "mcq",
+      "prompt": "Local (adaptive) enhancement differs from global equalization because it computes mapping from:",
+      "options": [
+        "A fixed image-wide lookup table only.",
+        "A neighborhood around each pixel.",
+        "Only edge pixels from Sobel output.",
+        "Only histogram bins with high counts."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q24",
+      "type": "mcq",
+      "prompt": "Which filter is most robust to salt-and-pepper noise while preserving edges?",
+      "options": [
+        "Averaging (box) filter",
+        "Median filter",
+        "High-boost filter",
+        "Laplacian filter"
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q25",
+      "type": "mcq",
+      "prompt": "A key property of smoothing (lowpass) linear filters is that kernel coefficients:",
+      "options": [
+        "Sum to 0.",
+        "Sum to 1.",
+        "Must all be negative.",
+        "Must be asymmetric."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q26",
+      "type": "mcq",
+      "prompt": "In a typical $3\\times 3$ Gaussian approximation, the center coefficient is:",
+      "options": [
+        "$\\frac{1}{16}$",
+        "$\\frac{2}{16}$",
+        "$\\frac{4}{16}$",
+        "$\\frac{8}{16}$"
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q27",
+      "type": "mcq",
+      "prompt": "Convolution differs from correlation mainly because convolution:",
+      "options": [
+        "Uses only odd-sized kernels.",
+        "Rotates the kernel by 180 degrees before sliding.",
+        "Cannot be implemented in spatial domain.",
+        "Always produces complex-valued output."
+      ],
+      "answer": "B",
+      "points": 1
+    },
+    {
+      "id": "Q28",
+      "type": "mcq",
+      "prompt": "When do correlation and convolution produce identical results?",
+      "options": [
+        "When the filter kernel is symmetric under 180-degree rotation.",
+        "When image size is a power of two.",
+        "Only for $1\\times 1$ kernels.",
+        "Only when zero padding is used."
+      ],
+      "answer": "A",
+      "points": 1
+    },
+    {
+      "id": "Q29",
+      "type": "mcq",
+      "prompt": "In Lecture 3, the Laplacian is described as a ______ derivative operator and is sensitive to ______.",
+      "options": [
+        "first-order; illumination gradients",
+        "first-order; blur only",
+        "second-order; noise",
+        "zeroth-order; quantization"
+      ],
+      "answer": "C",
+      "points": 1
+    },
+    {
+      "id": "Q30",
+      "type": "mcq",
+      "prompt": "For Sobel edge detection, gradient magnitude is typically computed from $G_x$ and $G_y$ as:",
+      "options": [
+        "$G = G_x + G_y$ only",
+        "$G = \\sqrt{G_x^2 + G_y^2}$ (or $|G_x|+|G_y|$ approximation)",
+        "$G = \\log(1 + G_x G_y)$",
+        "$G = \\max(G_x, G_y)$ only"
+      ],
+      "answer": "B",
+      "points": 1
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "title": "Your Quiz Title",
+  "instructions": "Optional instructions shown before questions.",
+  "questions": [
+    {
+      "id": "Q1",
+      "type": "mcq",
+      "prompt": "Your multiple-choice prompt",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "answer": "A",
+      "points": 1
+    },
+    {
+      "id": "Q2",
+      "type": "short",
+      "prompt": "Your short-answer prompt",
+      "expected": "Reference answer used by the short-answer grader.",
+      "points": 2
+    }
+  ]
+}

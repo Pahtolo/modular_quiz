@@ -1,0 +1,205 @@
+{
+  "title": "Week 2 Quiz (Thorough)",
+  "instructions": "Answer all questions. MCQs are auto-graded. Short answers are graded by Claude by default (or self mode).",
+  "questions": [
+    {
+      "id": "Q1",
+      "type": "mcq",
+      "prompt": "In the Week 2 deck, mathematical induction is used to establish:",
+      "options": [
+        "Approximate runtime on one machine.",
+        "Logical certainty of a theorem over infinitely many cases.",
+        "Memory usage for finite loops only.",
+        "Correctness of compiled source code only."
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q2",
+      "type": "mcq",
+      "prompt": "The induction proof structure presented includes:",
+      "options": [
+        "Base step + random testing.",
+        "Hypothesis only.",
+        "Basis step + inductive hypothesis/step to n+1.",
+        "Contradiction only."
+      ],
+      "answer": "C"
+    },
+    {
+      "id": "Q3",
+      "type": "mcq",
+      "prompt": "In the sum formula example, what claim is proved by induction?",
+      "options": [
+        "$1 + 2 + \\cdots + n = n^2$",
+        "$1 + 2 + \\cdots + n = \\frac{n(n+1)}{2}$",
+        "$1 + 2 + \\cdots + n = 2n$",
+        "$1 + 2 + \\cdots + n = \\frac{n(n-1)}{2}$"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q4",
+      "type": "mcq",
+      "prompt": "Which sorting algorithms are explicitly listed in Week 2?",
+      "options": [
+        "Insertion, Merge, Bubble",
+        "Selection, Heap, Quick",
+        "Radix, Bucket, Shell",
+        "Counting, TimSort, Merge"
+      ],
+      "answer": "A"
+    },
+    {
+      "id": "Q5",
+      "type": "mcq",
+      "prompt": "For insertion sort, the Week 2 slides identify best case as:",
+      "options": [
+        "reverse-sorted input",
+        "already-sorted input",
+        "random input only",
+        "all values equal only"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q6",
+      "type": "mcq",
+      "prompt": "In Week 2, insertion sort time complexities are given as:",
+      "options": [
+        "Best $O(\\log n)$, Worst $O(n)$",
+        "Best $O(n)$, Worst $O(n^2)$",
+        "Best $O(1)$, Worst $O(n)$",
+        "Best $O(n \\log n)$, Worst $O(n^2)$"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q7",
+      "type": "mcq",
+      "prompt": "Loop invariants are tied to which three properties in the insertion-sort discussion?",
+      "options": [
+        "Initialize, optimize, parallelize",
+        "Initialization, maintenance, termination",
+        "Preprocess, recurse, combine",
+        "Best, average, worst"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q8",
+      "type": "mcq",
+      "prompt": "For merge sort, the slides give best and worst time as:",
+      "options": [
+        "$O(n)$, $O(n^2)$",
+        "$O(\\log n)$, $O(n)$",
+        "$O(n \\log n)$, $O(n \\log n)$",
+        "$O(n^2)$, $O(n^2)$"
+      ],
+      "answer": "C"
+    },
+    {
+      "id": "Q9",
+      "type": "mcq",
+      "prompt": "Bubble sort complexities shown in Week 2 are:",
+      "options": [
+        "Best $O(n)$, Worst $O(n^2)$",
+        "Best $O(\\log n)$, Worst $O(n)$",
+        "Best $O(n \\log n)$, Worst $O(n^2)$",
+        "Best $O(1)$, Worst $O(n)$"
+      ],
+      "answer": "A"
+    },
+    {
+      "id": "Q10",
+      "type": "mcq",
+      "prompt": "Sequential search is most appropriate when:",
+      "options": [
+        "data is sorted and very large",
+        "data is unsorted or small",
+        "hash table is available",
+        "tree is perfectly balanced"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q11",
+      "type": "mcq",
+      "prompt": "Binary search requires:",
+      "options": [
+        "unsorted input",
+        "two-dimensional arrays only",
+        "sorted data",
+        "recursion only"
+      ],
+      "answer": "C"
+    },
+    {
+      "id": "Q12",
+      "type": "mcq",
+      "prompt": "Week 2 states binary search average/worst complexity as:",
+      "options": ["$O(n)$", "$O(\\log n)$", "$O(n \\log n)$", "$O(1)$"],
+      "answer": "B"
+    },
+    {
+      "id": "Q13",
+      "type": "mcq",
+      "prompt": "For Fibonacci in Week 2, iterative vs recursive time is described as:",
+      "options": [
+        "both $O(n)$",
+        "iterative $O(\\log n)$, recursive $O(n)$",
+        "iterative $O(n)$, recursive exponential",
+        "iterative exponential, recursive $O(n)$"
+      ],
+      "answer": "C"
+    },
+    {
+      "id": "Q14",
+      "type": "mcq",
+      "prompt": "For adding array members, the Week 2 slides state:",
+      "options": [
+        "iterative $O(n)$, recursive $O(\\log n)$",
+        "both time $O(n)$, but recursive uses $O(n)$ auxiliary stack",
+        "iterative $O(n^2)$, recursive $O(n)$",
+        "both $O(1)$ auxiliary space"
+      ],
+      "answer": "B"
+    },
+    {
+      "id": "Q15",
+      "type": "short",
+      "prompt": "Explain why proving a statement for the first 10, 100, or 1000 values of $n$ is not sufficient for a universal claim over all natural numbers.",
+      "expected": "Checking finitely many cases cannot prove a claim for infinitely many natural numbers. Induction works by proving a base case and a step showing $A(n)$ implies $A(n+1)$, creating a logical chain for all $n$ in the domain."
+    },
+    {
+      "id": "Q16",
+      "type": "short",
+      "prompt": "Complete an induction outline for $1 + 2 + \\cdots + n = \\frac{n(n+1)}{2}$. Give the base case, inductive hypothesis, and key algebraic transition for $n+1$.",
+      "expected": "Base case: verify formula at the starting $n$ (class showed $n=0$). Hypothesis: assume true for $n$. Step: $1+\\cdots+n+(n+1) = \\frac{n(n+1)}{2} + (n+1) = \\frac{(n+1)(n+2)}{2}$, which is the formula with $n+1$."
+    },
+    {
+      "id": "Q17",
+      "type": "short",
+      "prompt": "Compare sequential and binary search using required input condition, best/average/worst complexity, and one practical use-case for each.",
+      "expected": "Sequential search works on unsorted data; best $O(1)$, average/worst $O(n)$, useful for small or unsorted lists. Binary search requires sorted data; best $O(1)$, average/worst $O(\\log n)$, useful for large sorted collections."
+    },
+    {
+      "id": "Q18",
+      "type": "short",
+      "prompt": "Describe loop invariants in insertion sort and explain how initialization, maintenance, and termination support correctness.",
+      "expected": "A typical invariant is that the prefix $A[0..i-1]$ is sorted before each outer-loop iteration. Initialization establishes it at start, maintenance preserves it after inserting the next key, and termination implies the entire array is sorted."
+    },
+    {
+      "id": "Q19",
+      "type": "short",
+      "prompt": "Week 2 contrasts iterative and recursive Fibonacci. Explain why recursion becomes much slower and how auxiliary space differs.",
+      "expected": "Naive recursive Fibonacci recomputes overlapping subproblems and branches into two calls repeatedly, leading to exponential time. Iterative Fibonacci computes each term once in $O(n)$. Auxiliary space is $O(1)$ iterative versus $O(n)$ recursion stack."
+    },
+    {
+      "id": "Q20",
+      "type": "short",
+      "prompt": "Choose one Week 2 algorithm and justify which implementation style you would choose in a memory-constrained environment.",
+      "expected": "A correct response should choose a specific algorithm and justify the style with explicit space reasoning (for example iterative style when it avoids recursion stack and keeps auxiliary space near $O(1)$)."
+    }
+  ]
+}
