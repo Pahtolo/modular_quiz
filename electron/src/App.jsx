@@ -5,6 +5,7 @@ import { apiRequest, backendInfo, openPath, pickFolder, pickSourceInputs } from 
 const TABS = ['quiz', 'generate', 'settings'];
 const THEME_STORAGE_KEY = 'modular-quiz-theme';
 const QUIZ_EXIT_CONFIRM_MESSAGE = 'Are you sure you want to exit the quiz? Your progress will not be saved.';
+const MAX_INJECTED_CONTEXT_CHARS = 12000;
 const KATEX_DELIMITERS = [
   { left: '$$', right: '$$', display: true },
   { left: '$', right: '$', display: false },
@@ -90,7 +91,6 @@ function formatModelName(provider, modelId) {
 
   const rawTokens = rawId
     .replace(/[_:]/g, '-')
-    .replace(/\./g, '-')
     .split('-')
     .map((token) => token.trim())
     .filter(Boolean)
@@ -109,14 +109,18 @@ function formatModelName(provider, modelId) {
     tokens = ['openai', ...tokens];
   }
 
-  if (
-    tokens.length >= 3
-    && /^\d+$/.test(tokens[1])
-    && /^\d+$/.test(tokens[2])
-  ) {
-    const version = `${tokens[1]}.${tokens[2]}`;
-    tokens = [tokens[0], version, ...tokens.slice(3)];
+  const mergedVersionTokens = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const current = tokens[i];
+    const next = tokens[i + 1];
+    if (/^\d$/.test(current) && /^\d{1,2}$/.test(next || '')) {
+      mergedVersionTokens.push(`${current}.${next}`);
+      i += 1;
+      continue;
+    }
+    mergedVersionTokens.push(current);
   }
+  tokens = mergedVersionTokens;
 
   return tokens.map((token) => toTitleWord(token)).join(' ');
 }
@@ -150,6 +154,70 @@ function shortPathLabel(value) {
   const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '');
   const parts = normalized.split('/').filter(Boolean);
   return parts.length ? parts[parts.length - 1] : raw;
+}
+
+function normalizeQuestionId(value, fallbackIndex = 1) {
+  const raw = String(value || '').trim();
+  if (raw) {
+    return raw;
+  }
+  return `q${Math.max(1, Number(fallbackIndex) || 1)}`;
+}
+
+function isUngradedAttemptQuestion(question) {
+  const explicit = Boolean(question?.ungraded);
+  if (explicit) {
+    return true;
+  }
+  const feedback = String(question?.feedback || '').toLowerCase();
+  return feedback.includes('ungraded');
+}
+
+function historyAttemptMatchesSignature(record, signature) {
+  if (!record || !signature) {
+    return false;
+  }
+  return (
+    String(record.timestamp || '') === String(signature.timestamp || '')
+    && String(record.quiz_path || '') === String(signature.quiz_path || '')
+    && String(record.model_key || '') === String(signature.model_key || '')
+    && Number(record.score || 0) === Number(signature.score || 0)
+    && Number(record.max_score || 0) === Number(signature.max_score || 0)
+    && Number(record.duration_seconds || 0) === Number(signature.duration_seconds || 0)
+  );
+}
+
+function buildInjectedContextText(sources, maxChars = MAX_INJECTED_CONTEXT_CHARS) {
+  if (!(sources || []).length) {
+    return '';
+  }
+  const cap = Math.max(1000, Number(maxChars) || MAX_INJECTED_CONTEXT_CHARS);
+  let remaining = cap;
+  const blocks = [];
+
+  for (const source of sources || []) {
+    if (remaining <= 0) {
+      break;
+    }
+    const sourcePath = String(source?.path || '').trim();
+    const sourceName = shortPathLabel(sourcePath) || sourcePath || 'Source';
+    const content = String(source?.content || '').trim();
+    if (!content) {
+      continue;
+    }
+    const block = `Source: ${sourceName}\n${content}\n`;
+    if (block.length <= remaining) {
+      blocks.push(block);
+      remaining -= block.length;
+      continue;
+    }
+    if (remaining > 20) {
+      blocks.push(`${block.slice(0, Math.max(0, remaining - 3)).trimEnd()}...`);
+    }
+    remaining = 0;
+  }
+
+  return blocks.join('\n').trim();
 }
 
 function normalizePathText(value) {
@@ -534,6 +602,9 @@ function App() {
   const [shortAnswer, setShortAnswer] = useState('');
   const [quizNotes, setQuizNotes] = useState([]);
   const [attemptQuestions, setAttemptQuestions] = useState([]);
+  const [injectedContextText, setInjectedContextText] = useState('');
+  const [injectedContextPaths, setInjectedContextPaths] = useState([]);
+  const [generatedQuizContextsByPath, setGeneratedQuizContextsByPath] = useState({});
   const [questionStates, setQuestionStates] = useState({});
   const [questionTimeLeftMs, setQuestionTimeLeftMs] = useState(0);
   const autoAdvanceTimeoutRef = useRef(null);
@@ -564,6 +635,7 @@ function App() {
   const [historyContextIndex, setHistoryContextIndex] = useState(-1);
   const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(-1);
   const [historySortMode, setHistorySortMode] = useState('most_recent');
+  const [gradingHistoryAttempt, setGradingHistoryAttempt] = useState(false);
   const [quizSidebarMode, setQuizSidebarMode] = useState('question_nav');
   const [quizContextMenu, setQuizContextMenu] = useState({
     open: false,
@@ -673,6 +745,9 @@ function App() {
   const feedbackMode = settingsForm?.feedback_mode || settings?.feedback_mode || 'show_then_next';
   const showFeedbackOnAnswer = settingsForm?.show_feedback_on_answer ?? settings?.show_feedback_on_answer ?? feedbackMode !== 'end_only';
   const showFeedbackOnCompletion = settingsForm?.show_feedback_on_completion ?? settings?.show_feedback_on_completion ?? true;
+  const autoInjectContextEnabled = Boolean(
+    settingsForm?.auto_inject_context ?? settings?.auto_inject_context ?? false,
+  );
   const autoAdvanceEnabled = settingsForm?.auto_advance_enabled ?? settings?.auto_advance_enabled ?? feedbackMode === 'auto_advance';
   const autoAdvanceDelayMs = Math.max(
     0,
@@ -760,6 +835,23 @@ function App() {
     }
     return historyFiltered[selectedAttemptIndex];
   }, [selectedAttemptIndex, historyFiltered]);
+  const selectedAttemptUngradedIndexes = useMemo(() => {
+    if (!selectedAttempt?.questions?.length) {
+      return [];
+    }
+    const indexes = [];
+    for (let index = 0; index < selectedAttempt.questions.length; index += 1) {
+      const question = selectedAttempt.questions[index];
+      if (String(question?.question_type || '') !== 'short') {
+        continue;
+      }
+      if (!isUngradedAttemptQuestion(question)) {
+        continue;
+      }
+      indexes.push(index);
+    }
+    return indexes;
+  }, [selectedAttempt]);
 
   const generationOutputFolderOptions = useMemo(() => {
     const root = String(quizzesDir || '').trim();
@@ -817,6 +909,49 @@ function App() {
     return 'show_then_next';
   }
 
+  function updateGenerationNumberFieldDraft(fieldName, rawValue) {
+    if (!/^\d*$/.test(rawValue)) {
+      return;
+    }
+    setGenerationForm((prev) => ({
+      ...prev,
+      [fieldName]: rawValue,
+    }));
+  }
+
+  function commitGenerationNumberField(fieldName) {
+    setGenerationForm((prev) => ({
+      ...prev,
+      [fieldName]: parseNonNegativeInt(prev?.[fieldName], 0),
+    }));
+  }
+
+  function onGenerationNumberFieldKeyDown(event, fieldName) {
+    if (event.key !== 'Enter' && event.key !== 'Return') {
+      return;
+    }
+    event.preventDefault();
+    commitGenerationNumberField(fieldName);
+    event.currentTarget.blur();
+  }
+
+  function commitQuestionTimerSeconds() {
+    setSettingsForm((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return {
+        ...prev,
+        question_timer_seconds: parseNonNegativeInt(prev.question_timer_seconds, 0),
+      };
+    });
+  }
+
+  function commitAutoAdvanceDelayDraft() {
+    const normalized = String(parseNonNegativeInt(autoAdvanceDelayDraft, 0));
+    setAutoAdvanceDelayDraft(normalized);
+  }
+
   useEffect(() => {
     void boot();
   }, []);
@@ -849,6 +984,36 @@ function App() {
   }, [generationOutputFolderOptions, generationOutputSubdir, settings?.generation_output_subdir]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const refreshPreflightSummary = async () => {
+      setGenerateOutputPath('');
+      setGenerateErrors([]);
+      setGenerateWarnings([]);
+      try {
+        const sources = await collectSourcePaths({ silentIfEmpty: true });
+        if (cancelled) {
+          return;
+        }
+        if (sourceInputs.length && !sources.length) {
+          setGenerateErrors(['No supported source files were collected.']);
+        }
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        setGenerateErrors([err.message]);
+      }
+    };
+
+    void refreshPreflightSummary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceInputs]);
+
+  useEffect(() => {
     if (!historyContextPaths.length) {
       if (historyContextIndex !== -1) {
         setHistoryContextIndex(-1);
@@ -863,6 +1028,27 @@ function App() {
   useEffect(() => {
     setSelectedAttemptIndex(-1);
   }, [historySortMode]);
+
+  useEffect(() => {
+    if (!autoInjectContextEnabled) {
+      return;
+    }
+    const activePath = normalizePathText(activeQuizPath || selectedQuizPath);
+    if (!activePath) {
+      return;
+    }
+    const cached = generatedQuizContextsByPath[activePath];
+    if (!cached?.text) {
+      return;
+    }
+    setInjectedContextText((prev) => (String(prev || '').trim() ? prev : cached.text));
+    setInjectedContextPaths((prev) => (Array.isArray(prev) && prev.length ? prev : (cached.paths || [])));
+  }, [
+    activeQuizPath,
+    autoInjectContextEnabled,
+    generatedQuizContextsByPath,
+    selectedQuizPath,
+  ]);
 
   useEffect(() => {
     if (normalizedActiveTab === activeTab) {
@@ -1273,6 +1459,8 @@ function App() {
     setShortAnswer('');
     setQuizNotes([]);
     setAttemptQuestions([]);
+    setInjectedContextText('');
+    setInjectedContextPaths([]);
     setQuestionStates({});
     setQuestionTimeLeftMs(0);
     setQuizSaved(false);
@@ -1432,6 +1620,10 @@ function App() {
       const payload = {
         ...settingsForm,
         auto_advance_ms: autoAdvanceMs,
+        question_timer_seconds: parseNonNegativeInt(
+          settingsForm.question_timer_seconds,
+          settings?.question_timer_seconds ?? 0,
+        ),
         quiz_roots: (settingsForm.quiz_roots || [])
           .map((item) => String(item).trim())
           .filter((item) => item),
@@ -1649,6 +1841,8 @@ function App() {
     try {
       const response = await apiRequest('/v1/quizzes/load', 'POST', { path: targetPath });
       const loadedQuiz = response.quiz;
+      const normalizedTargetPath = normalizePathText(targetPath);
+      const cachedContext = autoInjectContextEnabled ? generatedQuizContextsByPath[normalizedTargetPath] : null;
       setQuiz(loadedQuiz);
       setQuizIndex(0);
       setQuizScore(0);
@@ -1660,6 +1854,8 @@ function App() {
       setShortAnswer('');
       setQuizNotes([]);
       setAttemptQuestions([]);
+      setInjectedContextText(cachedContext?.text || '');
+      setInjectedContextPaths(cachedContext?.paths || []);
       setQuestionStates({});
       setQuizSaved(false);
       setActiveQuizPath(targetPath);
@@ -1699,6 +1895,7 @@ function App() {
       points_awarded: Number(result.points_awarded || 0),
       max_points: Number(result.max_points || 0),
       feedback: result.feedback || '',
+      ungraded: Boolean(result.ungraded),
     };
     const isShort = currentQuestion.type === 'short';
 
@@ -1759,6 +1956,10 @@ function App() {
       question: currentQuestion,
       user_answer: shortAnswer,
     };
+    const trimmedContext = String(injectedContextText || '').trim();
+    if (trimmedContext) {
+      body.extra_context = trimmedContext;
+    }
 
     if (selected.provider === 'self') {
       lockQuestionAfterResult(
@@ -1803,6 +2004,7 @@ function App() {
         options: currentQuestion.options,
         user_answer: mcqAnswer,
         correct_answer: currentQuestion.answer,
+        extra_context: String(injectedContextText || '').trim(),
       });
       setQuizNotes((prev) => [...prev, response.text || 'No explanation returned.']);
     } catch (err) {
@@ -1915,6 +2117,148 @@ function App() {
     void openPerformanceHistoryForQuiz(targetPath);
   }
 
+  async function injectQuizContext() {
+    const paths = await pickSourceInputs();
+    if (!paths || !paths.length) {
+      return;
+    }
+    setQuizLoadError('');
+    try {
+      const response = await apiRequest('/v1/generate/collect-sources', 'POST', { paths });
+      const sources = response.sources || [];
+      if (!sources.length) {
+        setQuizLoadError('No supported context text was extracted from the selected files.');
+        return;
+      }
+      const contextText = buildInjectedContextText(sources, MAX_INJECTED_CONTEXT_CHARS);
+      if (!contextText) {
+        setQuizLoadError('Selected context files did not contain extractable text.');
+        return;
+      }
+      setInjectedContextText(contextText);
+      setInjectedContextPaths(
+        sources
+          .map((source) => String(source?.path || '').trim())
+          .filter((item) => item),
+      );
+    } catch (err) {
+      setQuizLoadError(err.message || 'Failed to inject quiz context.');
+    }
+  }
+
+  async function gradeSelectedAttemptRetrospectively() {
+    if (gradingHistoryAttempt || !selectedAttempt) {
+      return;
+    }
+    if (!selectedAttemptUngradedIndexes.length) {
+      return;
+    }
+
+    const modelKeyValue = (settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:').trim();
+    const selectedModelValue = providerAndModelFromKey(modelKeyValue);
+    if (selectedModelValue.provider === 'self' || !selectedModelValue.model) {
+      setQuizLoadError('Select a non-self Preferred model in Settings to re-grade ungraded attempts.');
+      return;
+    }
+
+    const matchSignature = {
+      timestamp: String(selectedAttempt.timestamp || '').trim(),
+      quiz_path: String(selectedAttempt.quiz_path || activeHistoryQuizPath || '').trim(),
+      model_key: String(selectedAttempt.model_key || '').trim(),
+      score: Number(selectedAttempt.score || 0),
+      max_score: Number(selectedAttempt.max_score || 0),
+      duration_seconds: Number(selectedAttempt.duration_seconds || 0),
+    };
+    if (!matchSignature.timestamp || !matchSignature.quiz_path) {
+      setQuizLoadError('Selected attempt is missing required metadata and cannot be re-graded.');
+      return;
+    }
+
+    setGradingHistoryAttempt(true);
+    setQuizLoadError('');
+
+    try {
+      const quizResponse = await apiRequest('/v1/quizzes/load', 'POST', { path: matchSignature.quiz_path });
+      const quizQuestions = Array.isArray(quizResponse?.quiz?.questions) ? quizResponse.quiz.questions : [];
+      const quizQuestionsById = new Map();
+      for (let index = 0; index < quizQuestions.length; index += 1) {
+        const question = quizQuestions[index];
+        quizQuestionsById.set(normalizeQuestionId(question?.id, index + 1), question);
+      }
+
+      const nextQuestions = [...(selectedAttempt.questions || [])];
+      for (const questionIndex of selectedAttemptUngradedIndexes) {
+        const questionRecord = nextQuestions[questionIndex];
+        if (!questionRecord || String(questionRecord.question_type || '') !== 'short') {
+          continue;
+        }
+
+        const questionId = normalizeQuestionId(questionRecord.question_id, questionIndex + 1);
+        const loadedQuestion = quizQuestionsById.get(questionId);
+        const points = Number(loadedQuestion?.points || questionRecord.max_points || 0);
+        const expected = String(
+          loadedQuestion?.expected
+            || questionRecord.correct_answer_or_expected
+            || '',
+        );
+        const prompt = String(loadedQuestion?.prompt || '');
+        const gradePayload = {
+          provider: selectedModelValue.provider,
+          model: selectedModelValue.model,
+          question: {
+            id: questionId,
+            type: 'short',
+            prompt,
+            expected,
+            points,
+          },
+          user_answer: String(questionRecord.user_answer || ''),
+        };
+        const trimmedContext = String(injectedContextText || '').trim();
+        if (trimmedContext) {
+          gradePayload.extra_context = trimmedContext;
+        }
+        const gradeResponse = await apiRequest('/v1/grade/short', 'POST', gradePayload);
+        const result = gradeResponse?.result || {};
+        nextQuestions[questionIndex] = {
+          ...questionRecord,
+          correct_answer_or_expected: expected,
+          points_awarded: Number(result.points_awarded || 0),
+          max_points: Number(result.max_points || points),
+          feedback: String(result.feedback || ''),
+          ungraded: Boolean(result.ungraded),
+        };
+      }
+
+      const nextScore = nextQuestions.reduce((acc, question) => acc + Number(question?.points_awarded || 0), 0);
+      const nextMaxScore = Number(
+        selectedAttempt.max_score
+        || nextQuestions.reduce((acc, question) => acc + Number(question?.max_points || 0), 0),
+      );
+      const nextPercent = nextMaxScore > 0 ? (nextScore / nextMaxScore) * 100 : 0;
+      const updatedRecord = {
+        ...selectedAttempt,
+        score: nextScore,
+        max_score: nextMaxScore,
+        percent: nextPercent,
+        model_key: modelKey(selectedModelValue.provider, selectedModelValue.model),
+        questions: nextQuestions,
+      };
+
+      const updateResponse = await apiRequest('/v1/history/update', 'POST', {
+        match: matchSignature,
+        record: updatedRecord,
+      });
+      const savedRecord = updateResponse?.record || updatedRecord;
+      setHistoryRecords((prev) =>
+        prev.map((record) => (historyAttemptMatchesSignature(record, matchSignature) ? savedRecord : record)));
+    } catch (err) {
+      setQuizLoadError(err.message || 'Failed to re-grade ungraded attempt questions.');
+    } finally {
+      setGradingHistoryAttempt(false);
+    }
+  }
+
   async function importSourcesFromFinder() {
     const paths = await pickSourceInputs();
     if (!paths || !paths.length) {
@@ -1926,9 +2270,15 @@ function App() {
     setGenerateErrors([]);
   }
 
-  async function collectSourcePaths() {
+  async function collectSourcePaths({ silentIfEmpty = false } = {}) {
     if (!sourceInputs.length) {
-      setGenerateErrors(['Add source material using drag and drop or Import from Finder.']);
+      setCollectedSources([]);
+      setGenerateWarnings([]);
+      if (silentIfEmpty) {
+        setGenerateErrors([]);
+      } else {
+        setGenerateErrors(['Add source material using drag and drop or Import from Finder.']);
+      }
       return [];
     }
 
@@ -1942,20 +2292,6 @@ function App() {
     return response.sources || [];
   }
 
-  async function buildGenerationPreflight() {
-    setGenerateOutputPath('');
-    setGenerateErrors([]);
-    setGenerateWarnings([]);
-    try {
-      const sources = await collectSourcePaths();
-      if (!sources.length) {
-        setGenerateErrors(['No supported source files were collected.']);
-      }
-    } catch (err) {
-      setGenerateErrors([err.message]);
-    }
-  }
-
   async function runGeneration() {
     if (isGeneratingQuiz) {
       return;
@@ -1966,13 +2302,28 @@ function App() {
     setIsGeneratingQuiz(true);
 
     try {
+      const normalizedGenerationCounts = {
+        total: parseNonNegativeInt(generationForm.total, 0),
+        mcq_count: parseNonNegativeInt(generationForm.mcq_count, 0),
+        short_count: parseNonNegativeInt(generationForm.short_count, 0),
+        mcq_options: parseNonNegativeInt(generationForm.mcq_options, 0),
+      };
+      setGenerationForm((prev) => ({
+        ...prev,
+        ...normalizedGenerationCounts,
+      }));
+
       let sources = collectedSources;
       if (!sources.length) {
         sources = await collectSourcePaths();
       }
 
       if (!sources.length) {
-        setGenerateErrors(['No supported source files were collected.']);
+        if (!sourceInputs.length) {
+          setGenerateErrors(['Add source material using drag and drop or Import from Finder.']);
+        } else {
+          setGenerateErrors(['No supported source files were collected.']);
+        }
         return;
       }
 
@@ -1988,10 +2339,10 @@ function App() {
         sources,
         provider: selectedModel.provider,
         model: selectedModel.model,
-        total: Number(generationForm.total),
-        mcq_count: Number(generationForm.mcq_count),
-        short_count: Number(generationForm.short_count),
-        mcq_options: Number(generationForm.mcq_options),
+        total: normalizedGenerationCounts.total,
+        mcq_count: normalizedGenerationCounts.mcq_count,
+        short_count: normalizedGenerationCounts.short_count,
+        mcq_options: normalizedGenerationCounts.mcq_options,
         title_hint: generationForm.title_hint,
         instructions_hint: generationForm.instructions_hint,
         output_subdir: selectedGenerationOutputFolder?.value || '',
@@ -2000,6 +2351,21 @@ function App() {
       const result = await apiRequest('/v1/generate/run', 'POST', payload);
       setGenerateWarnings(result.warnings || []);
       setGenerateErrors(result.errors || []);
+      const generatedPath = normalizePathText(result.output_path || '');
+      const extractedMaterials = Array.isArray(result.extracted_materials) ? result.extracted_materials : [];
+      const autoContextText = buildInjectedContextText(extractedMaterials, MAX_INJECTED_CONTEXT_CHARS);
+      const autoContextPaths = extractedMaterials
+        .map((source) => String(source?.path || '').trim())
+        .filter((item) => item);
+      if (generatedPath && autoContextText) {
+        setGeneratedQuizContextsByPath((prev) => ({
+          ...prev,
+          [generatedPath]: {
+            text: autoContextText,
+            paths: autoContextPaths,
+          },
+        }));
+      }
       if (result.output_path) {
         setGenerateOutputPath(result.output_path);
       }
@@ -2029,7 +2395,13 @@ function App() {
   const settingsFilterHasMatches = [
     settingsMatches('appearance', 'theme', 'dark mode', 'light mode'),
     settingsMatches('preferred model', 'model selection', 'grading model'),
-    settingsMatches('feedback', 'show feedback on answer', 'show feedback on quiz completion'),
+    settingsMatches(
+      'feedback',
+      'show feedback on answer',
+      'show feedback on quiz completion',
+      'automatically inject context',
+      'inject context',
+    ),
     settingsMatches('auto advance', 'auto-advance', 'auto advance delay', 'question delay'),
     settingsMatches('question timer', 'timer', 'countdown'),
     settingsMatches('mcq explanations', 'explanations', 'explain'),
@@ -2045,9 +2417,14 @@ function App() {
       autoAdvanceDelayDraft,
       settingsForm.auto_advance_ms ?? settings.auto_advance_ms ?? 0,
     );
+    const normalizedQuestionTimerSeconds = parseNonNegativeInt(
+      settingsForm.question_timer_seconds,
+      settings.question_timer_seconds ?? 0,
+    );
     const nextForm = {
       ...settingsForm,
       auto_advance_ms: normalizedAutoAdvanceMs,
+      question_timer_seconds: normalizedQuestionTimerSeconds,
     };
     return JSON.stringify(nextForm) !== JSON.stringify(settings);
   }, [autoAdvanceDelayDraft, settingsForm, settings]);
@@ -2077,7 +2454,7 @@ function App() {
                 <option value="least_recent">Least recent</option>
               </select>
             </label>
-            <button type="button" onClick={() => loadHistory()}>
+            <button type="button" disabled={gradingHistoryAttempt} onClick={() => loadHistory()}>
               Refresh
             </button>
           </div>
@@ -2114,6 +2491,22 @@ function App() {
                       {formatHistoryTimestamp(selectedAttempt.timestamp)}
                     </span>
                   </div>
+                  {selectedAttemptUngradedIndexes.length ? (
+                    <div className="row performance-attempt-actions">
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={gradingHistoryAttempt}
+                        onClick={() => {
+                          void gradeSelectedAttemptRetrospectively();
+                        }}
+                      >
+                        {gradingHistoryAttempt
+                          ? 'Grading Ungraded...'
+                          : `Grade Ungraded (${selectedAttemptUngradedIndexes.length})`}
+                      </button>
+                    </div>
+                  ) : null}
                   <p>
                     {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
                   </p>
@@ -2134,7 +2527,9 @@ function App() {
                           <td><MathText as="span" className="math-text" text={question.user_answer} /></td>
                           <td><MathText as="span" className="math-text" text={question.correct_answer_or_expected} /></td>
                           <td>
-                            {question.points_awarded}/{question.max_points}
+                            {isUngradedAttemptQuestion(question)
+                              ? 'Ungraded'
+                              : `${question.points_awarded}/${question.max_points}`}
                           </td>
                         </tr>
                       ))}
@@ -2422,6 +2817,15 @@ function App() {
                     ) : null}
 
                     <div className="row">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void injectQuizContext();
+                        }}
+                      >
+                        {injectedContextPaths.length ? `Inject Context (${injectedContextPaths.length})` : 'Inject Context'}
+                      </button>
+
                       {currentQuestion.type === 'mcq' && questionResult && selectedProviderModel.provider !== 'self' ? (
                         <button type="button" onClick={() => explainCurrentMcq()}>
                           Explain
@@ -2446,6 +2850,11 @@ function App() {
                         </button>
                       ) : null}
                     </div>
+                    {injectedContextPaths.length ? (
+                      <p className="injected-context-status">
+                        Context loaded from {injectedContextPaths.length} source{injectedContextPaths.length === 1 ? '' : 's'}.
+                      </p>
+                    ) : null}
                   </div>
 
                   {showingPerformanceHistory ? (
@@ -2562,11 +2971,6 @@ function App() {
                   <li className="source-placeholder">No sources selected yet.</li>
                 )}
               </ul>
-              <div className="row">
-                <button type="button" onClick={() => buildGenerationPreflight()}>
-                  Build Preflight Summary
-                </button>
-              </div>
             </section>
 
             <section className="card">
@@ -2583,8 +2987,11 @@ function App() {
                   <span>Total</span>
                   <input
                     type="number"
-                    value={generationForm.total}
-                    onChange={(event) => setGenerationForm((prev) => ({ ...prev, total: Number(event.target.value) }))}
+                    inputMode="numeric"
+                    value={generationForm.total ?? ''}
+                    onChange={(event) => updateGenerationNumberFieldDraft('total', event.target.value)}
+                    onBlur={() => commitGenerationNumberField('total')}
+                    onKeyDown={(event) => onGenerationNumberFieldKeyDown(event, 'total')}
                   />
                 </label>
 
@@ -2592,8 +2999,11 @@ function App() {
                   <span>MCQ</span>
                   <input
                     type="number"
-                    value={generationForm.mcq_count}
-                    onChange={(event) => setGenerationForm((prev) => ({ ...prev, mcq_count: Number(event.target.value) }))}
+                    inputMode="numeric"
+                    value={generationForm.mcq_count ?? ''}
+                    onChange={(event) => updateGenerationNumberFieldDraft('mcq_count', event.target.value)}
+                    onBlur={() => commitGenerationNumberField('mcq_count')}
+                    onKeyDown={(event) => onGenerationNumberFieldKeyDown(event, 'mcq_count')}
                   />
                 </label>
 
@@ -2601,8 +3011,11 @@ function App() {
                   <span>Short</span>
                   <input
                     type="number"
-                    value={generationForm.short_count}
-                    onChange={(event) => setGenerationForm((prev) => ({ ...prev, short_count: Number(event.target.value) }))}
+                    inputMode="numeric"
+                    value={generationForm.short_count ?? ''}
+                    onChange={(event) => updateGenerationNumberFieldDraft('short_count', event.target.value)}
+                    onBlur={() => commitGenerationNumberField('short_count')}
+                    onKeyDown={(event) => onGenerationNumberFieldKeyDown(event, 'short_count')}
                   />
                 </label>
 
@@ -2610,8 +3023,11 @@ function App() {
                   <span>MCQ options</span>
                   <input
                     type="number"
-                    value={generationForm.mcq_options}
-                    onChange={(event) => setGenerationForm((prev) => ({ ...prev, mcq_options: Number(event.target.value) }))}
+                    inputMode="numeric"
+                    value={generationForm.mcq_options ?? ''}
+                    onChange={(event) => updateGenerationNumberFieldDraft('mcq_options', event.target.value)}
+                    onBlur={() => commitGenerationNumberField('mcq_options')}
+                    onKeyDown={(event) => onGenerationNumberFieldKeyDown(event, 'mcq_options')}
                   />
                 </label>
 
@@ -2654,7 +3070,11 @@ function App() {
                 <h3>Preflight Summary</h3>
                 <div className="preflight-item">
                   <strong>Source files</strong>
-                  <span>{collectedSources.length ? `${collectedSources.length} supported files ready.` : 'Not collected yet.'}</span>
+                  <span>
+                    {collectedSources.length
+                      ? `${collectedSources.length} supported files ready.`
+                      : (sourceInputs.length ? 'No supported source files detected.' : 'Add sources to build this summary automatically.')}
+                  </span>
                 </div>
                 <ul className="source-list preflight-list">
                   {collectedSources.length ? (
@@ -2664,7 +3084,7 @@ function App() {
                       </li>
                     ))
                   ) : (
-                    <li className="source-placeholder">Run "Build Preflight Summary" to list supported files.</li>
+                    <li className="source-placeholder">Supported files appear here automatically after adding sources.</li>
                   )}
                 </ul>
                 <div className="preflight-item">
@@ -2785,7 +3205,13 @@ function App() {
               ) : null}
             </div>
 
-            {settingsMatches('feedback', 'show feedback on answer', 'show feedback on quiz completion') ? (
+            {settingsMatches(
+              'feedback',
+              'show feedback on answer',
+              'show feedback on quiz completion',
+              'automatically inject context',
+              'inject context',
+            ) ? (
               <section className="settings-group">
                 <h3>Feedback</h3>
                 <div className="form-grid two-col">
@@ -2821,6 +3247,20 @@ function App() {
                     />
                     <span>Show feedback on quiz completion</span>
                   </label>
+
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(settingsForm.auto_inject_context)}
+                      onChange={(event) =>
+                        setSettingsForm((prev) => ({ ...prev, auto_inject_context: event.target.checked }))
+                      }
+                    />
+                    <span>Automatically inject context</span>
+                  </label>
+                </div>
+                <div className="settings-warning-note">
+                  Reuses source files from quiz generation as extra context for grading and explanations.
                 </div>
               </section>
             ) : null}
@@ -2868,9 +3308,14 @@ function App() {
                               }
                               setAutoAdvanceDelayDraft(next);
                             }}
-                            onBlur={() => {
-                              const normalized = String(parseNonNegativeInt(autoAdvanceDelayDraft, 0));
-                              setAutoAdvanceDelayDraft(normalized);
+                            onBlur={() => commitAutoAdvanceDelayDraft()}
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter' && event.key !== 'Return') {
+                                return;
+                              }
+                              event.preventDefault();
+                              commitAutoAdvanceDelayDraft();
+                              event.currentTarget.blur();
                             }}
                           />
                         </label>
@@ -2889,13 +3334,27 @@ function App() {
                         <input
                           type="number"
                           min={0}
-                          value={settingsForm.question_timer_seconds || 0}
-                          onChange={(event) =>
+                          inputMode="numeric"
+                          value={settingsForm.question_timer_seconds ?? ''}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            if (!/^\d*$/.test(next)) {
+                              return;
+                            }
                             setSettingsForm((prev) => ({
                               ...prev,
-                              question_timer_seconds: Math.max(0, Number(event.target.value) || 0),
-                            }))
-                          }
+                              question_timer_seconds: next,
+                            }));
+                          }}
+                          onBlur={() => commitQuestionTimerSeconds()}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'Enter' && event.key !== 'Return') {
+                              return;
+                            }
+                            event.preventDefault();
+                            commitQuestionTimerSeconds();
+                            event.currentTarget.blur();
+                          }}
                         />
                       </label>
                     ) : null}

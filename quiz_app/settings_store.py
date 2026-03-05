@@ -13,9 +13,11 @@ DEFAULT_SETTINGS_PATH = Path("settings") / "settings.json"
 FILE_MODE_PRIVATE = 0o600
 DEFAULT_CLAUDE_MODELS = [
     "claude-3-5-haiku-latest",
-    "claude-3-7-sonnet-latest",
     "claude-3-opus-latest",
 ]
+DEPRECATED_CLAUDE_MODELS = {
+    "claude-3-7-sonnet-latest",
+}
 DEFAULT_OPENAI_SCOPES = ["model.read", "response.write"]
 DEFAULT_OPENAI_OAUTH_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 DEFAULT_OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -41,6 +43,7 @@ class AppSettings:
     feedback_mode: str = "show_then_next"
     show_feedback_on_answer: bool = True
     show_feedback_on_completion: bool = True
+    auto_inject_context: bool = False
     auto_advance_enabled: bool = False
     auto_advance_ms: int = 600
     question_timer_seconds: int = 0
@@ -113,13 +116,24 @@ class SettingsStore:
             quiz_roots = [quiz_dir]
 
         claude_model = self._coerce_str(data.get("claude_model"), defaults.claude_model)
+        if claude_model in DEPRECATED_CLAUDE_MODELS:
+            claude_model = defaults.claude_model
         claude_models = self._coerce_str_list(data.get("claude_models"), fallback=defaults.claude_models, split_commas=True)
+        claude_models = [
+            model_id
+            for model_id in dict.fromkeys(claude_models)
+            if model_id and model_id not in DEPRECATED_CLAUDE_MODELS
+        ]
         if not claude_models:
             claude_models = [claude_model]
         claude_model_selected = self._coerce_str(
             data.get("claude_model_selected"),
             self._coerce_str(data.get("claude_model"), defaults.claude_model),
         )
+        if claude_model_selected in DEPRECATED_CLAUDE_MODELS:
+            claude_model_selected = ""
+        if not claude_model_selected or claude_model_selected not in claude_models:
+            claude_model_selected = claude_models[0]
 
         openai_model_selected = self._coerce_str(data.get("openai_model_selected"), defaults.openai_model_selected)
         openai_scopes = self._coerce_str_list(
@@ -136,6 +150,9 @@ class SettingsStore:
 
         short_grader = self._coerce_choice(data.get("short_grader"), ALLOWED_SHORT_GRADERS, defaults.short_grader)
         preferred_model_key = self._coerce_str(data.get("preferred_model_key"), "")
+        provider_from_key, model_from_key = self._parse_model_key(preferred_model_key)
+        if provider_from_key == "claude" and model_from_key in DEPRECATED_CLAUDE_MODELS:
+            preferred_model_key = ""
         if not self._is_valid_model_key(preferred_model_key):
             if short_grader == "openai":
                 preferred_model_key = f"openai:{openai_model_selected}"
@@ -174,6 +191,10 @@ class SettingsStore:
             feedback_mode=feedback_mode,
             show_feedback_on_answer=show_feedback_on_answer,
             show_feedback_on_completion=show_feedback_on_completion,
+            auto_inject_context=self._coerce_bool(
+                data.get("auto_inject_context"),
+                defaults.auto_inject_context,
+            ),
             auto_advance_enabled=auto_advance_enabled,
             auto_advance_ms=self._coerce_int(data.get("auto_advance_ms"), defaults.auto_advance_ms, minimum=0),
             question_timer_seconds=self._coerce_int(

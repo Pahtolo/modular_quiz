@@ -140,8 +140,8 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
- - [ ] Models like Claude Opus 4.6 are instead formatted "Claude Opus 4 6". Adjust to the correct formatting.
- - [ ] Add setting 'Automatically inject context' that automatically injects the same files as context to help the model give more accurate feedback. These files will be the same files used to generate the quiz. 
+ - [x] Models like Claude Opus 4.6 are instead formatted "Claude Opus 4 6". Adjust to the correct formatting.
+ - [x] Add setting 'Automatically inject context' that automatically injects the same files as context to help the model give more accurate feedback. These files will be the same files used to generate the quiz. 
 
 
 ### Completed Tasks
@@ -174,6 +174,8 @@ Use this file as the single source of truth for feature work across features.
 - [x] Remove 'OpenAI model selected' option
 - [x] Format preferred-model dropdown labels as human-readable model names (for example, `Claude 3 Haiku`). 
 - [x] Model options should not be formatted "Claude: claude-3-haiku-20240307". Should instead be formated "Claude 3 Haiku"
+- [x] Preserve decimal version formatting in model labels (for example, `Claude Opus 4.6`, not `Claude Opus 4 6`).
+- [x] Add `Automatically inject context` setting to reuse quiz-generation source files as grading/explanation context.
 ### Notes
 
 - _Add private notes for this feature here._
