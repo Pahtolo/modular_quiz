@@ -222,8 +222,12 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
-    minWidth: 1160,
-    minHeight: 760,
+    minWidth: 800,
+    minHeight: 520,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    fullscreenable: true,
     title: 'Modular Quiz',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

@@ -736,14 +736,24 @@ function App() {
       <main className="tab-panel">
         {activeTab === 'quiz' ? (
           <section className="quiz-layout">
-            <aside className="card tree-card">
-              <div className="row between">
-                <h2>Quizzes</h2>
-                <button type="button" onClick={() => loadQuizTree()}>
-                  Refresh
-                </button>
+            <aside className="quiz-selector-column">
+              <div className="card tree-card">
+                <div className="row between">
+                  <h2>Quizzes</h2>
+                  <button type="button" onClick={() => loadQuizTree()}>
+                    Refresh
+                  </button>
+                </div>
+                <QuizTree nodes={quizTreeRoots} selectedPath={selectedQuizPath} onSelect={setSelectedQuizPath} />
               </div>
-              <QuizTree nodes={quizTreeRoots} selectedPath={selectedQuizPath} onSelect={setSelectedQuizPath} />
+              <button
+                type="button"
+                className="primary start-quiz-column-btn"
+                disabled={!selectedQuizPath}
+                onClick={() => startSelectedQuiz()}
+              >
+                Start Selected Quiz
+              </button>
             </aside>
 
             <section className="card quiz-card">
@@ -752,13 +762,8 @@ function App() {
                 <div className="score">{quiz ? `Score: ${quizScore}/${maxScore}` : 'No quiz loaded'}</div>
               </div>
 
-              <div className="row between quiz-start-row">
-                <div className="selected-quiz-label">
-                  <strong>Selected quiz:</strong> {selectedQuizPath ? selectedQuizPath.split('/').slice(-1)[0] : 'None'}
-                </div>
-                <button type="button" className="primary" disabled={!selectedQuizPath} onClick={() => startSelectedQuiz()}>
-                  Start Selected Quiz
-                </button>
+              <div className="selected-quiz-label">
+                <strong>Selected quiz:</strong> {selectedQuizPath ? selectedQuizPath.split('/').slice(-1)[0] : 'None'}
               </div>
 
               <label className="field">

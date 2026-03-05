@@ -152,9 +152,20 @@ button:disabled {
   gap: 1rem;
 }
 
+.quiz-selector-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
 .tree-card {
-  max-height: calc(100vh - 240px);
+  max-height: calc(100vh - 300px);
+  min-height: 360px;
   overflow: auto;
+}
+
+.start-quiz-column-btn {
+  width: 100%;
 }
 
 .tree-list {
@@ -186,16 +197,12 @@ button:disabled {
   gap: 0.8rem;
 }
 
-.quiz-start-row {
+.selected-quiz-label {
+  min-width: 0;
   border: 1px dashed var(--border);
   border-radius: 12px;
   padding: 0.55rem 0.7rem;
   background: var(--surface-2);
-}
-
-.selected-quiz-label {
-  min-width: 0;
-  flex: 1;
   color: var(--ink-soft);
   white-space: nowrap;
   overflow: hidden;
