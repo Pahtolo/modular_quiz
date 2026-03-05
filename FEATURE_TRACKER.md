@@ -13,12 +13,15 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [ ] Ensure quiz generation injects `template_quiz.json` into the prompt.
-- [ ] Add prompt validation checks before quiz generation is run.
+- _No pending action items._
+
 
 ### Completed Tasks
 
-- _No completed tasks yet._
+- [x] Ensure quiz generation injects `template_quiz.json` into the prompt.
+- [x] Add prompt validation checks before quiz generation is run.
+- [x] Consolidate provider-specific quiz generation prompts into one shared prompt builder.
+- [x] Feedback now speaks directly to the learner (`you/your`) instead of speaking about the user.
 
 ### Notes
 
@@ -72,10 +75,19 @@ Use this file as the single source of truth for feature work across features.
 - [x] "A", "B", "C", and "D" on the keyboard should click A, B, C, and D, respectively.
 - [x] Remove the 'Selected quiz' element from the Quiz Navigation block.
 - [x] Remove duplicate quiz-screen preferred model dropdown; keep model selection only in Settings.
+- [x] Remove the option to self score. Questions are recorded as ungraded when no model is selected.
+- [x] Change Question Nav "Done" highlight from green to blue.
+- [x] In Question Nav, show `Correct` (green) and `Incorrect` (red) when feedback on answer is enabled.
+- [x] In Question Nav, when feedback is on quiz completion, show answered questions as `Done` (blue) until quiz completion, then switch to `Correct`/`Incorrect`.
+- [x] Once a quiz has been completed, `Finish Quiz` and `Restart Quiz` permanently replace `Next`.
+- [x] Add `See Performance History` button at quiz completion for the current quiz.
+- [x] Prompt with the same mid-quiz confirmation message when switching to a different quiz.
+- [x] Add retrospective grading action in Performance History for attempts with ungraded questions.
+- [x] Add `Inject Context` button left of `Explain`/`Next` to import supporting materials for better model feedback.
 
 ### Notes
 
-- _Add private notes for this feature here._
+- Feature to save ungraded quiz responses to be graded later
 
 ## Feature: UI/UX
 
@@ -94,7 +106,9 @@ Use this file as the single source of truth for feature work across features.
 
 ### Notes
 
-- _Add private notes for this feature here._
+- Stopwatch feature needs work; no option to stop. Timer starts when stopwatch does, users can freely swap between. 
+- Add stopwatch settings in the settings page
+- Add option for timer to stop the quiz and mark unanswered questions wrong
 
 ## Feature: Quiz Generator
 
@@ -102,12 +116,21 @@ Use this file as the single source of truth for feature work across features.
 
 - _No pending action items._
 
+
 ### Completed Tasks
 
 - [x] Add option to choose output folder for newly generated quizzes (must remain inside `Quizzes`).
 - [x] Keep only two source input options: drag and drop, and import from Finder.
 - [x] Add constrained output-folder selection for generator outputs.
 - [x] Add a preflight summary showing source files and target output folder.
+- [x] Sanitize deprecated Claude model IDs and auto-fallback to an available Claude model during generation.
+- [x] Add "Generating..." loading state and spinner while quiz generation is running.
+- [x] Remove "Open Target Folder" button from Quiz Generator UI.
+- [x] Normalize generated question IDs so blank/missing IDs are auto-filled before quiz validation.
+- [x] For uploaded items, show file names instead of full paths.
+- [x] Prevent blank Generator view by normalizing tab keys (`generator` -> `generate`) during tab switches/render.
+- [x] Build pre-flight summary automatically when sources change (no manual preflight button).
+- [x] Keep numeric fields editable while typing; only coerce empty values to `0` on blur or Enter/Return.
 
 ### Notes
 
@@ -117,7 +140,9 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [ ] Configure production HTTPS endpoint and MCP auth metadata for ChatGPT connector deployment.
+ - [ ] Models like Claude Opus 4.6 are instead formatted "Claude Opus 4 6". Adjust to the correct formatting.
+ - [ ] Add setting 'Automatically inject context' that automatically injects the same files as context to help the model give more accurate feedback. These files will be the same files used to generate the quiz. 
+
 
 ### Completed Tasks
 
@@ -136,7 +161,19 @@ Use this file as the single source of truth for feature work across features.
 - [x] Ensure `Sign in with OpenAI` completes OAuth connection and stores OAuth tokens in app settings.
 - [x] Add OpenAI OAuth client-ID validation and defaults for OpenAI OAuth endpoints.
 - [x] Scaffold MCP bridge server that maps backend quiz/settings routes into MCP tools for ChatGPT Apps integration.
-
+- [x] Remove `Sign in with OpenAI` and hide OAuth-specific OpenAI settings controls from Settings UI.
+- [x] Mask `OpenAI API key` input in Settings.
+- [x] Convert `Claude model selected` and `OpenAI model selected` settings fields from text inputs to dropdown menus.
+- [x] Make auto-advance delay editable without requiring auto-advance to be enabled first.
+- [x] Remove `Claude model selected` and `OpenAI model selected` controls from Settings.
+- [x] Apply `Preferred model` to both quiz generation and quiz feedback flows.
+- [x] Preserve the current preferred model key in Settings even when model lists refresh.
+- [x] Unable to change auto-advance delay. Ensure textfield is editable
+- [x] Ensure 'Preferred model' option includes all models for the user given the entered API keys. This option should apply to both quiz generation and quiz feedback
+- [x] Remove 'Claude model selected' option
+- [x] Remove 'OpenAI model selected' option
+- [x] Format preferred-model dropdown labels as human-readable model names (for example, `Claude 3 Haiku`). 
+- [x] Model options should not be formatted "Claude: claude-3-haiku-20240307". Should instead be formated "Claude 3 Haiku"
 ### Notes
 
 - _Add private notes for this feature here._
@@ -145,9 +182,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [ ] Remove the filter dropdown menu
-- [ ] Performance history gives users an advantage if they look at it while taking the quiz. Instead, looking at the performance history should exit the quiz and not save the user's progress
-- [ ] If the user tries to look at performance history before they've finished the quiz, prompt the user: Are you sure you want to exit the quiz? Your progress will not be saved. 
+- _No pending action items._
 
 ### Completed Tasks
 
@@ -155,6 +190,25 @@ Use this file as the single source of truth for feature work across features.
 - [x] Remove `Performance History` top tab and add right-click quiz context menu with `Rename` and `Performance History`.
 - [x] Move Performance History UI into the quiz sidebar so it replaces the quiz navigation block.
 - [x] Add `Return to quiz` button in Performance History view, shown only during an active quiz.
+- [x] Remove Performance History filter dropdown and show only attempts for the currently selected quiz history context.
+- [x] Opening Performance History during an unfinished quiz now prompts confirmation before exiting.
+- [x] Viewing Performance History now exits the current quiz session and discards unsaved progress.
+- [x] Add left/right arrow navigation across recently opened quiz histories (most recent first).
+- [x] Map left/right keyboard arrows to history context navigation when viewing Performance History.
+- [x] Remove `No quiz loaded` from the main card header.
+- [x] Skip exit confirmation when the quiz has no recorded progress.
+- [x] Show `Performance History` as the main card title when history is open and remove duplicate in-panel heading.
+- [x] Show quiz title (not filename) in history context navigation.
+- [x] Show selected session details in a right-side column instead of below the session list.
+- [x] Remove quiz-name line from each session item.
+- [x] Remove `1 of 3 (most recent first)` context text.
+- [x] Fix blank renderer page by moving Performance History derived state above keyboard-effect usage.
+- [x] Add scroll behavior so Performance History session list and detail panel stay accessible instead of clipping.
+- [x] Add explicit flex-height constraints so standalone Performance History reliably shows session/detail scroll areas.
+- [x] Replace session date label with oldest-first `Attempt #` numbering.
+- [x] Show `Attempt #`, `% correct`, and grader side-by-side in each session row.
+- [x] Add `Sort by` control to Performance History with `Most recent` and `Least recent` options.
+- [x] Show the selected attempt Date/Time at the top-right of the attempt breakdown panel.
 
 ### Notes
 
