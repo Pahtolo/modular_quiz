@@ -16,6 +16,7 @@ class QuestionAttemptRecord:
     points_awarded: int
     max_points: int
     feedback: str
+    ungraded: bool = False
 
 
 @dataclass
@@ -31,6 +32,15 @@ class AttemptRecord:
     questions: list[QuestionAttemptRecord] = field(default_factory=list)
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    normalized = str(value or "").strip().lower()
+    return normalized in {"1", "true", "yes", "y"}
+
+
 def _question_from_mapping(raw: dict[str, Any]) -> QuestionAttemptRecord:
     return QuestionAttemptRecord(
         question_id=str(raw.get("question_id", "")).strip(),
@@ -40,6 +50,7 @@ def _question_from_mapping(raw: dict[str, Any]) -> QuestionAttemptRecord:
         points_awarded=int(raw.get("points_awarded", 0) or 0),
         max_points=int(raw.get("max_points", 0) or 0),
         feedback=str(raw.get("feedback", "")).strip(),
+        ungraded=_coerce_bool(raw.get("ungraded", False)),
     )
 
 

@@ -18,7 +18,13 @@ class ProviderClient(Protocol):
 
     def list_models(self) -> List[ModelOption]: ...
 
-    def grade_short(self, question: ShortQuestion, user_answer: str, model: str | None = None) -> GradeResult: ...
+    def grade_short(
+        self,
+        question: ShortQuestion,
+        user_answer: str,
+        model: str | None = None,
+        extra_context: str | None = None,
+    ) -> GradeResult: ...
 
     def explain_mcq(
         self,
@@ -27,6 +33,21 @@ class ProviderClient(Protocol):
         user_answer: str,
         correct_answer: str,
         model: str | None = None,
+        extra_context: str | None = None,
+    ) -> str: ...
+
+    def feedback_chat(
+        self,
+        question_prompt: str,
+        question_type: str,
+        options: Sequence[str],
+        user_answer: str,
+        expected_answer: str,
+        feedback: str,
+        chat_history: Sequence[dict[str, str]],
+        user_message: str,
+        model: str | None = None,
+        extra_context: str | None = None,
     ) -> str: ...
 
     def generate_quiz(

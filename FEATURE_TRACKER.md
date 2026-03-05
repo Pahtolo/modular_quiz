@@ -55,6 +55,7 @@ Use this file as the single source of truth for feature work across features.
 - [x] Remove the "Rename" box. Renaming should be done by Right clicking the quiz
 - [x] Create a visual difference between folders and files
 - [x] Fix right-click rename flow by replacing browser prompt with in-app rename dialog.
+- [x] Ensure fresh installs start with an empty managed `Quizzes` library under userData (no bundled starter quizzes).
 ### Notes
 
 - _Add private notes for this feature here._
@@ -137,6 +138,10 @@ Use this file as the single source of truth for feature work across features.
 - [x] Prevent blank Generator view by normalizing tab keys (`generator` -> `generate`) during tab switches/render.
 - [x] Build pre-flight summary automatically when sources change (no manual preflight button).
 - [x] Keep numeric fields editable while typing; only coerce empty values to `0` on blur or Enter/Return.
+- [x] Keep one-button generation source import on Windows while supporting files and folders via smart picker mode.
+- [x] Preserve dropped folder roots for generation sources when detectable, with file fallback when not detectable.
+- [x] Add OCR fallback execution for low-text PDFs during extraction; generation now uses OCR text when available.
+- [x] Bundle generation/runtime dependencies (`pypdf`, `python-docx`, `python-pptx`) and staged OCR runtime in installer sidecars.
 
 ### Notes
 
@@ -240,6 +245,7 @@ Use this file as the single source of truth for feature work across features.
 - [x] Add full-history `Secret Scan` workflow using gitleaks as a release gate for public publishing.
 - [x] Add open-source readiness docs (`LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md`) plus README release checklist.
 - [x] Fix CI test workflow by installing backend dependencies before running unit tests.
+- [x] Add `macOS Package` workflow to build arm64 DMG release artifacts on tags/manual dispatch.
 
 ### Notes
 

@@ -13,10 +13,46 @@ const entrypoint = path.join(rootDir, 'run_api.py');
 const platform = process.platform;
 const isWindows = platform === 'win32';
 const pythonBin = process.env.PYTHON_BIN || (isWindows ? 'python' : 'python3');
+const requiredModules = [
+  'fastapi',
+  'uvicorn',
+  'httpx',
+  'mcp',
+  'jwt',
+  'pypdf',
+  'docx',
+  'pptx',
+  'PyInstaller',
+];
+
+function assertPythonModules() {
+  const probeScript = [
+    'import importlib.util',
+    `modules = ${JSON.stringify(requiredModules)}`,
+    'missing = [name for name in modules if importlib.util.find_spec(name) is None]',
+    'if missing:',
+    '    print(",".join(missing))',
+    '    raise SystemExit(1)',
+  ].join('\n');
+
+  const probe = spawnSync(pythonBin, ['-c', probeScript], { encoding: 'utf-8' });
+  if (probe.error) {
+    console.error(`Failed to execute '${pythonBin}': ${probe.error.message}`);
+    process.exit(1);
+  }
+  if (probe.status !== 0) {
+    const missingModules = String(probe.stdout || probe.stderr || '').trim();
+    console.error(`Missing required Python modules: ${missingModules || 'unknown'}`);
+    console.error('Install backend dependencies before building sidecar:');
+    console.error('  python -m pip install -r requirements-api.txt pyinstaller');
+    process.exit(1);
+  }
+}
 
 fs.mkdirSync(outDir, { recursive: true });
 fs.mkdirSync(workDir, { recursive: true });
 fs.mkdirSync(specDir, { recursive: true });
+assertPythonModules();
 
 const args = [
   '-m',

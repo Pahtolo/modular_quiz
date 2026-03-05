@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
+from .ocr import ocr_pdf
 from .types import ExtractedMaterial, SourceFile
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".pptx"}
@@ -99,16 +100,70 @@ def _extract_pptx(path: Path) -> ExtractedMaterial:
             errors=["python-pptx is not installed. Run dependency installer."],
         )
 
+    def _shape_text(shape) -> list[str]:
+        parts: list[str] = []
+
+        if hasattr(shape, "has_table") and shape.has_table:
+            table = shape.table
+            for row in table.rows:
+                for cell in row.cells:
+                    text = (cell.text or "").strip()
+                    if text:
+                        parts.append(text)
+
+        if hasattr(shape, "has_text_frame") and shape.has_text_frame:
+            text_frame = shape.text_frame
+            frame_lines = [
+                run.text.strip()
+                for paragraph in text_frame.paragraphs
+                for run in paragraph.runs
+                if run.text and run.text.strip()
+            ]
+            if frame_lines:
+                parts.extend(frame_lines)
+            else:
+                text = (text_frame.text or "").strip()
+                if text:
+                    parts.append(text)
+
+        fallback = getattr(shape, "text", "")
+        if fallback and fallback.strip():
+            parts.append(fallback.strip())
+
+        if hasattr(shape, "shapes"):
+            for nested in shape.shapes:
+                parts.extend(_shape_text(nested))
+
+        return parts
+
     try:
         prs = Presentation(str(path))
         lines: list[str] = []
         for slide_idx, slide in enumerate(prs.slides, start=1):
-            lines.append(f"Slide {slide_idx}:")
+            slide_lines: list[str] = []
             for shape in slide.shapes:
-                text = getattr(shape, "text", "")
-                if text and text.strip():
-                    lines.append(text.strip())
-        content = "\n".join(lines)
+                slide_lines.extend(_shape_text(shape))
+
+            try:
+                notes_text = (slide.notes_slide.notes_text_frame.text or "").strip()
+            except Exception:
+                notes_text = ""
+            if notes_text:
+                slide_lines.append(f"Notes: {notes_text}")
+
+            deduped: list[str] = []
+            seen: set[str] = set()
+            for line in slide_lines:
+                key = line.strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(key)
+
+            if deduped:
+                lines.append(f"Slide {slide_idx}:")
+                lines.extend(deduped)
+        content = "\n".join(lines).strip()
         return ExtractedMaterial(path=path, content=content, extracted_by="pptx")
     except Exception as exc:
         return ExtractedMaterial(path=path, extracted_by="pptx", errors=[f"PPTX extraction failed: {exc}"])
@@ -136,6 +191,23 @@ def _extract_pdf(path: Path, min_chars_for_text: int = 120) -> ExtractedMaterial
         warnings: list[str] = []
         if needs_ocr:
             warnings.append("Low PDF text extraction; OCR fallback recommended.")
+            try:
+                ocr_text, ocr_warnings = ocr_pdf(path)
+                warnings.extend(ocr_warnings)
+                normalized_ocr = (ocr_text or "").strip()
+                if normalized_ocr:
+                    merged_text = "\n\n".join(part for part in [extracted_text, normalized_ocr] if part).strip()
+                    warnings.append("OCR fallback applied to PDF content.")
+                    return ExtractedMaterial(
+                        path=path,
+                        content=merged_text,
+                        extracted_by="pdf+ocr",
+                        needs_ocr=False,
+                        warnings=warnings,
+                    )
+                warnings.append("OCR fallback completed but produced no additional text.")
+            except Exception as exc:
+                warnings.append(f"OCR fallback failed: {exc}")
         return ExtractedMaterial(
             path=path,
             content=content,

@@ -17,6 +17,31 @@ function projectRoot() {
   return path.resolve(__dirname, '..');
 }
 
+function resolveOcrRuntimeEnv() {
+  const candidateRoots = [
+    path.join(process.resourcesPath, 'backend', 'ocr-runtime'),
+    path.join(projectRoot(), 'electron', 'build', 'ocr-runtime'),
+  ];
+  for (const root of candidateRoots) {
+    if (!fs.existsSync(root)) {
+      continue;
+    }
+    const binDir = path.join(root, 'bin');
+    const tessdataDir = path.join(root, 'tessdata');
+    const env = {};
+    if (fs.existsSync(binDir)) {
+      env.OCR_BIN_DIR = binDir;
+    }
+    if (fs.existsSync(tessdataDir)) {
+      env.TESSDATA_PREFIX = tessdataDir;
+    }
+    if (Object.keys(env).length) {
+      return env;
+    }
+  }
+  return {};
+}
+
 function resolveBackendLaunch() {
   const packagedCandidates = [
     path.join(process.resourcesPath, 'backend', 'modular-quiz-api'),
@@ -124,6 +149,10 @@ async function waitForBackend(timeoutMs = 30000) {
 }
 
 async function maybeImportLegacy() {
+  if (app.isPackaged) {
+    return;
+  }
+
   const markerPath = path.join(app.getPath('userData'), 'legacy_import_v1.json');
   if (fs.existsSync(markerPath)) {
     return;
@@ -188,6 +217,7 @@ async function startBackend() {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
+      ...resolveOcrRuntimeEnv(),
       PYTHONUNBUFFERED: '1',
     },
   });
@@ -305,6 +335,47 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('dialog:pick-source-inputs', async () => {
+    if (process.platform === 'win32') {
+      const modeChoice = await dialog.showMessageBox({
+        type: 'question',
+        buttons: ['Files', 'Folder', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        title: 'Import Source Materials',
+        message: 'Choose what to import',
+        detail: 'Use Files for individual documents or Folder to recursively include all supported files.',
+      });
+      if (modeChoice.response === 2) {
+        return [];
+      }
+
+      if (modeChoice.response === 1) {
+        const folderResult = await dialog.showOpenDialog({
+          title: 'Import Source Folders',
+          properties: ['openDirectory', 'multiSelections'],
+        });
+        if (folderResult.canceled) {
+          return [];
+        }
+        return folderResult.filePaths;
+      }
+
+      const filesResult = await dialog.showOpenDialog({
+        title: 'Import Source Files',
+        properties: ['openFile', 'multiSelections'],
+        filters: [
+          {
+            name: 'Supported Files',
+            extensions: ['txt', 'md', 'pdf', 'pptx', 'docx'],
+          },
+        ],
+      });
+      if (filesResult.canceled) {
+        return [];
+      }
+      return filesResult.filePaths;
+    }
+
     const result = await dialog.showOpenDialog({
       title: 'Import Source Materials',
       properties: ['openFile', 'openDirectory', 'multiSelections'],

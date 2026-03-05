@@ -579,6 +579,8 @@ function App() {
 
   const [quizTreeRoots, setQuizTreeRoots] = useState([]);
   const [selectedQuizPath, setSelectedQuizPath] = useState('');
+  const [quizSelectorPanelTab, setQuizSelectorPanelTab] = useState('quizzes');
+  const [feedbackTabNeedsAttention, setFeedbackTabNeedsAttention] = useState(false);
   const [activeQuizPath, setActiveQuizPath] = useState('');
   const [quizSearchText, setQuizSearchText] = useState('');
   const [quizSortMode, setQuizSortMode] = useState('title_asc');
@@ -601,9 +603,14 @@ function App() {
   const [mcqAnswer, setMcqAnswer] = useState('');
   const [shortAnswer, setShortAnswer] = useState('');
   const [quizNotes, setQuizNotes] = useState([]);
+  const [feedbackChatMessages, setFeedbackChatMessages] = useState([]);
+  const [feedbackChatDraft, setFeedbackChatDraft] = useState('');
+  const [feedbackChatSending, setFeedbackChatSending] = useState(false);
+  const [feedbackChatContextKey, setFeedbackChatContextKey] = useState('');
   const [attemptQuestions, setAttemptQuestions] = useState([]);
   const [injectedContextText, setInjectedContextText] = useState('');
   const [injectedContextPaths, setInjectedContextPaths] = useState([]);
+  const [showInjectedContextPanel, setShowInjectedContextPanel] = useState(false);
   const [generatedQuizContextsByPath, setGeneratedQuizContextsByPath] = useState({});
   const [questionStates, setQuestionStates] = useState({});
   const [questionTimeLeftMs, setQuestionTimeLeftMs] = useState(0);
@@ -612,6 +619,8 @@ function App() {
   const questionStatesRef = useRef({});
   const mcqAnswerRef = useRef('');
   const shortAnswerRef = useRef('');
+  const quizNotesCountRef = useRef(0);
+  const feedbackChatEndRef = useRef(null);
 
   const [sourceInputs, setSourceInputs] = useState([]);
   const [collectedSources, setCollectedSources] = useState([]);
@@ -1013,6 +1022,29 @@ function App() {
     };
   }, [sourceInputs]);
 
+  const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
+  const feedbackChatSeedText = String(latestQuizNote || '').trim();
+  const feedbackChatSeedKey = `${String(currentQuestion?.id || `q${quizIndex + 1}`)}:${feedbackChatSeedText}`;
+
+  useEffect(() => {
+    const previousCount = Number(quizNotesCountRef.current || 0);
+    const nextCount = Number(quizNotes.length || 0);
+    if (nextCount > previousCount && quizSelectorPanelTab !== 'feedback') {
+      setFeedbackTabNeedsAttention(true);
+    }
+    quizNotesCountRef.current = nextCount;
+  }, [quizNotes.length, quizSelectorPanelTab]);
+
+  useEffect(() => {
+    if (quizSelectorPanelTab !== 'feedback') {
+      return;
+    }
+    if (!feedbackTabNeedsAttention) {
+      return;
+    }
+    setFeedbackTabNeedsAttention(false);
+  }, [feedbackTabNeedsAttention, quizSelectorPanelTab]);
+
   useEffect(() => {
     if (!historyContextPaths.length) {
       if (historyContextIndex !== -1) {
@@ -1049,6 +1081,45 @@ function App() {
     generatedQuizContextsByPath,
     selectedQuizPath,
   ]);
+
+  useEffect(() => {
+    if (!feedbackChatSeedText) {
+      if (feedbackChatMessages.length || feedbackChatDraft || feedbackChatContextKey) {
+        setFeedbackChatMessages([]);
+        setFeedbackChatDraft('');
+        setFeedbackChatContextKey('');
+      }
+      return;
+    }
+    if (feedbackChatContextKey === feedbackChatSeedKey) {
+      return;
+    }
+    setFeedbackChatMessages([{ role: 'assistant', text: feedbackChatSeedText }]);
+    setFeedbackChatDraft('');
+    setFeedbackChatContextKey(feedbackChatSeedKey);
+  }, [
+    feedbackChatContextKey,
+    feedbackChatDraft,
+    feedbackChatMessages.length,
+    feedbackChatSeedKey,
+    feedbackChatSeedText,
+  ]);
+
+  useEffect(() => {
+    if (!feedbackChatEndRef.current) {
+      return;
+    }
+    feedbackChatEndRef.current.scrollIntoView({ block: 'end' });
+  }, [feedbackChatMessages, feedbackChatSending]);
+
+  useEffect(() => {
+    if (injectedContextPaths.length) {
+      return;
+    }
+    if (showInjectedContextPanel) {
+      setShowInjectedContextPanel(false);
+    }
+  }, [injectedContextPaths.length, showInjectedContextPanel]);
 
   useEffect(() => {
     if (normalizedActiveTab === activeTab) {
@@ -1458,9 +1529,14 @@ function App() {
     setMcqAnswer('');
     setShortAnswer('');
     setQuizNotes([]);
+    setFeedbackChatMessages([]);
+    setFeedbackChatDraft('');
+    setFeedbackChatSending(false);
+    setFeedbackChatContextKey('');
     setAttemptQuestions([]);
     setInjectedContextText('');
     setInjectedContextPaths([]);
+    setShowInjectedContextPanel(false);
     setQuestionStates({});
     setQuestionTimeLeftMs(0);
     setQuizSaved(false);
@@ -1707,9 +1783,47 @@ function App() {
 
   function droppedSourcePaths(event) {
     const files = Array.from(event?.dataTransfer?.files || []);
-    return [...new Set(files
+    const filePaths = [...new Set(files
       .map((file) => (typeof file.path === 'string' ? file.path.trim() : ''))
-      .filter((path) => path))];
+      .filter((pathValue) => pathValue))];
+
+    const inferredFolderRoots = [...new Set(
+      files
+        .map((file) => {
+          const absolutePath = normalizePathText(file?.path || '');
+          const relativePath = normalizePathText(file?.webkitRelativePath || '');
+          if (!absolutePath || !relativePath || !relativePath.includes('/')) {
+            return '';
+          }
+          const suffix = `/${relativePath}`;
+          if (!absolutePath.toLowerCase().endsWith(suffix.toLowerCase())) {
+            return '';
+          }
+          return absolutePath.slice(0, absolutePath.length - suffix.length);
+        })
+        .filter((pathValue) => pathValue)
+    )];
+
+    if (!inferredFolderRoots.length) {
+      return filePaths;
+    }
+
+    const normalizedRoots = inferredFolderRoots
+      .map((pathValue) => normalizePathText(pathValue))
+      .filter((pathValue) => pathValue)
+      .sort((left, right) => right.length - left.length);
+
+    const collapsed = [...normalizedRoots];
+    for (const filePath of filePaths) {
+      const normalizedFilePath = normalizePathText(filePath);
+      const withinRoot = normalizedRoots.some((rootPath) =>
+        normalizedFilePath === rootPath || normalizedFilePath.startsWith(`${rootPath}/`));
+      if (!withinRoot) {
+        collapsed.push(filePath);
+      }
+    }
+
+    return [...new Set(collapsed)];
   }
 
   async function handleGenerateSourcesDrop(event) {
@@ -1717,7 +1831,7 @@ function App() {
     setGenerateDragOver(false);
     const paths = droppedSourcePaths(event);
     if (!paths.length) {
-      setGenerateErrors(['Dropped content did not include local file paths. Use "Import from Finder" instead.']);
+      setGenerateErrors(['Dropped content did not include local file paths. Use "Import Sources" instead.']);
       return;
     }
     setSourceInputs((prev) => [...new Set([...prev, ...paths])]);
@@ -1853,9 +1967,14 @@ function App() {
       setMcqAnswer('');
       setShortAnswer('');
       setQuizNotes([]);
+      setFeedbackChatMessages([]);
+      setFeedbackChatDraft('');
+      setFeedbackChatSending(false);
+      setFeedbackChatContextKey('');
       setAttemptQuestions([]);
       setInjectedContextText(cachedContext?.text || '');
       setInjectedContextPaths(cachedContext?.paths || []);
+      setShowInjectedContextPanel(false);
       setQuestionStates({});
       setQuizSaved(false);
       setActiveQuizPath(targetPath);
@@ -2124,25 +2243,106 @@ function App() {
     }
     setQuizLoadError('');
     try {
-      const response = await apiRequest('/v1/generate/collect-sources', 'POST', { paths });
+      const response = await apiRequest('/v1/generate/collect-sources', 'POST', {
+        paths,
+        include_content: true,
+      });
       const sources = response.sources || [];
       if (!sources.length) {
         setQuizLoadError('No supported context text was extracted from the selected files.');
         return;
       }
-      const contextText = buildInjectedContextText(sources, MAX_INJECTED_CONTEXT_CHARS);
+      const extractedMaterials = response.extracted_materials || [];
+      const contextText = buildInjectedContextText(extractedMaterials, MAX_INJECTED_CONTEXT_CHARS);
       if (!contextText) {
-        setQuizLoadError('Selected context files did not contain extractable text.');
+        const extractionErrors = extractedMaterials
+          .flatMap((material) => material?.errors || [])
+          .map((entry) => String(entry || '').trim())
+          .filter((entry) => entry);
+        if (extractionErrors.length) {
+          setQuizLoadError(extractionErrors[0]);
+        } else {
+          setQuizLoadError('Selected context files did not contain extractable text.');
+        }
         return;
       }
       setInjectedContextText(contextText);
       setInjectedContextPaths(
-        sources
-          .map((source) => String(source?.path || '').trim())
+        extractedMaterials
+          .map((material) => String(material?.path || '').trim())
           .filter((item) => item),
       );
+      setShowInjectedContextPanel(true);
     } catch (err) {
       setQuizLoadError(err.message || 'Failed to inject quiz context.');
+    }
+  }
+
+  async function sendFeedbackFollowup() {
+    const userMessage = String(feedbackChatDraft || '').trim();
+    if (!userMessage || feedbackChatSending) {
+      return;
+    }
+    if (!feedbackChatSeedText) {
+      setQuizLoadError('Answer a question to start the feedback chat.');
+      return;
+    }
+
+    const modelKeyValue = (settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:').trim();
+    const selectedModelValue = providerAndModelFromKey(modelKeyValue);
+    if (selectedModelValue.provider === 'self' || !selectedModelValue.model) {
+      setQuizLoadError('Select a non-self Preferred model in Settings to ask follow-up feedback questions.');
+      return;
+    }
+
+    const questionType = String(currentQuestion?.type || '');
+    const questionState = questionStates[quizIndex];
+    const userAnswer = questionType === 'short'
+      ? String(questionState?.short_answer || shortAnswer || '')
+      : String(questionState?.mcq_answer || mcqAnswer || '');
+    const expectedAnswer = questionType === 'short'
+      ? String(currentQuestion?.expected || '')
+      : String(currentQuestion?.answer || '');
+    const historySnapshot = (feedbackChatMessages || [])
+      .map((entry) => ({
+        role: String(entry?.role || '').trim().toLowerCase(),
+        text: String(entry?.text || '').trim(),
+      }))
+      .filter((entry) => (entry.role === 'assistant' || entry.role === 'user') && entry.text);
+
+    setQuizLoadError('');
+    setFeedbackChatDraft('');
+    setFeedbackChatSending(true);
+    setFeedbackChatMessages((prev) => [...prev, { role: 'user', text: userMessage }]);
+
+    try {
+      const payload = {
+        provider: selectedModelValue.provider,
+        model: selectedModelValue.model,
+        feedback: feedbackChatSeedText,
+        user_message: userMessage,
+        chat_history: historySnapshot,
+        question: {
+          id: String(currentQuestion?.id || `q${quizIndex + 1}`),
+          type: questionType,
+          prompt: String(currentQuestion?.prompt || ''),
+          options: Array.isArray(currentQuestion?.options) ? currentQuestion.options : [],
+        },
+        user_answer: userAnswer,
+        expected_answer: expectedAnswer,
+      };
+      const trimmedContext = String(injectedContextText || '').trim();
+      if (trimmedContext) {
+        payload.extra_context = trimmedContext;
+      }
+      const response = await apiRequest('/v1/feedback/chat', 'POST', payload);
+      const assistantText = String(response?.text || '').trim() || 'No response returned.';
+      setFeedbackChatMessages((prev) => [...prev, { role: 'assistant', text: assistantText }]);
+    } catch (err) {
+      setQuizLoadError(err.message || 'Failed to send follow-up feedback question.');
+      setFeedbackChatDraft(userMessage);
+    } finally {
+      setFeedbackChatSending(false);
     }
   }
 
@@ -2277,7 +2477,7 @@ function App() {
       if (silentIfEmpty) {
         setGenerateErrors([]);
       } else {
-        setGenerateErrors(['Add source material using drag and drop or Import from Finder.']);
+        setGenerateErrors(['Add source material using drag and drop or Import Sources.']);
       }
       return [];
     }
@@ -2303,11 +2503,11 @@ function App() {
 
     try {
       const normalizedGenerationCounts = {
-        total: parseNonNegativeInt(generationForm.total, 0),
         mcq_count: parseNonNegativeInt(generationForm.mcq_count, 0),
         short_count: parseNonNegativeInt(generationForm.short_count, 0),
-        mcq_options: parseNonNegativeInt(generationForm.mcq_options, 0),
       };
+      normalizedGenerationCounts.total = normalizedGenerationCounts.mcq_count + normalizedGenerationCounts.short_count;
+      normalizedGenerationCounts.mcq_options = 4;
       setGenerationForm((prev) => ({
         ...prev,
         ...normalizedGenerationCounts,
@@ -2320,7 +2520,7 @@ function App() {
 
       if (!sources.length) {
         if (!sourceInputs.length) {
-          setGenerateErrors(['Add source material using drag and drop or Import from Finder.']);
+          setGenerateErrors(['Add source material using drag and drop or Import Sources.']);
         } else {
           setGenerateErrors(['No supported source files were collected.']);
         }
@@ -2428,8 +2628,6 @@ function App() {
     };
     return JSON.stringify(nextForm) !== JSON.stringify(settings);
   }, [autoAdvanceDelayDraft, settingsForm, settings]);
-  const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
-
   function renderPerformanceHistoryPanel() {
     return (
       <div className="performance-sidebar">
@@ -2544,6 +2742,64 @@ function App() {
         ) : (
           <p className="roots-empty">No attempts yet for this quiz.</p>
         )}
+      </div>
+    );
+  }
+
+  function renderFeedbackChatPanel() {
+    if (!latestQuizNote) {
+      return <p className="roots-empty">Answer a question to start feedback chat.</p>;
+    }
+
+    return (
+      <div className="feedback-chat">
+        <div className="row between">
+          <h4>Feedback Chat</h4>
+          {feedbackChatSending ? <span className="feedback-chat-status">Thinking...</span> : null}
+        </div>
+        <div className="feedback-chat-log">
+          {(feedbackChatMessages.length
+            ? feedbackChatMessages
+            : [{ role: 'assistant', text: latestQuizNote }]).map((entry, index) => (
+              <div
+                key={`feedback-chat-${entry.role}-${index}`}
+                className={`feedback-chat-message ${entry.role === 'assistant' ? 'assistant' : 'user'}`}
+              >
+                <span className="feedback-chat-role">{entry.role === 'assistant' ? 'Assistant' : 'You'}</span>
+                <MathText as="div" className="math-text" text={entry.text} />
+              </div>
+            ))}
+          <div ref={feedbackChatEndRef} />
+        </div>
+        <div className="feedback-chat-compose">
+          <textarea
+            value={feedbackChatDraft}
+            onChange={(event) => setFeedbackChatDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                void sendFeedbackFollowup();
+              }
+            }}
+            placeholder="Ask a follow-up question about this feedback"
+            disabled={feedbackChatSending || selectedProviderModel.provider === 'self'}
+          />
+          <button
+            type="button"
+            className="primary"
+            disabled={!String(feedbackChatDraft || '').trim() || feedbackChatSending || selectedProviderModel.provider === 'self'}
+            onClick={() => {
+              void sendFeedbackFollowup();
+            }}
+          >
+            Send
+          </button>
+        </div>
+        {selectedProviderModel.provider === 'self' ? (
+          <p className="feedback-chat-hint">
+            Select a non-self Preferred model in Settings to ask follow-up feedback questions.
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -2700,46 +2956,82 @@ function App() {
             <aside className="quiz-selector-column">
               <div className="card tree-card">
                 <div className="row between">
-                  <h2>Quizzes</h2>
-                  <span className="quiz-tree-hint">Click folders to collapse. Right-click quizzes for options.</span>
+                  <div className="quiz-selector-tabs" role="tablist" aria-label="Quiz sidebar panels">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={quizSelectorPanelTab === 'quizzes'}
+                      className={`quiz-selector-tab ${quizSelectorPanelTab === 'quizzes' ? 'active' : ''}`.trim()}
+                      onClick={() => setQuizSelectorPanelTab('quizzes')}
+                    >
+                      Quizzes
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={quizSelectorPanelTab === 'feedback'}
+                      className={
+                        `quiz-selector-tab ${quizSelectorPanelTab === 'feedback' ? 'active' : ''} ${feedbackTabNeedsAttention ? 'attention' : ''}`.trim()
+                      }
+                      onClick={() => {
+                        setQuizSelectorPanelTab('feedback');
+                        setFeedbackTabNeedsAttention(false);
+                      }}
+                    >
+                      Feedback
+                    </button>
+                  </div>
+                  {quizSelectorPanelTab === 'quizzes' ? (
+                    <span className="quiz-tree-hint">Click folders to collapse. Right-click quizzes for options.</span>
+                  ) : null}
                 </div>
-                <div className="quiz-selector-controls">
-                  <label className="field">
-                    <span>Filter</span>
-                    <input
-                      type="text"
-                      value={quizSearchText}
-                      onChange={(event) => setQuizSearchText(event.target.value)}
-                      placeholder="Search title, file, or path"
+                {quizSelectorPanelTab === 'quizzes' ? (
+                  <>
+                    <div className="quiz-selector-controls">
+                      <label className="field">
+                        <span>Filter</span>
+                        <input
+                          type="text"
+                          value={quizSearchText}
+                          onChange={(event) => setQuizSearchText(event.target.value)}
+                          placeholder="Search title, file, or path"
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Sort</span>
+                        <select value={quizSortMode} onChange={(event) => setQuizSortMode(event.target.value)}>
+                          <option value="title_asc">Title (A-Z)</option>
+                          <option value="title_desc">Title (Z-A)</option>
+                          <option value="path_asc">Path (A-Z)</option>
+                        </select>
+                      </label>
+                    </div>
+                    <QuizTree
+                      nodes={visibleQuizTreeNodes}
+                      selectedPath={selectedQuizPath}
+                      onSelect={setSelectedQuizPath}
+                      onOpenContextMenu={handleQuizTreeContextMenu}
                     />
-                  </label>
-                  <label className="field">
-                    <span>Sort</span>
-                    <select value={quizSortMode} onChange={(event) => setQuizSortMode(event.target.value)}>
-                      <option value="title_asc">Title (A-Z)</option>
-                      <option value="title_desc">Title (Z-A)</option>
-                      <option value="path_asc">Path (A-Z)</option>
-                    </select>
-                  </label>
-                </div>
-                <QuizTree
-                  nodes={visibleQuizTreeNodes}
-                  selectedPath={selectedQuizPath}
-                  onSelect={setSelectedQuizPath}
-                  onOpenContextMenu={handleQuizTreeContextMenu}
-                />
-                {!visibleQuizTreeNodes.length ? (
-                  <p className="roots-empty">No quizzes match the current filter.</p>
-                ) : null}
+                    {!visibleQuizTreeNodes.length ? (
+                      <p className="roots-empty">No quizzes match the current filter.</p>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="quiz-selector-feedback">
+                    {renderFeedbackChatPanel()}
+                  </div>
+                )}
               </div>
-              <button
-                type="button"
-                className="primary start-quiz-column-btn"
-                disabled={!selectedQuizPath}
-                onClick={() => startSelectedQuiz()}
-              >
-                Start Selected Quiz
-              </button>
+              {quizSelectorPanelTab === 'quizzes' ? (
+                <button
+                  type="button"
+                  className="primary start-quiz-column-btn"
+                  disabled={!selectedQuizPath}
+                  onClick={() => startSelectedQuiz()}
+                >
+                  Start Selected Quiz
+                </button>
+              ) : null}
             </aside>
 
             <section className="card quiz-card">
@@ -2825,6 +3117,14 @@ function App() {
                       >
                         {injectedContextPaths.length ? `Inject Context (${injectedContextPaths.length})` : 'Inject Context'}
                       </button>
+                      {injectedContextPaths.length ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowInjectedContextPanel((prev) => !prev)}
+                        >
+                          {showInjectedContextPanel ? 'Hide Injected Context' : 'View Injected Context'}
+                        </button>
+                      ) : null}
 
                       {currentQuestion.type === 'mcq' && questionResult && selectedProviderModel.provider !== 'self' ? (
                         <button type="button" onClick={() => explainCurrentMcq()}>
@@ -2850,6 +3150,26 @@ function App() {
                         </button>
                       ) : null}
                     </div>
+                    {showInjectedContextPanel && injectedContextPaths.length ? (
+                      <div className="injected-context-panel">
+                        <div className="row between">
+                          <strong>Injected Files</strong>
+                        </div>
+                        <ul className="injected-context-file-list">
+                          {injectedContextPaths.map((pathValue) => {
+                            const fullPath = String(pathValue || '').trim();
+                            if (!fullPath) {
+                              return null;
+                            }
+                            return (
+                              <li key={fullPath}>
+                                <span className="injected-context-file-name">{shortPathLabel(fullPath) || fullPath}</span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ) : null}
                     {injectedContextPaths.length ? (
                       <p className="injected-context-status">
                         Context loaded from {injectedContextPaths.length} source{injectedContextPaths.length === 1 ? '' : 's'}.
@@ -2917,12 +3237,6 @@ function App() {
                 <p>Select and start a quiz to begin.</p>
               )}
 
-              {latestQuizNote ? (
-                <div className="notes">
-                  <h4>Latest Feedback</h4>
-                  <MathText as="div" className="math-text" text={latestQuizNote} />
-                </div>
-              ) : null}
             </section>
           </section>
         ) : null}
@@ -2934,7 +3248,7 @@ function App() {
                 <h2>Sources</h2>
                 <div className="row">
                   <button type="button" onClick={() => importSourcesFromFinder()}>
-                    Import from Finder
+                    Import Sources
                   </button>
                   <button
                     type="button"
@@ -2984,18 +3298,6 @@ function App() {
                 </div>
 
                 <label className="field">
-                  <span>Total</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={generationForm.total ?? ''}
-                    onChange={(event) => updateGenerationNumberFieldDraft('total', event.target.value)}
-                    onBlur={() => commitGenerationNumberField('total')}
-                    onKeyDown={(event) => onGenerationNumberFieldKeyDown(event, 'total')}
-                  />
-                </label>
-
-                <label className="field">
                   <span>MCQ</span>
                   <input
                     type="number"
@@ -3019,17 +3321,10 @@ function App() {
                   />
                 </label>
 
-                <label className="field">
+                <div className="field">
                   <span>MCQ options</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={generationForm.mcq_options ?? ''}
-                    onChange={(event) => updateGenerationNumberFieldDraft('mcq_options', event.target.value)}
-                    onBlur={() => commitGenerationNumberField('mcq_options')}
-                    onKeyDown={(event) => onGenerationNumberFieldKeyDown(event, 'mcq_options')}
-                  />
-                </label>
+                  <div className="settings-warning-note">Fixed at 4 options per question.</div>
+                </div>
 
                 <label className="field">
                   <span>Output folder (inside Quizzes)</span>

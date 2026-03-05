@@ -4,13 +4,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from quiz_app.api.server import create_app
 from quiz_app.models import MCQQuestion, Quiz, ShortQuestion
 from quiz_app.openai_auth import OAuthTokenSet
+from quiz_app.providers import ModelOption
 
 
 class _StubProvider:
@@ -62,11 +63,54 @@ class _StubProvider:
         short_count: int,
         mcq_options: int,
     ) -> None:
+        assert "Generation template (JSON):" in materials_text
+        assert '"questions"' in materials_text
+        assert "Source material:" in materials_text
         assert "hello from txt" in materials_text
         assert total_questions == 2
         assert mcq_count == 1
         assert short_count == 1
         assert mcq_options == 4
+
+
+class _ModelAwareStubProvider(_StubProvider):
+    def __init__(self, available_models: list[str]):
+        self.available_models = available_models
+        self.last_generation_model: str | None = None
+
+    def list_models(self) -> list[ModelOption]:
+        return [
+            ModelOption(
+                id=model_id,
+                label=model_id,
+                provider="claude",
+                capability_tags=("generation",),
+            )
+            for model_id in self.available_models
+        ]
+
+    def generate_quiz(
+        self,
+        materials_text: str,
+        title_hint: str,
+        instructions_hint: str,
+        total_questions: int,
+        mcq_count: int,
+        short_count: int,
+        mcq_options: int,
+        model: str | None = None,
+    ) -> Quiz:
+        self.last_generation_model = model
+        return super().generate_quiz(
+            materials_text=materials_text,
+            title_hint=title_hint,
+            instructions_hint=instructions_hint,
+            total_questions=total_questions,
+            mcq_count=mcq_count,
+            short_count=short_count,
+            mcq_options=mcq_options,
+            model=model,
+        )
 
 
 class APIServerTests(unittest.TestCase):
@@ -149,6 +193,22 @@ class APIServerTests(unittest.TestCase):
         self.assertTrue(flags_payload["show_feedback_on_answer"])
         self.assertFalse(flags_payload["show_feedback_on_completion"])
         self.assertTrue(flags_payload["auto_advance_enabled"])
+
+    def test_settings_sanitizes_deprecated_claude_models(self) -> None:
+        updated = self.client.put(
+            "/v1/settings",
+            headers=self.headers,
+            json={
+                "claude_model_selected": "claude-3-7-sonnet-latest",
+                "claude_models": ["claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"],
+                "preferred_model_key": "claude:claude-3-7-sonnet-latest",
+            },
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        payload = updated.json()["settings"]
+        self.assertNotIn("claude-3-7-sonnet-latest", payload["claude_models"])
+        self.assertNotEqual(payload["claude_model_selected"], "claude-3-7-sonnet-latest")
+        self.assertNotEqual(payload["preferred_model_key"], "claude:claude-3-7-sonnet-latest")
 
     def test_quiz_tree_and_load(self) -> None:
         quiz_dir = self.root / "Algorithm Analysis"
@@ -437,6 +497,52 @@ class APIServerTests(unittest.TestCase):
         self.assertIn(f"{source_folder.name}/intro.json", default_paths)
         self.assertIn(f"{source_folder.name}/week1/deep.json", default_paths)
 
+    def test_quizzes_library_uses_settings_root_not_project_root(self) -> None:
+        settings_root = self.root / "user-data"
+        settings_path = settings_root / "settings" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+        project_root = self.root / "packaged-app-root"
+        bundled_quizzes = project_root / "Quizzes"
+        bundled_quizzes.mkdir(parents=True, exist_ok=True)
+        (bundled_quizzes / "starter.json").write_text(
+            json.dumps(
+                {
+                    "title": "Bundled Starter Quiz",
+                    "instructions": "",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "A?",
+                            "options": ["A", "B"],
+                            "answer": "A",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        token = "isolated-token"
+        app = create_app(
+            settings_path=settings_path,
+            api_token=token,
+            project_root=project_root,
+        )
+        client = TestClient(app)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = client.get("/v1/quizzes/library", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        expected_dir = (settings_root / "Quizzes").resolve()
+        self.assertEqual(Path(payload["quizzes_dir"]), expected_dir)
+        self.assertEqual(payload["settings"]["quiz_roots"], [str(expected_dir)])
+        self.assertEqual(payload["tree"], [])
+        self.assertFalse((expected_dir / "starter.json").exists())
+
     def test_quizzes_library_rename_updates_json_title(self) -> None:
         quizzes_dir = self.root / "Quizzes"
         quizzes_dir.mkdir(parents=True, exist_ok=True)
@@ -510,6 +616,33 @@ class APIServerTests(unittest.TestCase):
         )
         self.assertEqual(short_self["result"]["points_awarded"], 1)
 
+    def test_feedback_chat_endpoint(self) -> None:
+        provider = MagicMock()
+        provider.feedback_chat.return_value = "You should compare your answer to the expected terms."
+        with patch("quiz_app.api.server._provider_client", return_value=provider):
+            response = self._post(
+                "/v1/feedback/chat",
+                {
+                    "provider": "openai",
+                    "model": "gpt-5-mini",
+                    "user_message": "Why was my answer marked incorrect?",
+                    "feedback": "You are incorrect.",
+                    "question": {
+                        "id": "q1",
+                        "type": "short",
+                        "prompt": "Define asymptotic notation.",
+                        "options": [],
+                    },
+                    "user_answer": "It means average runtime.",
+                    "expected_answer": "It describes growth rate.",
+                    "chat_history": [
+                        {"role": "assistant", "text": "You are incorrect."},
+                    ],
+                },
+            )
+        self.assertIn("text", response)
+        provider.feedback_chat.assert_called_once()
+
     def test_history_append_and_filter(self) -> None:
         record = {
             "timestamp": "2026-03-04T10:00:00",
@@ -547,6 +680,74 @@ class APIServerTests(unittest.TestCase):
         )
         self.assertEqual(filtered.status_code, 200)
         self.assertEqual(len(filtered.json()["records"]), 1)
+
+    def test_history_update(self) -> None:
+        base_record = {
+            "timestamp": "2026-03-04T11:00:00",
+            "quiz_path": str(self.root / "q.json"),
+            "quiz_title": "Q",
+            "score": 0,
+            "max_score": 4,
+            "percent": 0.0,
+            "duration_seconds": 20.0,
+            "model_key": "self:",
+            "questions": [
+                {
+                    "question_id": "q2",
+                    "question_type": "short",
+                    "user_answer": "hello",
+                    "correct_answer_or_expected": "hi",
+                    "points_awarded": 0,
+                    "max_points": 2,
+                    "feedback": "No model selected. Response recorded as ungraded.",
+                    "ungraded": True,
+                }
+            ],
+        }
+        self._post("/v1/history/append", base_record)
+
+        updated_record = {
+            **base_record,
+            "score": 2,
+            "percent": 50.0,
+            "model_key": "openai:gpt-5-mini",
+            "questions": [
+                {
+                    "question_id": "q2",
+                    "question_type": "short",
+                    "user_answer": "hello",
+                    "correct_answer_or_expected": "hi",
+                    "points_awarded": 2,
+                    "max_points": 2,
+                    "feedback": "You are correct.",
+                    "ungraded": False,
+                }
+            ],
+        }
+        updated = self._post(
+            "/v1/history/update",
+            {
+                "match": {
+                    "timestamp": base_record["timestamp"],
+                    "quiz_path": base_record["quiz_path"],
+                    "model_key": base_record["model_key"],
+                    "score": base_record["score"],
+                    "max_score": base_record["max_score"],
+                    "duration_seconds": base_record["duration_seconds"],
+                },
+                "record": updated_record,
+            },
+        )
+        self.assertTrue(updated["ok"])
+
+        history = self.client.get("/v1/history", headers=self.headers)
+        self.assertEqual(history.status_code, 200)
+        records = history.json()["records"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["score"], 2)
+        self.assertEqual(records[0]["model_key"], "openai:gpt-5-mini")
+        self.assertEqual(records[0]["questions"][0]["points_awarded"], 2)
+        self.assertFalse(records[0]["questions"][0]["ungraded"])
 
     def test_collect_sources_and_generate_run(self) -> None:
         docs = self.root / "docs"
@@ -598,7 +799,9 @@ class APIServerTests(unittest.TestCase):
 
         pdf_materials = [m for m in generated["extracted_materials"] if m["path"].endswith(".pdf")]
         self.assertEqual(len(pdf_materials), 1)
-        self.assertTrue(pdf_materials[0]["needs_ocr"])
+        self.assertIn("needs_ocr", pdf_materials[0])
+        if not pdf_materials[0]["needs_ocr"]:
+            self.assertTrue(str(pdf_materials[0].get("content", "")).strip())
 
         bad_response = self.client.post(
             "/v1/generate/run",
@@ -617,6 +820,218 @@ class APIServerTests(unittest.TestCase):
         )
         self.assertEqual(bad_response.status_code, 422, bad_response.text)
         self.assertIn("inside the managed Quizzes directory", bad_response.text)
+
+    def test_collect_sources_can_return_extracted_materials_for_context_injection(self) -> None:
+        docs = self.root / "docs"
+        docs.mkdir(parents=True, exist_ok=True)
+        txt_path = docs / "notes.txt"
+        txt_path.write_text("hello from txt", encoding="utf-8")
+        md_path = docs / "notes.md"
+        md_path.write_text("# Heading\n\nhello from markdown", encoding="utf-8")
+
+        docx_path = docs / "notes.docx"
+        has_docx = False
+        try:
+            import docx
+
+            doc = docx.Document()
+            doc.add_paragraph("hello from docx")
+            doc.save(str(docx_path))
+            has_docx = True
+        except Exception:
+            has_docx = False
+
+        pptx_path = docs / "slides.pptx"
+        has_pptx = False
+        try:
+            from pptx import Presentation
+
+            deck = Presentation()
+            slide = deck.slides.add_slide(deck.slide_layouts[1])
+            slide.shapes.title.text = "Deck Title"
+            slide.placeholders[1].text = "Deck body"
+            slide.notes_slide.notes_text_frame.text = "Speaker note"
+            deck.save(str(pptx_path))
+            has_pptx = True
+        except Exception:
+            has_pptx = False
+
+        collect = self._post(
+            "/v1/generate/collect-sources",
+            {"paths": [str(docs)], "include_content": True},
+        )
+        self.assertIn("extracted_materials", collect)
+        materials = collect["extracted_materials"]
+        self.assertTrue(materials)
+
+        by_name = {Path(item["path"]).name: item for item in materials}
+        self.assertIn("notes.txt", by_name)
+        self.assertIn("hello from txt", by_name["notes.txt"]["content"])
+        self.assertIn("notes.md", by_name)
+        self.assertIn("hello from markdown", by_name["notes.md"]["content"].lower())
+
+        if has_docx:
+            self.assertIn("notes.docx", by_name)
+            self.assertIn("hello from docx", by_name["notes.docx"]["content"].lower())
+        if has_pptx:
+            self.assertIn("slides.pptx", by_name)
+            pptx_text = str(by_name["slides.pptx"]["content"] or "")
+            self.assertIn("Deck Title".lower(), pptx_text.lower())
+            self.assertIn("Speaker note".lower(), pptx_text.lower())
+
+    def test_generate_run_falls_back_when_requested_claude_model_unavailable(self) -> None:
+        docs = self.root / "docs"
+        docs.mkdir(parents=True, exist_ok=True)
+        txt_path = docs / "notes.txt"
+        txt_path.write_text("hello from txt", encoding="utf-8")
+
+        collect = self._post(
+            "/v1/generate/collect-sources",
+            {"paths": [str(docs)]},
+        )
+        provider = _ModelAwareStubProvider(available_models=["claude-3-5-haiku-latest"])
+        with patch("quiz_app.api.server._provider_client", return_value=provider):
+            generated = self._post(
+                "/v1/generate/run",
+                {
+                    "sources": collect["sources"],
+                    "provider": "claude",
+                    "model": "claude-3-7-sonnet-latest",
+                    "total": 2,
+                    "mcq_count": 1,
+                    "short_count": 1,
+                    "mcq_options": 4,
+                    "title_hint": "Fallback test",
+                },
+            )
+
+        self.assertTrue(generated["ok"], generated.get("errors"))
+        self.assertEqual(provider.last_generation_model, "claude-3-5-haiku-latest")
+        self.assertTrue(any("Falling back" in line for line in generated["warnings"]))
+
+    def test_generate_run_prefers_preferred_model_key_for_claude_fallback(self) -> None:
+        docs = self.root / "docs"
+        docs.mkdir(parents=True, exist_ok=True)
+        txt_path = docs / "notes.txt"
+        txt_path.write_text("hello from txt", encoding="utf-8")
+
+        self.client.put(
+            "/v1/settings",
+            headers=self.headers,
+            json={"preferred_model_key": "claude:claude-3-opus-latest"},
+        )
+
+        collect = self._post(
+            "/v1/generate/collect-sources",
+            {"paths": [str(docs)]},
+        )
+        provider = _ModelAwareStubProvider(
+            available_models=["claude-3-5-haiku-latest", "claude-3-opus-latest"]
+        )
+        with patch("quiz_app.api.server._provider_client", return_value=provider):
+            generated = self._post(
+                "/v1/generate/run",
+                {
+                    "sources": collect["sources"],
+                    "provider": "claude",
+                    "model": "claude-3-7-sonnet-latest",
+                    "total": 2,
+                    "mcq_count": 1,
+                    "short_count": 1,
+                    "mcq_options": 4,
+                    "title_hint": "Preferred fallback test",
+                },
+            )
+
+        self.assertTrue(generated["ok"], generated.get("errors"))
+        self.assertEqual(provider.last_generation_model, "claude-3-opus-latest")
+        self.assertTrue(any("Falling back" in line for line in generated["warnings"]))
+
+    def test_generate_run_normalizes_mismatched_total(self) -> None:
+        class _CaptureProvider:
+            provider_name = "stub"
+
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def generate_quiz(
+                self,
+                materials_text: str,
+                title_hint: str,
+                instructions_hint: str,
+                total_questions: int,
+                mcq_count: int,
+                short_count: int,
+                mcq_options: int,
+                model: str | None = None,
+            ) -> Quiz:
+                self.calls.append(
+                    {
+                        "materials_text": materials_text,
+                        "title_hint": title_hint,
+                        "instructions_hint": instructions_hint,
+                        "total_questions": total_questions,
+                        "mcq_count": mcq_count,
+                        "short_count": short_count,
+                        "mcq_options": mcq_options,
+                        "model": model,
+                    }
+                )
+                return Quiz(
+                    title=title_hint or "Generated Quiz",
+                    instructions=instructions_hint or "Answer all questions.",
+                    questions=[
+                        MCQQuestion(
+                            id="q1",
+                            prompt="Pick A",
+                            points=1,
+                            options=["A", "B", "C", "D"],
+                            answer="A",
+                        ),
+                        MCQQuestion(
+                            id="q2",
+                            prompt="Pick B",
+                            points=1,
+                            options=["A", "B", "C", "D"],
+                            answer="B",
+                        ),
+                    ],
+                )
+
+        docs = self.root / "docs"
+        docs.mkdir(parents=True, exist_ok=True)
+        txt_path = docs / "notes.txt"
+        txt_path.write_text("hello from txt", encoding="utf-8")
+
+        collect = self._post(
+            "/v1/generate/collect-sources",
+            {"paths": [str(docs)]},
+        )
+
+        provider = _CaptureProvider()
+        with patch("quiz_app.api.server._provider_client", return_value=provider):
+            generated = self._post(
+                "/v1/generate/run",
+                {
+                    "sources": collect["sources"],
+                    "provider": "claude",
+                    "model": "stub-model",
+                    "total": 99,
+                    "mcq_count": 2,
+                    "short_count": 0,
+                    "mcq_options": 4,
+                    "title_hint": "Normalized Total",
+                },
+            )
+
+        self.assertTrue(generated["ok"], generated.get("errors"))
+        self.assertTrue(generated["output_path"])
+        self.assertTrue(any("normalized total" in line.lower() for line in generated["warnings"]))
+        self.assertEqual(len(provider.calls), 1)
+        call = provider.calls[0]
+        self.assertEqual(call["total_questions"], 2)
+        self.assertEqual(call["mcq_count"], 2)
+        self.assertEqual(call["short_count"], 0)
 
 
 if __name__ == "__main__":

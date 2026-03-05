@@ -80,6 +80,11 @@ Build bundled Python sidecar:
 cd electron
 npm run build:sidecar
 ```
+Notes:
+- `build:sidecar` now stages bundled OCR runtime binaries (`tesseract`, `pdftoppm`) and `eng`/`osd` tessdata into installer resources.
+- Ensure OCR binaries are installed before building:
+  - macOS: `brew install tesseract poppler`
+  - Windows: `choco install tesseract poppler`
 
 Create macOS package artifact:
 ```bash
@@ -94,6 +99,7 @@ npm run dist -- --win nsis
 ```
 
 GitHub Actions:
+- `macOS Package` builds and uploads unsigned arm64 DMG artifacts on `v*` tags and manual dispatch.
 - `Windows Package` builds and uploads unsigned NSIS artifacts on `v*` tags and manual dispatch.
 - `Secret Scan` runs full-history gitleaks scans on `v*` tags and manual dispatch.
 
@@ -110,7 +116,7 @@ docker run --rm -v "$(pwd):/repo" ghcr.io/gitleaks/gitleaks:latest \
 ```
 3. If any leak is detected, rotate affected credentials immediately, then either rewrite git history or publish a clean snapshot repository.
 4. Build and verify release artifacts:
-  - macOS DMG: `npm run dist -- --mac dmg` (from `electron/`)
+  - macOS DMG: push a `v*` tag to trigger the `macOS Package` workflow, or run it manually.
   - Windows NSIS: push a `v*` tag to trigger the `Windows Package` workflow, or run it manually.
 5. Tag and publish:
 ```bash
@@ -123,7 +129,7 @@ git push origin v0.1.0
 - Quiz browser from configured `quiz_roots`
 - MCQ + short-answer grading (self, Claude, OpenAI)
 - Quiz generation from source material (`.txt`, `.md`, `.docx`, `.pptx`, `.pdf`)
-- PDF low-text detection with OCR handoff marker (`needs_ocr`)
+- PDF low-text OCR fallback with bundled runtime in packaged apps
 - Performance history and attempt drill-down
 - Settings persistence and legacy import
 - MCP bridge exposing quiz/settings tools over streamable HTTP

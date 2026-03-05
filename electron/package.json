@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "build:renderer": "vite build",
-    "build:sidecar": "node scripts/build_sidecar.cjs",
+    "build:sidecar": "node scripts/stage_ocr_runtime.cjs && node scripts/build_sidecar.cjs",
     "build": "npm run build:renderer && electron-builder --dir",
     "dist": "npm run build:renderer && npm run build:sidecar && electron-builder"
   },
@@ -46,6 +46,10 @@
           "modular-quiz-api",
           "modular-quiz-api.exe"
         ]
+      },
+      {
+        "from": "build/ocr-runtime",
+        "to": "backend/ocr-runtime"
       }
     ],
     "mac": {

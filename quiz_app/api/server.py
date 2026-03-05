@@ -12,11 +12,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from quiz_app.claude_client import ClaudeClient
-from quiz_app.generator.extractors import collect_sources
+from quiz_app.generator.extractors import collect_sources, extract_all_materials
 from quiz_app.generator.service import generate_quiz_file
 from quiz_app.generator.types import GenerationRequest, GenerationResult, SourceFile
 from quiz_app.graders import GradeResult, MCQGrader
-from quiz_app.history import AttemptRecord, QuestionAttemptRecord, append_attempt, history_for_quiz, load_history
+from quiz_app.history import AttemptRecord, QuestionAttemptRecord, append_attempt, history_for_quiz, load_history, save_history
 from quiz_app.loader import load_quiz
 from quiz_app.models import MCQQuestion, Quiz, QuizValidationError, ShortQuestion
 from quiz_app.openai_auth import OAuthConfig, OpenAIPKCEAuthenticator, refresh_access_token
@@ -110,18 +110,41 @@ def _openai_token(state: APIState, settings: AppSettings) -> str:
     return access
 
 
+def _preferred_provider_model(settings: AppSettings) -> tuple[str, str]:
+    raw = str(settings.preferred_model_key or "").strip()
+    if ":" not in raw:
+        return "", ""
+    provider, model = raw.split(":", 1)
+    provider = provider.strip().lower()
+    model = model.strip()
+    if provider not in {"self", "claude", "openai"}:
+        return "", ""
+    return provider, model
+
+
 def _provider_client(state: APIState, provider: str, settings: AppSettings):
     key = (provider or "").strip().lower()
+    preferred_provider, preferred_model = _preferred_provider_model(settings)
     if key == "claude":
+        default_model = (
+            preferred_model
+            if preferred_provider == "claude" and preferred_model
+            else (settings.claude_model_selected or settings.claude_model)
+        )
         return ClaudeClient(
             api_key=settings.claude_api_key,
-            default_model=settings.claude_model_selected or settings.claude_model,
+            default_model=default_model,
             curated_models=settings.claude_models,
         )
     if key == "openai":
+        default_model = (
+            preferred_model
+            if preferred_provider == "openai" and preferred_model
+            else (settings.openai_model_selected or "gpt-5-mini")
+        )
         return OpenAIClient(
             auth=OpenAIAuthState(api_key=settings.openai_api_key),
-            default_model=settings.openai_model_selected or "gpt-5-mini",
+            default_model=default_model,
             token_provider=lambda: _openai_token(state, settings),
         )
     return None
@@ -220,6 +243,15 @@ def _attempt_payload(record: AttemptRecord) -> dict[str, Any]:
     return asdict(record)
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    normalized = str(value or "").strip().lower()
+    return normalized in {"1", "true", "yes", "y"}
+
+
 def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
     questions_raw = payload.get("questions") if isinstance(payload.get("questions"), list) else []
     questions: list[QuestionAttemptRecord] = []
@@ -235,6 +267,7 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
                 points_awarded=int(item.get("points_awarded", 0) or 0),
                 max_points=int(item.get("max_points", 0) or 0),
                 feedback=str(item.get("feedback", "")).strip(),
+                ungraded=_coerce_bool(item.get("ungraded", False)),
             )
         )
 
@@ -268,7 +301,11 @@ def _path_within(path: Path, root: Path) -> bool:
 
 
 def _quizzes_library_dir(state: APIState, settings: AppSettings) -> Path:
-    return (state.project_root / "Quizzes").resolve()
+    # Keep managed quizzes in the runtime settings root so packaged installs are
+    # writable and start with an empty library by default.
+    _ = settings
+    user_data_root = state.settings_store.path.parent.parent.resolve()
+    return (user_data_root / "Quizzes").resolve()
 
 
 def _ensure_quizzes_library(state: APIState, settings: AppSettings) -> Path:
@@ -856,6 +893,7 @@ def create_app(
         question_raw = payload.get("question")
         user_answer = str(payload.get("user_answer", ""))
         model = str(payload.get("model", "") or "").strip() or None
+        extra_context = str(payload.get("extra_context", "") or "").strip() or None
         if not isinstance(question_raw, dict):
             raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'question' must be an object.")
         if provider not in {"self", "claude", "openai"}:
@@ -880,7 +918,7 @@ def create_app(
                 correct=(score == question.points),
                 points_awarded=score,
                 max_points=question.points,
-                feedback=f"Recorded self-score: {score}/{question.points}",
+                feedback=f"You recorded a self-score of {score}/{question.points}.",
             )
             return {"result": _grade_payload(result)}
 
@@ -889,7 +927,7 @@ def create_app(
         if client is None:
             raise APIError(status_code=404, code="NOT_FOUND", message=f"Provider '{provider}' unavailable.")
 
-        result = client.grade_short(question=question, user_answer=user_answer, model=model)
+        result = client.grade_short(question=question, user_answer=user_answer, model=model, extra_context=extra_context)
         return {"result": _grade_payload(result)}
 
     @app.post("/v1/explain/mcq", dependencies=[Depends(_require_auth)])
@@ -903,6 +941,7 @@ def create_app(
         user_answer = str(payload.get("user_answer", "")).strip()
         correct_answer = str(payload.get("correct_answer", "")).strip()
         model = str(payload.get("model", "") or "").strip() or None
+        extra_context = str(payload.get("extra_context", "") or "").strip() or None
 
         if not isinstance(options_raw, list) or len(options_raw) < 2:
             raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'options' must be a list with 2+ items.")
@@ -918,6 +957,62 @@ def create_app(
             user_answer=user_answer,
             correct_answer=correct_answer,
             model=model,
+            extra_context=extra_context,
+        )
+        return {"text": text}
+
+    @app.post("/v1/feedback/chat", dependencies=[Depends(_require_auth)])
+    def feedback_chat(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        provider = str(payload.get("provider", "")).strip().lower()
+        if provider not in {"claude", "openai"}:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Feedback chat provider must be claude|openai.")
+
+        model = str(payload.get("model", "") or "").strip() or None
+        user_message = str(payload.get("user_message", "")).strip()
+        feedback = str(payload.get("feedback", "")).strip()
+        extra_context = str(payload.get("extra_context", "") or "").strip() or None
+        if not user_message:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'user_message' is required.")
+
+        question_raw = payload.get("question")
+        if not isinstance(question_raw, dict):
+            question_raw = {}
+        question_prompt = str(question_raw.get("prompt", "")).strip()
+        question_type = str(question_raw.get("type", "")).strip()
+        options_raw = question_raw.get("options")
+        options = [str(item) for item in options_raw] if isinstance(options_raw, list) else []
+
+        user_answer = str(payload.get("user_answer", question_raw.get("user_answer", ""))).strip()
+        expected_answer = str(payload.get("expected_answer", question_raw.get("expected", ""))).strip()
+
+        history_raw = payload.get("chat_history")
+        history_entries: list[dict[str, str]] = []
+        if isinstance(history_raw, list):
+            for item in history_raw:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role", "")).strip().lower()
+                text = str(item.get("text", "")).strip()
+                if role not in {"assistant", "user"} or not text:
+                    continue
+                history_entries.append({"role": role, "text": text})
+
+        settings = _settings(state)
+        client = _provider_client(state, provider, settings)
+        if client is None:
+            raise APIError(status_code=404, code="NOT_FOUND", message=f"Provider '{provider}' unavailable.")
+
+        text = client.feedback_chat(
+            question_prompt=question_prompt,
+            question_type=question_type,
+            options=options,
+            user_answer=user_answer,
+            expected_answer=expected_answer,
+            feedback=feedback,
+            chat_history=history_entries,
+            user_message=user_message,
+            model=model,
+            extra_context=extra_context,
         )
         return {"text": text}
 
@@ -937,17 +1032,80 @@ def create_app(
         append_attempt(path, record)
         return {"ok": True}
 
+    @app.post("/v1/history/update", dependencies=[Depends(_require_auth)])
+    def update_history(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        match_raw = payload.get("match")
+        record_raw = payload.get("record")
+        if not isinstance(match_raw, dict):
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'match' must be an object.")
+        if not isinstance(record_raw, dict):
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'record' must be an object.")
+
+        match_timestamp = str(match_raw.get("timestamp", "")).strip()
+        match_quiz_path = str(match_raw.get("quiz_path", "")).strip()
+        if not match_timestamp or not match_quiz_path:
+            raise APIError(
+                status_code=422,
+                code="VALIDATION_ERROR",
+                message="Fields 'match.timestamp' and 'match.quiz_path' are required.",
+            )
+        match_model_key = str(match_raw.get("model_key", "")).strip()
+        match_score = int(match_raw.get("score", 0) or 0)
+        match_max_score = int(match_raw.get("max_score", 0) or 0)
+        match_duration_seconds = float(match_raw.get("duration_seconds", 0.0) or 0.0)
+
+        settings = _settings(state)
+        path = _resolve_history_path(state, settings)
+        attempts = load_history(path)
+        match_index = -1
+        for index, attempt in enumerate(attempts):
+            if attempt.timestamp != match_timestamp:
+                continue
+            if attempt.quiz_path != match_quiz_path:
+                continue
+            if attempt.model_key != match_model_key:
+                continue
+            if attempt.score != match_score or attempt.max_score != match_max_score:
+                continue
+            if abs(float(attempt.duration_seconds) - match_duration_seconds) > 1e-9:
+                continue
+            match_index = index
+            break
+
+        if match_index < 0:
+            raise APIError(status_code=404, code="NOT_FOUND", message="History attempt to update was not found.")
+
+        updated_record = _attempt_from_payload(record_raw)
+        attempts[match_index] = updated_record
+        save_history(path, attempts)
+        return {"ok": True, "record": _attempt_payload(updated_record)}
+
     @app.post("/v1/generate/collect-sources", dependencies=[Depends(_require_auth)])
     def generate_collect_sources(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         paths = payload.get("paths")
+        include_content = bool(payload.get("include_content"))
         if not isinstance(paths, list) or not paths:
             raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'paths' must be a non-empty list.")
 
         sources, warnings = collect_sources([str(p) for p in paths])
-        return {
+        response: dict[str, Any] = {
             "sources": [_source_payload(source) for source in sources],
             "warnings": warnings,
         }
+        if include_content:
+            extracted_materials = extract_all_materials(sources)
+            response["extracted_materials"] = [
+                {
+                    "path": str(material.path),
+                    "content": material.content,
+                    "extracted_by": material.extracted_by,
+                    "needs_ocr": material.needs_ocr,
+                    "warnings": list(material.warnings),
+                    "errors": list(material.errors),
+                }
+                for material in extracted_materials
+            ]
+        return response
 
     @app.post("/v1/generate/run", dependencies=[Depends(_require_auth)])
     def generate_run(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -983,6 +1141,54 @@ def create_app(
         if client is None:
             raise APIError(status_code=404, code="NOT_FOUND", message=f"Provider '{provider}' unavailable.")
 
+        request_warnings = [str(x) for x in payload.get("warnings", [])] if isinstance(payload.get("warnings"), list) else []
+        request_errors = [str(x) for x in payload.get("errors", [])] if isinstance(payload.get("errors"), list) else []
+        try:
+            mcq_count = int(payload.get("mcq_count", 15))
+            short_count = int(payload.get("short_count", 5))
+            mcq_options = int(payload.get("mcq_options", 4))
+        except Exception as exc:
+            raise APIError(
+                status_code=422,
+                code="VALIDATION_ERROR",
+                message="Generation count fields must be integers.",
+            ) from exc
+        requested_total_raw = payload.get("total")
+        try:
+            requested_total = int(requested_total_raw) if requested_total_raw is not None else None
+        except Exception:
+            requested_total = None
+        normalized_total = mcq_count + short_count
+        if requested_total is not None and requested_total != normalized_total:
+            request_warnings.append(
+                "Requested total did not match mcq_count + short_count; using normalized total."
+            )
+        if provider == "claude":
+            try:
+                available_models = client.list_models()
+            except Exception:
+                available_models = []
+            available_ids = [str(m.id).strip() for m in available_models if str(m.id).strip()]
+            if available_ids:
+                available_set = set(available_ids)
+                preferred_provider, preferred_model = _preferred_provider_model(settings)
+                preferred = (
+                    preferred_model
+                    if preferred_provider == "claude" and preferred_model in available_set
+                    else available_ids[0]
+                )
+                if not model:
+                    model = preferred
+                elif model not in available_set:
+                    request_warnings.append(
+                        f"Requested Claude model '{model}' is unavailable. Falling back to '{preferred}'."
+                    )
+                    model = preferred
+        elif provider == "openai" and not model:
+            preferred_provider, preferred_model = _preferred_provider_model(settings)
+            if preferred_provider == "openai" and preferred_model:
+                model = preferred_model
+
         if output_subdir_payload is None:
             default_subdir = settings.generation_output_subdir or "Generated"
             try:
@@ -997,15 +1203,15 @@ def create_app(
             sources=source_files,
             provider=provider,
             model=model,
-            total=int(payload.get("total", 20) or 20),
-            mcq_count=int(payload.get("mcq_count", 15) or 15),
-            short_count=int(payload.get("short_count", 5) or 5),
-            mcq_options=int(payload.get("mcq_options", 4) or 4),
+            total=normalized_total,
+            mcq_count=mcq_count,
+            short_count=short_count,
+            mcq_options=mcq_options,
             title_hint=str(payload.get("title_hint", "")),
             instructions_hint=str(payload.get("instructions_hint", "")),
             output_subdir=output_subdir,
-            warnings=[str(x) for x in payload.get("warnings", [])] if isinstance(payload.get("warnings"), list) else [],
-            errors=[str(x) for x in payload.get("errors", [])] if isinstance(payload.get("errors"), list) else [],
+            warnings=request_warnings,
+            errors=request_errors,
         )
 
         result = generate_quiz_file(req, client)

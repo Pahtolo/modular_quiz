@@ -9,6 +9,100 @@ from quiz_app.providers import ProviderClient
 from .extractors import extract_all_materials
 from .types import GenerationRequest, GenerationResult
 
+_TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "template_quiz.json"
+_PROMPT_TEMPLATE_HEADER = "Generation template (JSON)"
+
+
+def _validate_request(request: GenerationRequest) -> list[str]:
+    errors: list[str] = []
+    if request.total <= 0:
+        errors.append("Total question count must be greater than zero.")
+    if request.mcq_count < 0 or request.short_count < 0:
+        errors.append("Question type counts cannot be negative.")
+    if request.mcq_count + request.short_count != request.total:
+        errors.append("mcq_count + short_count must equal total.")
+    if request.mcq_options < 2:
+        errors.append("mcq_options must be at least 2.")
+    if not request.sources:
+        errors.append("At least one source file is required.")
+    return errors
+
+
+def _load_template_text() -> str:
+    return _TEMPLATE_PATH.read_text(encoding="utf-8").strip()
+
+
+def _validate_template_text(template_text: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        payload = json.loads(template_text)
+    except json.JSONDecodeError as exc:
+        return [f"template_quiz.json is not valid JSON: {exc}"]
+
+    if not isinstance(payload, dict):
+        return ["template_quiz.json must be a JSON object."]
+
+    for field in ("title", "instructions", "questions"):
+        if field not in payload:
+            errors.append(f"template_quiz.json is missing required top-level field '{field}'.")
+
+    questions = payload.get("questions")
+    if not isinstance(questions, list) or not questions:
+        errors.append("template_quiz.json must include a non-empty 'questions' array.")
+        return errors
+
+    seen_types: set[str] = set()
+    for question in questions:
+        if not isinstance(question, dict):
+            errors.append("template_quiz.json questions must be objects.")
+            continue
+
+        qtype = str(question.get("type", "")).strip()
+        if qtype == "mcq":
+            seen_types.add("mcq")
+            for field in ("id", "type", "prompt", "options", "answer", "points"):
+                if field not in question:
+                    errors.append(f"template_quiz.json mcq example missing '{field}'.")
+            options = question.get("options")
+            if not isinstance(options, list) or len(options) < 2:
+                errors.append("template_quiz.json mcq example must include at least 2 options.")
+        elif qtype == "short":
+            seen_types.add("short")
+            for field in ("id", "type", "prompt", "expected", "points"):
+                if field not in question:
+                    errors.append(f"template_quiz.json short example missing '{field}'.")
+
+    for required_type in ("mcq", "short"):
+        if required_type not in seen_types:
+            errors.append(f"template_quiz.json must include a '{required_type}' question example.")
+    return errors
+
+
+def _build_generation_context(materials_text: str, template_text: str) -> str:
+    return (
+        f"{_PROMPT_TEMPLATE_HEADER}:\n"
+        f"{template_text}\n\n"
+        "Generation requirements:\n"
+        "- Follow the template field names and structure exactly.\n"
+        "- Return valid JSON only.\n"
+        "- Keep question types limited to mcq and short.\n\n"
+        f"Source material:\n{materials_text}"
+    )
+
+
+def _validate_generation_context(context_text: str, template_text: str) -> list[str]:
+    errors: list[str] = []
+    if _PROMPT_TEMPLATE_HEADER not in context_text:
+        errors.append("Prompt context is missing the template header.")
+    if template_text not in context_text:
+        errors.append("Prompt context does not include template_quiz.json content.")
+    if "Source material:" not in context_text:
+        errors.append("Prompt context is missing source material.")
+    for token in ('"questions"', '"type"', '"prompt"'):
+        if token not in context_text:
+            errors.append(f"Prompt context is missing required schema token {token}.")
+    return errors
+
 
 def _quiz_to_payload(quiz: Quiz) -> dict:
     questions: list[dict] = []
@@ -79,6 +173,10 @@ class GenerationService:
         result.warnings.extend(request.warnings)
         result.errors.extend(request.errors)
 
+        result.errors.extend(_validate_request(request))
+        if result.errors:
+            return result
+
         materials = extract_all_materials(request.sources)
         result.extracted_materials = materials
         for material in materials:
@@ -94,8 +192,25 @@ class GenerationService:
             return result
 
         try:
+            template_text = _load_template_text()
+        except Exception as exc:
+            result.errors.append(f"Unable to load template_quiz.json: {exc}")
+            return result
+
+        template_errors = _validate_template_text(template_text)
+        if template_errors:
+            result.errors.extend(template_errors)
+            return result
+
+        prompt_context = _build_generation_context(materials_text, template_text)
+        prompt_errors = _validate_generation_context(prompt_context, template_text)
+        if prompt_errors:
+            result.errors.extend(prompt_errors)
+            return result
+
+        try:
             quiz = self._client.generate_quiz(
-                materials_text=materials_text,
+                materials_text=prompt_context,
                 title_hint=request.title_hint or "Generated Quiz",
                 instructions_hint=request.instructions_hint or "Answer all questions.",
                 total_questions=request.total,

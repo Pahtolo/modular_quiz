@@ -21,7 +21,11 @@ class MCQGrader:
             normalized = normalized[0]
         is_correct = normalized == question.answer
         points = question.points if is_correct else 0
-        feedback = "Correct." if is_correct else f"Incorrect. Correct answer: {question.answer}"
+        feedback = (
+            "You are correct."
+            if is_correct
+            else f"You are incorrect. The correct answer is {question.answer}."
+        )
         return GradeResult(
             correct=is_correct,
             points_awarded=points,
@@ -55,7 +59,7 @@ class SelfShortGrader:
             correct=(score == question.points),
             points_awarded=score,
             max_points=question.points,
-            feedback=f"Recorded self-score: {score}/{question.points}",
+            feedback=f"You recorded a self-score of {score}/{question.points}.",
         )
 
 
@@ -126,5 +130,5 @@ class ClaudeShortGrader:
             correct=is_correct,
             points_awarded=points,
             max_points=question.points,
-            feedback=f"Claude verdict: {verdict}",
+            feedback="You are correct." if is_correct else "You are incorrect.",
         )

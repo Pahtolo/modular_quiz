@@ -5,6 +5,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, List, Sequence
 
+from .feedback_voice import to_second_person
+from .generator.prompting import build_quiz_generation_prompt
 from .graders import GradeResult
 from .models import MCQQuestion, Quiz, ShortQuestion
 from .providers import ModelOption, friendly_model_label, recommended_first
@@ -131,16 +133,26 @@ class OpenAIClient:
     def serialize_model_cache(models: Sequence[ModelOption]) -> list[dict[str, str]]:
         return [{"id": m.id, "label": m.label} for m in models]
 
-    def grade_short(self, question: ShortQuestion, user_answer: str, model: str | None = None) -> GradeResult:
+    def grade_short(
+        self,
+        question: ShortQuestion,
+        user_answer: str,
+        model: str | None = None,
+        extra_context: str | None = None,
+    ) -> GradeResult:
         rubric = (
             "You grade short-answer quiz responses. "
             "Return exactly CORRECT or INCORRECT with no other words. "
             "Only return CORRECT if the answer is substantively equivalent to the expected answer."
         )
+        context_block = ""
+        if extra_context and extra_context.strip():
+            context_block = f"\nAdditional context:\n{extra_context.strip()}\n"
         prompt = (
             f"{rubric}\n\n"
             f"Question:\n{question.prompt}\n\n"
             f"Expected answer:\n{question.expected}\n\n"
+            f"{context_block}"
             f"User answer:\n{user_answer}\n"
         )
         verdict = self._responses_text(prompt, model=model, max_tokens=8).strip().upper()
@@ -153,11 +165,15 @@ class OpenAIClient:
             verdict = f"UNPARSEABLE({verdict})"
 
         points = question.points if is_correct else 0
+        if verdict.startswith("UNPARSEABLE("):
+            feedback = "Your answer was marked incorrect because the grader response could not be parsed."
+        else:
+            feedback = "You are correct." if is_correct else "You are incorrect."
         return GradeResult(
             correct=is_correct,
             points_awarded=points,
             max_points=question.points,
-            feedback=f"OpenAI verdict: {verdict}",
+            feedback=feedback,
         )
 
     def explain_mcq(
@@ -167,19 +183,73 @@ class OpenAIClient:
         user_answer: str,
         correct_answer: str,
         model: str | None = None,
+        extra_context: str | None = None,
     ) -> str:
         rendered_options = "\n".join(
             f"{chr(ord('A') + i)}. {opt}" for i, opt in enumerate(options)
         )
+        context_block = ""
+        if extra_context and extra_context.strip():
+            context_block = f"\nAdditional context:\n{extra_context.strip()}\n\n"
         ask = (
             "Explain the correct answer briefly (max 5 sentences). "
-            "Mention why the chosen answer was right or wrong.\n\n"
+            "Address the learner directly using 'you' and 'your'. "
+            "Do not refer to the learner as 'the user' or 'the student'. "
+            "Mention why their chosen answer was right or wrong.\n\n"
+            f"{context_block}"
             f"Question:\n{prompt}\n\n"
             f"Options:\n{rendered_options}\n\n"
-            f"User answer: {user_answer}\n"
+            f"Your answer: {user_answer}\n"
             f"Correct answer: {correct_answer}\n"
         )
-        return self._responses_text(ask, model=model, max_tokens=220).strip()
+        return to_second_person(self._responses_text(ask, model=model, max_tokens=220).strip())
+
+    def feedback_chat(
+        self,
+        question_prompt: str,
+        question_type: str,
+        options: Sequence[str],
+        user_answer: str,
+        expected_answer: str,
+        feedback: str,
+        chat_history: Sequence[dict[str, str]],
+        user_message: str,
+        model: str | None = None,
+        extra_context: str | None = None,
+    ) -> str:
+        rendered_options = "\n".join(
+            f"{chr(ord('A') + i)}. {opt}" for i, opt in enumerate(options)
+        )
+        normalized_history: list[str] = []
+        for item in chat_history:
+            role = str(item.get("role", "")).strip().lower()
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            if role == "assistant":
+                normalized_history.append(f"Assistant: {text}")
+            else:
+                normalized_history.append(f"You: {text}")
+        history_block = "\n".join(normalized_history)
+        context_block = ""
+        if extra_context and extra_context.strip():
+            context_block = f"\nAdditional context:\n{extra_context.strip()}\n"
+
+        ask = (
+            "You are a quiz tutor answering follow-up questions about feedback. "
+            "Answer clearly, concisely, and in second person ('you'/'your'). "
+            "If the learner is confused, restate using simpler language.\n\n"
+            f"Question type: {question_type}\n"
+            f"Question:\n{question_prompt}\n\n"
+            f"Options:\n{rendered_options or '(none)'}\n\n"
+            f"Your answer: {user_answer}\n"
+            f"Expected answer: {expected_answer}\n"
+            f"Original feedback:\n{feedback}\n"
+            f"{context_block}\n"
+            f"Chat so far:\n{history_block or '(none)'}\n\n"
+            f"New follow-up from learner:\n{user_message}\n"
+        )
+        return to_second_person(self._responses_text(ask, model=model, max_tokens=380).strip())
 
     @staticmethod
     def _extract_json_block(text: str) -> str:
@@ -248,22 +318,16 @@ class OpenAIClient:
         mcq_options: int,
         model: str | None = None,
     ) -> Quiz:
-        prompt = (
-            "Generate a quiz JSON object only. "
-            "Use exact schema: title(string), instructions(string), questions(array). "
-            "Question types allowed: mcq and short only. "
-            "MCQ fields: id,type,prompt,options,answer,points. "
-            "Short fields: id,type,prompt,expected,points.\n\n"
-            f"Constraints:\n"
-            f"- total questions: {total_questions}\n"
-            f"- mcq count: {mcq_count}\n"
-            f"- short count: {short_count}\n"
-            f"- default MCQ option count: {mcq_options}\n"
-            f"- title hint: {title_hint or 'Generated Quiz'}\n"
-            f"- instructions hint: {instructions_hint or 'Answer all questions.'}\n"
-            "Return valid JSON only, no prose.\n\n"
-            f"Source material:\n{materials_text[:120000]}"
+        prompt_spec = build_quiz_generation_prompt(
+            materials_text=materials_text,
+            title_hint=title_hint,
+            instructions_hint=instructions_hint,
+            total_questions=total_questions,
+            mcq_count=mcq_count,
+            short_count=short_count,
+            mcq_options=mcq_options,
         )
+        prompt = f"{prompt_spec.system}\n\n{prompt_spec.user}"
         raw = self._responses_text(prompt, model=model, max_tokens=3200)
         json_text = self._extract_json_block(raw)
         try:

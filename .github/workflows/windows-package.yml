@@ -29,6 +29,27 @@ jobs:
           cache: npm
           cache-dependency-path: electron/package-lock.json
 
+      - name: Install OCR runtime dependencies
+        shell: powershell
+        run: |
+          choco install -y tesseract poppler
+          $tesseractBin = "C:\Program Files\Tesseract-OCR"
+          if (-not (Test-Path $tesseractBin)) {
+            throw "Tesseract install path not found: $tesseractBin"
+          }
+          $popplerRoot = Get-ChildItem "C:\ProgramData\chocolatey\lib" -Directory -Filter "poppler*" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($null -eq $popplerRoot) {
+            throw "Unable to locate Chocolatey poppler installation"
+          }
+          $popplerBin = Join-Path $popplerRoot.FullName "tools\Library\bin"
+          if (-not (Test-Path $popplerBin)) {
+            throw "Poppler bin directory not found: $popplerBin"
+          }
+          "$tesseractBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$popplerBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Install backend build dependencies
         run: |
           python -m pip install --upgrade pip
