@@ -115,6 +115,7 @@ class APIServerTests(unittest.TestCase):
                 "quiz_dir": str(self.root / "Algorithm Analysis"),
                 "quiz_roots": [str(self.root)],
                 "feedback_mode": "end_only",
+                "question_timer_seconds": 45,
                 "generation_defaults": {
                     "total": 10,
                     "mcq_count": 7,
@@ -126,7 +127,27 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(updated.status_code, 200)
         payload = updated.json()["settings"]
         self.assertEqual(payload["feedback_mode"], "end_only")
-        self.assertEqual(payload["quiz_roots"], [str(self.root)])
+        self.assertFalse(payload["show_feedback_on_answer"])
+        self.assertTrue(payload["show_feedback_on_completion"])
+        self.assertFalse(payload["auto_advance_enabled"])
+        self.assertEqual(payload["question_timer_seconds"], 45)
+        self.assertEqual(payload["quiz_roots"], [str((self.root / "Quizzes").resolve())])
+
+        flags_update = self.client.put(
+            "/v1/settings",
+            headers=self.headers,
+            json={
+                "show_feedback_on_answer": True,
+                "show_feedback_on_completion": False,
+                "auto_advance_enabled": True,
+            },
+        )
+        self.assertEqual(flags_update.status_code, 200)
+        flags_payload = flags_update.json()["settings"]
+        self.assertEqual(flags_payload["feedback_mode"], "auto_advance")
+        self.assertTrue(flags_payload["show_feedback_on_answer"])
+        self.assertFalse(flags_payload["show_feedback_on_completion"])
+        self.assertTrue(flags_payload["auto_advance_enabled"])
 
     def test_quiz_tree_and_load(self) -> None:
         quiz_dir = self.root / "Algorithm Analysis"
@@ -187,12 +208,29 @@ class APIServerTests(unittest.TestCase):
         self.assertTrue(tree["roots"])
         root_node = tree["roots"][0]
         self.assertEqual(root_node["kind"], "root")
-        self.assertTrue(all(child["kind"] == "quiz" for child in root_node["children"]))
-        self.assertTrue(all(child["path"].lower().endswith(".json") for child in root_node["children"]))
-        child_names = {child["name"] for child in root_node["children"]}
-        self.assertIn("Algorithm Analysis/sample.json", child_names)
-        self.assertIn("Algorithm Analysis/week1/nested.json", child_names)
-        self.assertNotIn("Algorithm Analysis/week1/notes.txt", child_names)
+
+        def _collect(nodes: list[dict], kind: str, field: str) -> set[str]:
+            values: set[str] = set()
+            for node in nodes:
+                if node.get("kind") == kind:
+                    value = node.get(field)
+                    if isinstance(value, str):
+                        values.add(value)
+                values.update(_collect(node.get("children", []), kind, field))
+            return values
+
+        folder_names = _collect(root_node["children"], "folder", "name")
+        self.assertIn("Algorithm Analysis", folder_names)
+        self.assertIn("week1", folder_names)
+
+        child_names = _collect(root_node["children"], "quiz", "name")
+        self.assertIn("Sample Quiz", child_names)
+        self.assertIn("Nested Quiz", child_names)
+
+        child_rel_paths = _collect(root_node["children"], "quiz", "relative_path")
+        self.assertIn("Algorithm Analysis/sample.json", child_rel_paths)
+        self.assertIn("Algorithm Analysis/week1/nested.json", child_rel_paths)
+        self.assertNotIn("Algorithm Analysis/week1/notes.txt", child_rel_paths)
 
         loaded = self._post("/v1/quizzes/load", {"path": str(quiz_path)})
         self.assertEqual(loaded["quiz"]["title"], "Sample Quiz")
@@ -268,6 +306,7 @@ class APIServerTests(unittest.TestCase):
         (source_folder / "intro.json").write_text(
             json.dumps(
                 {
+                    "name": "Intro Display Name",
                     "title": "Intro",
                     "instructions": "",
                     "questions": [
@@ -327,16 +366,68 @@ class APIServerTests(unittest.TestCase):
             return names
 
         quiz_names = _collect_quiz_names(imported["tree"])
-        self.assertIn("intro.json", quiz_names)
-        self.assertIn("deep.json", quiz_names)
+        self.assertIn("Intro", quiz_names)
+        self.assertIn("Deep", quiz_names)
 
         tree_default = self._post("/v1/quizzes/tree", {})
         self.assertTrue(tree_default["roots"])
         default_root = tree_default["roots"][0]
         self.assertEqual(default_root["path"], str(quizzes_dir))
-        default_paths = {child["name"] for child in default_root["children"]}
+
+        def _collect_quiz_rel_paths(nodes: list[dict]) -> set[str]:
+            values: set[str] = set()
+            for node in nodes:
+                if node.get("kind") == "quiz":
+                    rel = node.get("relative_path")
+                    if isinstance(rel, str):
+                        values.add(rel)
+                values.update(_collect_quiz_rel_paths(node.get("children", [])))
+            return values
+
+        default_paths = _collect_quiz_rel_paths(default_root["children"])
         self.assertIn(f"{source_folder.name}/intro.json", default_paths)
         self.assertIn(f"{source_folder.name}/week1/deep.json", default_paths)
+
+    def test_quizzes_library_rename_updates_json_title(self) -> None:
+        quizzes_dir = self.root / "Quizzes"
+        quizzes_dir.mkdir(parents=True, exist_ok=True)
+        quiz_path = quizzes_dir / "rename-me.json"
+        quiz_path.write_text(
+            json.dumps(
+                {
+                    "title": "Old Title",
+                    "instructions": "Answer all questions.",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "A?",
+                            "options": ["A", "B"],
+                            "answer": "A",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        renamed = self._post(
+            "/v1/quizzes/library/rename",
+            {
+                "path": str(quiz_path),
+                "title": "New Title",
+            },
+        )
+        self.assertEqual(renamed["path"], str(quiz_path.resolve()))
+        self.assertEqual(renamed["title"], "New Title")
+
+        saved = json.loads(quiz_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["title"], "New Title")
+
+        tree = self._post("/v1/quizzes/tree", {})
+        root = tree["roots"][0]
+        quiz_titles = [node["name"] for node in root["children"] if node.get("kind") == "quiz"]
+        self.assertIn("New Title", quiz_titles)
 
     def test_grading_endpoints(self) -> None:
         mcq = self._post(

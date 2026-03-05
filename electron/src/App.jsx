@@ -3,6 +3,7 @@ import renderMathInElement from 'katex/contrib/auto-render';
 import { apiRequest, backendInfo, openPath, pickFiles, pickFolder } from './api';
 
 const TABS = ['quiz', 'generate', 'performance', 'settings'];
+const THEME_STORAGE_KEY = 'modular-quiz-theme';
 const KATEX_DELIMITERS = [
   { left: '$$', right: '$$', display: true },
   { left: '$', right: '$', display: false },
@@ -63,7 +64,136 @@ function countQuizFiles(nodes) {
   return total;
 }
 
-function QuizTree({ nodes, selectedPath, onSelect }) {
+function shortPathLabel(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+  const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '');
+  const parts = normalized.split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : raw;
+}
+
+function omitManagedQuizzesRoot(nodes) {
+  const output = [];
+  for (const node of nodes || []) {
+    const label = shortPathLabel(node?.path || node?.name).toLowerCase();
+    if (node?.kind === 'root' && label === 'quizzes') {
+      output.push(...(node.children || []));
+      continue;
+    }
+    output.push(node);
+  }
+  return output;
+}
+
+function findQuizNodeByPath(nodes, targetPath) {
+  if (!targetPath) {
+    return null;
+  }
+  for (const node of nodes || []) {
+    if (node?.kind === 'quiz' && node?.path === targetPath) {
+      return node;
+    }
+    const found = findQuizNodeByPath(node?.children || [], targetPath);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+function filterQuizNodes(nodes, queryText) {
+  const query = String(queryText || '').trim().toLowerCase();
+  if (!query) {
+    return nodes || [];
+  }
+
+  const output = [];
+  for (const node of nodes || []) {
+    const filteredChildren = filterQuizNodes(node.children || [], query);
+    const haystack = `${node?.name || ''} ${node?.file_name || ''} ${node?.path || ''}`.toLowerCase();
+    if (haystack.includes(query) || filteredChildren.length) {
+      output.push({
+        ...node,
+        children: filteredChildren,
+      });
+    }
+  }
+  return output;
+}
+
+function sortQuizNodes(nodes, sortMode) {
+  const sortedChildren = (nodes || []).map((node) => ({
+    ...node,
+    children: sortQuizNodes(node.children || [], sortMode),
+  }));
+
+  const compare = (left, right) => {
+    const leftIsQuiz = left?.kind === 'quiz';
+    const rightIsQuiz = right?.kind === 'quiz';
+    if (leftIsQuiz !== rightIsQuiz) {
+      return leftIsQuiz ? 1 : -1;
+    }
+
+    const leftTitle = String(left?.name || shortPathLabel(left?.path || '')).toLowerCase();
+    const rightTitle = String(right?.name || shortPathLabel(right?.path || '')).toLowerCase();
+    const leftPath = String(left?.path || '').toLowerCase();
+    const rightPath = String(right?.path || '').toLowerCase();
+
+    if (sortMode === 'title_desc') {
+      const titleCompare = rightTitle.localeCompare(leftTitle);
+      if (titleCompare !== 0) {
+        return titleCompare;
+      }
+      return rightPath.localeCompare(leftPath);
+    }
+
+    if (sortMode === 'path_asc') {
+      const pathCompare = leftPath.localeCompare(rightPath);
+      if (pathCompare !== 0) {
+        return pathCompare;
+      }
+      return leftTitle.localeCompare(rightTitle);
+    }
+
+    const titleCompare = leftTitle.localeCompare(rightTitle);
+    if (titleCompare !== 0) {
+      return titleCompare;
+    }
+    return leftPath.localeCompare(rightPath);
+  };
+
+  sortedChildren.sort(compare);
+  return sortedChildren;
+}
+
+function isEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  const tag = target.tagName.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
+function formatCountdown(milliseconds) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(milliseconds || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function QuizTree({ nodes, selectedPath, onSelect, onRename }) {
+  const nodeLabel = (node) => {
+    if (node.kind === 'root') {
+      return shortPathLabel(node.path || node.name) || 'Quizzes';
+    }
+    return node.name || shortPathLabel(node.path) || '';
+  };
+
   const renderNode = (node) => {
     const isQuiz = node.kind === 'quiz';
     return (
@@ -76,8 +206,15 @@ function QuizTree({ nodes, selectedPath, onSelect }) {
               onSelect(node.path);
             }
           }}
+          onContextMenu={(event) => {
+            if (!isQuiz || typeof onRename !== 'function') {
+              return;
+            }
+            event.preventDefault();
+            onRename(node.path, nodeLabel(node));
+          }}
         >
-          {node.name}
+          {nodeLabel(node)}
         </button>
         {node.children && node.children.length > 0 ? (
           <ul className="tree-list">
@@ -113,12 +250,27 @@ function QuizzesStructureTree({ nodes }) {
 }
 
 function App() {
+  const [themeMode, setThemeMode] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+      if (stored === 'light' || stored === 'dark') {
+        return stored;
+      }
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+      }
+    } catch (_err) {
+      // Ignore storage/media failures and fall back to light mode.
+    }
+    return 'light';
+  });
   const [activeTab, setActiveTab] = useState('quiz');
   const [startupError, setStartupError] = useState('');
   const [apiStatus, setApiStatus] = useState('');
 
   const [settings, setSettings] = useState(null);
   const [settingsForm, setSettingsForm] = useState(null);
+  const [settingsSearch, setSettingsSearch] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [quizzesDir, setQuizzesDir] = useState('');
   const [quizzesTree, setQuizzesTree] = useState([]);
@@ -131,6 +283,10 @@ function App() {
 
   const [quizTreeRoots, setQuizTreeRoots] = useState([]);
   const [selectedQuizPath, setSelectedQuizPath] = useState('');
+  const [quizSearchText, setQuizSearchText] = useState('');
+  const [quizSortMode, setQuizSortMode] = useState('title_asc');
+  const [renameQuizTitle, setRenameQuizTitle] = useState('');
+  const [renamingQuiz, setRenamingQuiz] = useState(false);
   const [quizLoadError, setQuizLoadError] = useState('');
   const [quiz, setQuiz] = useState(null);
   const [quizIndex, setQuizIndex] = useState(0);
@@ -144,6 +300,14 @@ function App() {
   const [selfScore, setSelfScore] = useState('');
   const [quizNotes, setQuizNotes] = useState([]);
   const [attemptQuestions, setAttemptQuestions] = useState([]);
+  const [questionStates, setQuestionStates] = useState({});
+  const [questionTimeLeftMs, setQuestionTimeLeftMs] = useState(0);
+  const autoAdvanceTimeoutRef = useRef(null);
+  const questionTimerIntervalRef = useRef(null);
+  const questionStatesRef = useRef({});
+  const mcqAnswerRef = useRef('');
+  const shortAnswerRef = useRef('');
+  const selfScoreRef = useRef('');
 
   const [sourceInputs, setSourceInputs] = useState([]);
   const [collectedSources, setCollectedSources] = useState([]);
@@ -168,7 +332,7 @@ function App() {
   const [globalBusy, setGlobalBusy] = useState(false);
 
   const combinedModelOptions = useMemo(() => {
-    const options = [{ key: 'self:', label: 'Self grading', provider: 'self' }];
+    const options = [{ key: 'self:', label: 'No model', provider: 'self' }];
     for (const model of providerModels.claude || []) {
       options.push({ key: modelKey('claude', model.id), label: `Claude: ${model.label}`, provider: 'claude' });
     }
@@ -185,12 +349,78 @@ function App() {
     return quiz.questions[quizIndex];
   }, [quiz, quizIndex]);
 
+  const selectedQuizNode = useMemo(
+    () => findQuizNodeByPath(quizTreeRoots, selectedQuizPath),
+    [quizTreeRoots, selectedQuizPath],
+  );
+
+  const visibleQuizTreeNodes = useMemo(() => {
+    const baseNodes = omitManagedQuizzesRoot(quizTreeRoots);
+    const filteredNodes = filterQuizNodes(baseNodes, quizSearchText);
+    return sortQuizNodes(filteredNodes, quizSortMode);
+  }, [quizTreeRoots, quizSearchText, quizSortMode]);
+
+  const selectedQuizLabel = useMemo(() => {
+    if (selectedQuizNode?.name) {
+      return selectedQuizNode.name;
+    }
+    return shortPathLabel(selectedQuizPath) || 'None';
+  }, [selectedQuizNode, selectedQuizPath]);
+
   const maxScore = useMemo(() => {
     if (!quiz || !quiz.questions) {
       return 0;
     }
     return quiz.questions.reduce((acc, q) => acc + Number(q.points || 0), 0);
   }, [quiz]);
+
+  const lastAnsweredIndex = useMemo(() => {
+    let maxIndex = -1;
+    for (const key of Object.keys(questionStates || {})) {
+      const index = Number(key);
+      if (!Number.isNaN(index) && index > maxIndex) {
+        maxIndex = index;
+      }
+    }
+    return maxIndex;
+  }, [questionStates]);
+
+  const furthestReachableIndex = useMemo(() => {
+    if (!quiz || !quiz.questions?.length) {
+      return 0;
+    }
+    return Math.min(lastAnsweredIndex + 1, quiz.questions.length - 1);
+  }, [quiz, lastAnsweredIndex]);
+
+  const canGoPrevQuestion = useMemo(() => {
+    if (!quiz || !quiz.questions?.length || quizIndex <= 0) {
+      return false;
+    }
+    return Boolean(questionStates[quizIndex - 1]);
+  }, [quiz, quizIndex, questionStates]);
+
+  const canGoForwardQuestion = useMemo(() => {
+    if (!quiz || !quiz.questions?.length) {
+      return false;
+    }
+    return quizIndex < furthestReachableIndex;
+  }, [quiz, quizIndex, furthestReachableIndex]);
+
+  const feedbackMode = settingsForm?.feedback_mode || settings?.feedback_mode || 'show_then_next';
+  const showFeedbackOnAnswer = settingsForm?.show_feedback_on_answer ?? settings?.show_feedback_on_answer ?? feedbackMode !== 'end_only';
+  const showFeedbackOnCompletion = settingsForm?.show_feedback_on_completion ?? settings?.show_feedback_on_completion ?? true;
+  const autoAdvanceEnabled = settingsForm?.auto_advance_enabled ?? settings?.auto_advance_enabled ?? feedbackMode === 'auto_advance';
+  const autoAdvanceDelayMs = Math.max(
+    0,
+    Number(settingsForm?.auto_advance_ms ?? settings?.auto_advance_ms ?? 0) || 0,
+  );
+  const questionTimerSeconds = Math.max(
+    0,
+    Number(settingsForm?.question_timer_seconds ?? settings?.question_timer_seconds ?? 0) || 0,
+  );
+  const showQuestionTimer = Boolean(
+    activeTab === 'quiz' && quiz && currentQuestion && !questionLocked && questionTimerSeconds > 0,
+  );
 
   const historyFiltered = useMemo(() => {
     if (!historyFilterPath) {
@@ -213,9 +443,52 @@ function App() {
     return providerModels.claude || [];
   }, [generationForm.provider, providerModels]);
 
+  const settingsSearchQuery = (settingsSearch || '').trim().toLowerCase();
+
+  function settingsMatches(...terms) {
+    if (!settingsSearchQuery) {
+      return true;
+    }
+    return terms.some((term) => String(term || '').toLowerCase().includes(settingsSearchQuery));
+  }
+
+  function feedbackModeFromFlags(showOnAnswer, autoAdvanceOn) {
+    if (!showOnAnswer) {
+      return 'end_only';
+    }
+    if (autoAdvanceOn) {
+      return 'auto_advance';
+    }
+    return 'show_then_next';
+  }
+
   useEffect(() => {
     void boot();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'quiz') {
+      return undefined;
+    }
+
+    const refreshQuizTree = async () => {
+      try {
+        await loadQuizTree();
+      } catch (_err) {
+        // Polling should be best-effort and not interrupt quiz flow.
+      }
+    };
+
+    void refreshQuizTree();
+
+    const timerId = window.setInterval(() => {
+      void refreshQuizTree();
+    }, 10000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [activeTab, selectedQuizPath]);
 
   useEffect(() => {
     if (!settingsForm || combinedModelOptions.length === 0) {
@@ -229,6 +502,186 @@ function App() {
       }));
     }
   }, [combinedModelOptions, settingsForm]);
+
+  useEffect(() => {
+    if (!quiz || !quiz.questions?.length) {
+      return;
+    }
+    const state = questionStates[quizIndex];
+    if (state) {
+      setQuestionResult(state.result || null);
+      setQuestionLocked(true);
+      setMcqAnswer(state.mcq_answer || '');
+      setShortAnswer(state.short_answer || '');
+      setSelfScore(state.self_score || '');
+      return;
+    }
+    setQuestionResult(null);
+    setQuestionLocked(false);
+    setMcqAnswer('');
+    setShortAnswer('');
+    setSelfScore('');
+  }, [quiz, quizIndex, questionStates]);
+
+  useEffect(() => {
+    if (!selectedQuizPath) {
+      setRenameQuizTitle('');
+      return;
+    }
+    setRenameQuizTitle(selectedQuizNode?.name || shortPathLabel(selectedQuizPath));
+  }, [selectedQuizNode, selectedQuizPath]);
+
+  useEffect(() => {
+    questionStatesRef.current = questionStates || {};
+  }, [questionStates]);
+
+  useEffect(() => {
+    mcqAnswerRef.current = mcqAnswer;
+  }, [mcqAnswer]);
+
+  useEffect(() => {
+    shortAnswerRef.current = shortAnswer;
+  }, [shortAnswer]);
+
+  useEffect(() => {
+    selfScoreRef.current = selfScore;
+  }, [selfScore]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute('data-theme', themeMode);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    } catch (_err) {
+      // Ignore storage write failures.
+    }
+  }, [themeMode]);
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (activeTab !== 'quiz' || !quiz || !currentQuestion || isEditableTarget(event.target)) {
+        return;
+      }
+      if (event.key === 'ArrowLeft' && canGoPrevQuestion) {
+        event.preventDefault();
+        setQuizIndex((prev) => Math.max(prev - 1, 0));
+        return;
+      }
+      if (event.key === 'ArrowRight' && canGoForwardQuestion) {
+        event.preventDefault();
+        setQuizIndex((prev) => Math.min(prev + 1, furthestReachableIndex));
+        return;
+      }
+      if (event.key !== 'Enter') {
+        return;
+      }
+      if (questionLocked) {
+        event.preventDefault();
+        void goToNextQuestion();
+        return;
+      }
+      if (canGoForwardQuestion) {
+        event.preventDefault();
+        setQuizIndex((prev) => Math.min(prev + 1, furthestReachableIndex));
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    activeTab,
+    quiz,
+    currentQuestion,
+    canGoPrevQuestion,
+    canGoForwardQuestion,
+    furthestReachableIndex,
+    questionLocked,
+  ]);
+
+  useEffect(() => {
+    if (autoAdvanceTimeoutRef.current) {
+      window.clearTimeout(autoAdvanceTimeoutRef.current);
+      autoAdvanceTimeoutRef.current = null;
+    }
+
+    if (activeTab !== 'quiz' || !quiz || !currentQuestion || !questionLocked || !questionResult) {
+      return;
+    }
+    if (!autoAdvanceEnabled) {
+      return;
+    }
+
+    const state = questionStates[quizIndex];
+    if (!state || state.result !== questionResult) {
+      return;
+    }
+
+    autoAdvanceTimeoutRef.current = window.setTimeout(() => {
+      void goToNextQuestion();
+    }, autoAdvanceDelayMs);
+
+    return () => {
+      if (autoAdvanceTimeoutRef.current) {
+        window.clearTimeout(autoAdvanceTimeoutRef.current);
+        autoAdvanceTimeoutRef.current = null;
+      }
+    };
+  }, [
+    activeTab,
+    quiz,
+    currentQuestion,
+    questionLocked,
+    questionResult,
+    autoAdvanceEnabled,
+    autoAdvanceDelayMs,
+    questionStates,
+    quizIndex,
+  ]);
+
+  useEffect(() => {
+    if (questionTimerIntervalRef.current) {
+      window.clearInterval(questionTimerIntervalRef.current);
+      questionTimerIntervalRef.current = null;
+    }
+
+    if (activeTab !== 'quiz' || !quiz || !currentQuestion || questionLocked || questionTimerSeconds <= 0) {
+      setQuestionTimeLeftMs(0);
+      return;
+    }
+
+    const durationMs = questionTimerSeconds * 1000;
+    const deadline = Date.now() + durationMs;
+    setQuestionTimeLeftMs(durationMs);
+
+    questionTimerIntervalRef.current = window.setInterval(() => {
+      const remainingMs = Math.max(0, deadline - Date.now());
+      setQuestionTimeLeftMs(remainingMs);
+      if (remainingMs > 0) {
+        return;
+      }
+      if (questionTimerIntervalRef.current) {
+        window.clearInterval(questionTimerIntervalRef.current);
+        questionTimerIntervalRef.current = null;
+      }
+
+      const timeoutResult = {
+        correct: false,
+        points_awarded: 0,
+        max_points: Number(currentQuestion.points || 0),
+        feedback: 'Time expired.',
+      };
+      const timedAnswer = currentQuestion.type === 'short' ? shortAnswerRef.current : (mcqAnswerRef.current || '');
+      const expectedText = currentQuestion.type === 'short' ? (currentQuestion.expected || '') : (currentQuestion.answer || '');
+      lockQuestionAfterResult(timeoutResult, timedAnswer, expectedText);
+    }, 200);
+
+    return () => {
+      if (questionTimerIntervalRef.current) {
+        window.clearInterval(questionTimerIntervalRef.current);
+        questionTimerIntervalRef.current = null;
+      }
+    };
+  }, [activeTab, quiz, currentQuestion, quizIndex, questionLocked, questionTimerSeconds]);
 
   async function boot() {
     setGlobalBusy(true);
@@ -267,7 +720,7 @@ function App() {
   async function loadModels() {
     setModelLoadError('');
     const next = {
-      self: [{ id: '', label: 'Self grading', provider: 'self', capability_tags: [] }],
+      self: [{ id: '', label: 'No model', provider: 'self', capability_tags: [] }],
       claude: [],
       openai: [],
     };
@@ -455,6 +908,58 @@ function App() {
     }
   }
 
+  async function renameQuizAtPath(pathValue, titleValue) {
+    const targetPath = String(pathValue || '').trim();
+    const nextTitle = String(titleValue || '').trim();
+    if (!targetPath || !nextTitle) {
+      return;
+    }
+
+    setRenamingQuiz(true);
+    setQuizLoadError('');
+    try {
+      const response = await apiRequest('/v1/quizzes/library/rename', 'POST', {
+        path: targetPath,
+        title: nextTitle,
+      });
+      await Promise.all([loadQuizzesLibrary(), loadQuizTree()]);
+      setRenameQuizTitle(response.title || nextTitle);
+      if (quiz && response.path === targetPath) {
+        setQuiz((prev) => (prev ? { ...prev, title: response.title || nextTitle } : prev));
+      }
+      setApiStatus(`Renamed quiz to "${response.title || nextTitle}".`);
+    } catch (err) {
+      setQuizLoadError(err.message || 'Failed to rename quiz.');
+    } finally {
+      setRenamingQuiz(false);
+    }
+  }
+
+  async function renameSelectedQuiz() {
+    await renameQuizAtPath(selectedQuizPath, renameQuizTitle);
+  }
+
+  async function handleQuizContextRename(pathValue, currentTitle) {
+    if (renamingQuiz) {
+      return;
+    }
+    const targetPath = String(pathValue || '').trim();
+    if (!targetPath) {
+      return;
+    }
+
+    const nextTitle = window.prompt('Rename quiz title', String(currentTitle || '').trim());
+    if (nextTitle === null) {
+      return;
+    }
+    const trimmed = String(nextTitle).trim();
+    if (!trimmed) {
+      setQuizLoadError('Quiz title cannot be empty.');
+      return;
+    }
+    await renameQuizAtPath(targetPath, trimmed);
+  }
+
   async function startSelectedQuiz() {
     if (!selectedQuizPath) {
       return;
@@ -475,6 +980,7 @@ function App() {
       setSelfScore('');
       setQuizNotes([]);
       setAttemptQuestions([]);
+      setQuestionStates({});
       setQuizSaved(false);
       setActiveTab('quiz');
     } catch (err) {
@@ -483,25 +989,49 @@ function App() {
   }
 
   function lockQuestionAfterResult(result, userAnswer, expectedText) {
+    if (!currentQuestion) {
+      return;
+    }
+    if (questionStatesRef.current[quizIndex]) {
+      return;
+    }
+    const record = {
+      question_id: String(currentQuestion.id || `q${quizIndex + 1}`),
+      question_type: currentQuestion.type,
+      user_answer: userAnswer,
+      correct_answer_or_expected: expectedText,
+      points_awarded: Number(result.points_awarded || 0),
+      max_points: Number(result.max_points || 0),
+      feedback: result.feedback || '',
+    };
+    const isShort = currentQuestion.type === 'short';
+
+    setQuestionStates((prev) => ({
+      ...prev,
+      [quizIndex]: {
+        result,
+        locked: true,
+        mcq_answer: isShort ? '' : userAnswer,
+        short_answer: isShort ? userAnswer : '',
+        self_score: isShort ? String(selfScoreRef.current || '') : '',
+      },
+    }));
+
     setQuestionResult(result);
     setQuestionLocked(true);
     setQuizScore((prev) => prev + Number(result.points_awarded || 0));
-    setQuizNotes((prev) => [...prev, result.feedback]);
-
-    if (currentQuestion) {
-      setAttemptQuestions((prev) => [
-        ...prev,
-        {
-          question_id: String(currentQuestion.id || `q${quizIndex + 1}`),
-          question_type: currentQuestion.type,
-          user_answer: userAnswer,
-          correct_answer_or_expected: expectedText,
-          points_awarded: Number(result.points_awarded || 0),
-          max_points: Number(result.max_points || 0),
-          feedback: result.feedback || '',
-        },
-      ]);
+    if (showFeedbackOnAnswer && result.feedback) {
+      setQuizNotes((prev) => [...prev, result.feedback]);
     }
+    setAttemptQuestions((prev) => {
+      const next = [...prev];
+      const index = next.findIndex((item) => item.question_id === record.question_id);
+      if (index >= 0) {
+        next[index] = record;
+        return next;
+      }
+      return [...next, record];
+    });
   }
 
   async function submitMcqAnswer(letter) {
@@ -555,7 +1085,7 @@ function App() {
     const modelKeyValue = (settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:').trim();
     const selected = providerAndModelFromKey(modelKeyValue);
     if (selected.provider === 'self') {
-      setQuizLoadError('Self grading does not support MCQ explanation.');
+      setQuizLoadError('No model mode does not support MCQ explanation.');
       return;
     }
 
@@ -582,11 +1112,6 @@ function App() {
     const nextIndex = quizIndex + 1;
     if (nextIndex < quiz.questions.length) {
       setQuizIndex(nextIndex);
-      setQuestionResult(null);
-      setQuestionLocked(false);
-      setMcqAnswer('');
-      setShortAnswer('');
-      setSelfScore('');
       return;
     }
 
@@ -618,9 +1143,33 @@ function App() {
       correct: false,
       points_awarded: quizScore,
       max_points: maxScore,
-      feedback: 'Quiz finished.',
+      feedback: showFeedbackOnCompletion ? 'Quiz finished.' : '',
     });
     setQuestionLocked(true);
+  }
+
+  function goToPreviousQuestion() {
+    if (!canGoPrevQuestion) {
+      return;
+    }
+    setQuizIndex((prev) => Math.max(prev - 1, 0));
+  }
+
+  function goToForwardQuestion() {
+    if (!canGoForwardQuestion) {
+      return;
+    }
+    setQuizIndex((prev) => Math.min(prev + 1, furthestReachableIndex));
+  }
+
+  function jumpToQuestion(targetIndex) {
+    if (!quiz || !quiz.questions?.length) {
+      return;
+    }
+    if (targetIndex < 0 || targetIndex > furthestReachableIndex) {
+      return;
+    }
+    setQuizIndex(targetIndex);
   }
 
   function restartQuiz() {
@@ -705,6 +1254,18 @@ function App() {
   const selectedModelKey = settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:';
   const selectedProviderModel = providerAndModelFromKey(selectedModelKey);
   const quizComplete = Boolean(quiz && quizIndex >= quiz.questions.length - 1 && questionLocked && questionResult);
+  const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
+  const settingsFilterHasMatches = [
+    settingsMatches('preferred model', 'model selection', 'grading model'),
+    settingsMatches('feedback', 'show feedback on answer', 'show feedback on quiz completion'),
+    settingsMatches('auto advance', 'auto-advance', 'auto advance delay', 'question delay'),
+    settingsMatches('question timer', 'timer', 'countdown'),
+    settingsMatches('mcq explanations', 'explanations', 'explain'),
+    settingsMatches('quizzes', 'quiz folder', 'quiz library', 'import folder', 'open quizzes folder', 'drag and drop'),
+    settingsMatches('claude api key', 'claude model selected', 'claude'),
+    settingsMatches('openai auth mode', 'openai api key', 'openai model selected', 'openai'),
+    settingsMatches('generation output subdir', 'output folder', 'generation'),
+  ].some(Boolean);
   const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
 
   return (
@@ -714,7 +1275,16 @@ function App() {
           <h1>Modular Quiz</h1>
           <p>{apiStatus || 'Initializing...'}</p>
         </div>
-        {globalBusy ? <span className="pill">Loading</span> : null}
+        <div className="topbar-actions">
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+          >
+            {themeMode === 'dark' ? 'Light mode' : 'Dark mode'}
+          </button>
+          {globalBusy ? <span className="pill">Loading</span> : null}
+        </div>
       </header>
 
       {startupError ? <div className="banner error">{startupError}</div> : null}
@@ -740,11 +1310,38 @@ function App() {
               <div className="card tree-card">
                 <div className="row between">
                   <h2>Quizzes</h2>
-                  <button type="button" onClick={() => loadQuizTree()}>
-                    Refresh
-                  </button>
+                  <span className="quiz-tree-hint">Right-click a quiz to rename</span>
                 </div>
-                <QuizTree nodes={quizTreeRoots} selectedPath={selectedQuizPath} onSelect={setSelectedQuizPath} />
+                <div className="quiz-selector-controls">
+                  <label className="field">
+                    <span>Filter</span>
+                    <input
+                      type="text"
+                      value={quizSearchText}
+                      onChange={(event) => setQuizSearchText(event.target.value)}
+                      placeholder="Search title, file, or path"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Sort</span>
+                    <select value={quizSortMode} onChange={(event) => setQuizSortMode(event.target.value)}>
+                      <option value="title_asc">Title (A-Z)</option>
+                      <option value="title_desc">Title (Z-A)</option>
+                      <option value="path_asc">Path (A-Z)</option>
+                    </select>
+                  </label>
+                </div>
+                <QuizTree
+                  nodes={visibleQuizTreeNodes}
+                  selectedPath={selectedQuizPath}
+                  onSelect={setSelectedQuizPath}
+                  onRename={(path, name) => {
+                    void handleQuizContextRename(path, name);
+                  }}
+                />
+                {!visibleQuizTreeNodes.length ? (
+                  <p className="roots-empty">No quizzes match the current filter.</p>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -754,6 +1351,25 @@ function App() {
               >
                 Start Selected Quiz
               </button>
+              <div className="card rename-quiz-card">
+                <label className="field">
+                  <span>Rename selected quiz title</span>
+                  <input
+                    type="text"
+                    value={renameQuizTitle}
+                    disabled={!selectedQuizPath || renamingQuiz}
+                    onChange={(event) => setRenameQuizTitle(event.target.value)}
+                    placeholder="Quiz title"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => renameSelectedQuiz()}
+                  disabled={!selectedQuizPath || !String(renameQuizTitle || '').trim() || renamingQuiz}
+                >
+                  {renamingQuiz ? 'Renaming...' : 'Rename Quiz'}
+                </button>
+              </div>
             </aside>
 
             <section className="card quiz-card">
@@ -763,7 +1379,7 @@ function App() {
               </div>
 
               <div className="selected-quiz-label">
-                <strong>Selected quiz:</strong> {selectedQuizPath ? selectedQuizPath.split('/').slice(-1)[0] : 'None'}
+                <strong>Selected quiz:</strong> {selectedQuizLabel}
               </div>
 
               <label className="field">
@@ -786,83 +1402,122 @@ function App() {
               {quizLoadError ? <div className="banner error">{quizLoadError}</div> : null}
 
               {quiz && currentQuestion ? (
-                <div className="question-block">
-                  <h3>
-                    <span>Q{quizIndex + 1}. </span>
-                    <MathText as="span" className="math-text" text={currentQuestion.prompt} />
-                  </h3>
+                <div className="question-shell">
+                  <div className="question-block">
+                    <div className="row question-step-controls">
+                      <button type="button" disabled={!canGoPrevQuestion} onClick={() => goToPreviousQuestion()}>
+                        ← Previous
+                      </button>
+                      <button type="button" disabled={!canGoForwardQuestion} onClick={() => goToForwardQuestion()}>
+                        Forward →
+                      </button>
+                      {showQuestionTimer ? (
+                        <span className={`question-timer ${questionTimeLeftMs <= 5000 ? 'urgent' : ''}`}>
+                          Time left: {formatCountdown(questionTimeLeftMs)}
+                        </span>
+                      ) : null}
+                    </div>
 
-                  {currentQuestion.type === 'mcq' ? (
-                    <div className="mcq-grid">
-                      {currentQuestion.options.map((option, index) => {
-                        const letter = String.fromCharCode(65 + index);
+                    <h3>
+                      <span>Q{quizIndex + 1}. </span>
+                      <MathText as="span" className="math-text" text={currentQuestion.prompt} />
+                    </h3>
+
+                    {currentQuestion.type === 'mcq' ? (
+                      <div className="mcq-grid">
+                        {currentQuestion.options.map((option, index) => {
+                          const letter = String.fromCharCode(65 + index);
+                          return (
+                            <button
+                              key={letter}
+                              type="button"
+                              disabled={questionLocked}
+                              className={mcqAnswer === letter ? 'selected' : ''}
+                              onClick={() => submitMcqAnswer(letter)}
+                            >
+                              <strong>{letter}.</strong> <MathText as="span" className="math-text" text={option} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="short-block">
+                        <textarea
+                          value={shortAnswer}
+                          onChange={(event) => setShortAnswer(event.target.value)}
+                          disabled={questionLocked}
+                          placeholder="Write your answer"
+                        />
+
+                        {selectedProviderModel.provider === 'self' ? (
+                          <label className="field">
+                            <span>Self-score (0 to {currentQuestion.points})</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={currentQuestion.points}
+                              value={selfScore}
+                              disabled={questionLocked}
+                              onChange={(event) => setSelfScore(event.target.value)}
+                            />
+                          </label>
+                        ) : null}
+
+                        <button type="button" className="primary" disabled={questionLocked} onClick={() => submitShortAnswer()}>
+                          Submit Answer
+                        </button>
+                      </div>
+                    )}
+
+                    {shouldShowQuestionFeedback ? (
+                      <div className={`result ${questionResult.correct ? 'good' : 'bad'}`}>
+                        <MathText as="span" className="math-text" text={questionResult.feedback} />
+                      </div>
+                    ) : null}
+
+                    <div className="row">
+                      {currentQuestion.type === 'mcq' && questionResult && selectedProviderModel.provider !== 'self' ? (
+                        <button type="button" onClick={() => explainCurrentMcq()}>
+                          Explain
+                        </button>
+                      ) : null}
+
+                      {questionLocked ? (
+                        <button type="button" className="primary" onClick={() => goToNextQuestion()}>
+                          {quizComplete ? 'Finish Quiz' : 'Next'}
+                        </button>
+                      ) : null}
+
+                      {quizComplete ? (
+                        <button type="button" onClick={() => restartQuiz()}>
+                          Restart Quiz
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <aside className="question-nav-column">
+                    <h4>Question Nav</h4>
+                    <div className="question-nav-list">
+                      {quiz.questions.map((q, index) => {
+                        const answered = Boolean(questionStates[index]);
+                        const reachable = index <= furthestReachableIndex;
+                        const current = index === quizIndex;
                         return (
                           <button
-                            key={letter}
+                            key={`qnav-${q.id || index}`}
                             type="button"
-                            disabled={questionLocked}
-                            className={mcqAnswer === letter ? 'selected' : ''}
-                            onClick={() => submitMcqAnswer(letter)}
+                            disabled={!reachable}
+                            className={`question-nav-button${current ? ' current' : ''}${answered ? ' answered' : ''}`}
+                            onClick={() => jumpToQuestion(index)}
                           >
-                            <strong>{letter}.</strong> <MathText as="span" className="math-text" text={option} />
+                            <span>Q{index + 1}</span>
+                            <span>{answered ? 'Done' : reachable ? 'Open' : 'Locked'}</span>
                           </button>
                         );
                       })}
                     </div>
-                  ) : (
-                    <div className="short-block">
-                      <textarea
-                        value={shortAnswer}
-                        onChange={(event) => setShortAnswer(event.target.value)}
-                        disabled={questionLocked}
-                        placeholder="Write your answer"
-                      />
-
-                      {selectedProviderModel.provider === 'self' ? (
-                        <label className="field">
-                          <span>Self-score (0 to {currentQuestion.points})</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={currentQuestion.points}
-                            value={selfScore}
-                            disabled={questionLocked}
-                            onChange={(event) => setSelfScore(event.target.value)}
-                          />
-                        </label>
-                      ) : null}
-
-                      <button type="button" className="primary" disabled={questionLocked} onClick={() => submitShortAnswer()}>
-                        Submit Answer
-                      </button>
-                    </div>
-                  )}
-
-                  {questionResult ? (
-                    <div className={`result ${questionResult.correct ? 'good' : 'bad'}`}>
-                      <MathText as="span" className="math-text" text={questionResult.feedback} />
-                    </div>
-                  ) : null}
-
-                  <div className="row">
-                    {currentQuestion.type === 'mcq' && questionResult && selectedProviderModel.provider !== 'self' ? (
-                      <button type="button" onClick={() => explainCurrentMcq()}>
-                        Explain
-                      </button>
-                    ) : null}
-
-                    {questionLocked ? (
-                      <button type="button" className="primary" onClick={() => goToNextQuestion()}>
-                        {quizComplete ? 'Finish Quiz' : 'Next'}
-                      </button>
-                    ) : null}
-
-                    {quizComplete ? (
-                      <button type="button" onClick={() => restartQuiz()}>
-                        Restart Quiz
-                      </button>
-                    ) : null}
-                  </div>
+                  </aside>
                 </div>
               ) : (
                 <p>Select and start a quiz to begin.</p>
@@ -1126,189 +1781,283 @@ function App() {
               </div>
             </div>
 
+            <label className="field settings-search-field">
+              <span>Search settings</span>
+              <input
+                value={settingsSearch}
+                onChange={(event) => setSettingsSearch(event.target.value)}
+                placeholder="Try: feedback, auto-advance, OpenAI, quiz library"
+              />
+            </label>
+
             <div className="form-grid two-col">
-              <label className="field">
-                <span>Quiz directory</span>
-                <input
-                  value={settingsForm.quiz_dir || ''}
-                  onChange={(event) => setSettingsForm((prev) => ({ ...prev, quiz_dir: event.target.value }))}
-                />
-              </label>
+              {settingsMatches('preferred model', 'model selection', 'grading model') ? (
+                <label className="field">
+                  <span>Preferred model</span>
+                  <select
+                    value={settingsForm.preferred_model_key || 'self:'}
+                    onChange={(event) =>
+                      setSettingsForm((prev) => ({ ...prev, preferred_model_key: event.target.value }))
+                    }
+                  >
+                    {combinedModelOptions.map((option) => (
+                      <option key={option.key} value={option.key}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
 
-              <label className="field">
-                <span>Performance history path</span>
-                <input
-                  value={settingsForm.performance_history_path || ''}
-                  onChange={(event) =>
-                    setSettingsForm((prev) => ({ ...prev, performance_history_path: event.target.value }))
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span>Preferred model</span>
-                <select
-                  value={settingsForm.preferred_model_key || 'self:'}
-                  onChange={(event) =>
-                    setSettingsForm((prev) => ({ ...prev, preferred_model_key: event.target.value }))
-                  }
-                >
-                  {combinedModelOptions.map((option) => (
-                    <option key={option.key} value={option.key}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Feedback mode</span>
-                <select
-                  value={settingsForm.feedback_mode || 'show_then_next'}
-                  onChange={(event) => setSettingsForm((prev) => ({ ...prev, feedback_mode: event.target.value }))}
-                >
-                  <option value="show_then_next">show_then_next</option>
-                  <option value="auto_advance">auto_advance</option>
-                  <option value="end_only">end_only</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Auto advance (ms)</span>
-                <input
-                  type="number"
-                  value={settingsForm.auto_advance_ms || 0}
-                  onChange={(event) =>
-                    setSettingsForm((prev) => ({ ...prev, auto_advance_ms: Number(event.target.value) }))
-                  }
-                />
-              </label>
-
-              <label className="field checkbox">
-                <input
-                  type="checkbox"
-                  checked={Boolean(settingsForm.mcq_explanations_enabled)}
-                  onChange={(event) =>
-                    setSettingsForm((prev) => ({ ...prev, mcq_explanations_enabled: event.target.checked }))
-                  }
-                />
-                <span>Enable MCQ explanations</span>
-              </label>
+              {settingsMatches('mcq explanations', 'explanations', 'explain') ? (
+                <label className="field checkbox">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settingsForm.mcq_explanations_enabled)}
+                    onChange={(event) =>
+                      setSettingsForm((prev) => ({ ...prev, mcq_explanations_enabled: event.target.checked }))
+                    }
+                  />
+                  <span>Enable MCQ explanations</span>
+                </label>
+              ) : null}
             </div>
 
-            <section className="roots-card">
-              <div className="row between roots-header">
-                <div>
-                  <strong>Quizzes</strong>
-                  <div className="roots-count">{countQuizFiles(quizzesTree)} quiz file(s)</div>
-                </div>
-                <div className="row">
-                  <button type="button" onClick={() => importQuizzesFromFinder()}>
-                    Import Folder
-                  </button>
-                  <button type="button" onClick={() => openPath(quizzesDir)} disabled={!quizzesDir}>
-                    Open Quizzes Folder
-                  </button>
-                  <button type="button" onClick={() => loadQuizzesLibrary()}>
-                    Refresh
-                  </button>
-                  <button type="button" onClick={() => setShowQuizzesBox((prev) => !prev)}>
-                    {showQuizzesBox ? 'Minimize' : 'Expand'}
-                  </button>
-                </div>
-              </div>
+            {settingsMatches('feedback', 'show feedback on answer', 'show feedback on quiz completion') ? (
+              <section className="settings-group">
+                <h3>Feedback</h3>
+                <div className="form-grid two-col">
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(showFeedbackOnAnswer)}
+                      onChange={(event) => {
+                        const enabled = event.target.checked;
+                        setSettingsForm((prev) => {
+                          if (!prev) {
+                            return prev;
+                          }
+                          const nextAutoAdvance = prev.auto_advance_enabled ?? prev.feedback_mode === 'auto_advance';
+                          return {
+                            ...prev,
+                            show_feedback_on_answer: enabled,
+                            feedback_mode: feedbackModeFromFlags(enabled, nextAutoAdvance),
+                          };
+                        });
+                      }}
+                    />
+                    <span>Show feedback on answer</span>
+                  </label>
 
-              <div className="quizzes-dir-path">{quizzesDir || 'No quizzes directory available.'}</div>
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(showFeedbackOnCompletion)}
+                      onChange={(event) =>
+                        setSettingsForm((prev) => ({ ...prev, show_feedback_on_completion: event.target.checked }))
+                      }
+                    />
+                    <span>Show feedback on quiz completion</span>
+                  </label>
+                </div>
+              </section>
+            ) : null}
 
-              {showQuizzesBox ? (
-                <>
-                  <div
-                    className={`quizzes-drop-zone ${quizzesDragOver ? 'drag-over' : ''}`}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setQuizzesDragOver(true);
-                    }}
-                    onDragLeave={() => setQuizzesDragOver(false)}
-                    onDrop={(event) => {
-                      void handleQuizzesDrop(event);
-                    }}
-                  >
-                    Drag and drop quiz folders or .json files here to import into Quizzes.
+            {(settingsMatches('auto advance', 'auto-advance', 'delay', 'next question')
+              || settingsMatches('question timer', 'timer', 'countdown')) ? (
+                <section className="settings-group">
+                  <h3>Pacing</h3>
+                  <div className="form-grid two-col">
+                    {settingsMatches('auto advance', 'auto-advance', 'delay', 'next question') ? (
+                      <>
+                        <label className="field checkbox">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(autoAdvanceEnabled)}
+                            onChange={(event) => {
+                              const enabled = event.target.checked;
+                              setSettingsForm((prev) => {
+                                if (!prev) {
+                                  return prev;
+                                }
+                                const nextShowFeedback = prev.show_feedback_on_answer ?? prev.feedback_mode !== 'end_only';
+                                return {
+                                  ...prev,
+                                  auto_advance_enabled: enabled,
+                                  feedback_mode: feedbackModeFromFlags(nextShowFeedback, enabled),
+                                };
+                              });
+                            }}
+                          />
+                          <span>Enable auto-advance after answer</span>
+                        </label>
+
+                        <label className="field">
+                          <span>Auto-advance delay (ms)</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={settingsForm.auto_advance_ms || 0}
+                            disabled={!autoAdvanceEnabled}
+                            onChange={(event) =>
+                              setSettingsForm((prev) => ({ ...prev, auto_advance_ms: Number(event.target.value) }))
+                            }
+                          />
+                        </label>
+                      </>
+                    ) : null}
+
+                    {settingsMatches('question timer', 'timer', 'countdown') ? (
+                      <label className="field">
+                        <span>Question timer (seconds, 0 = off)</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={settingsForm.question_timer_seconds || 0}
+                          onChange={(event) =>
+                            setSettingsForm((prev) => ({
+                              ...prev,
+                              question_timer_seconds: Math.max(0, Number(event.target.value) || 0),
+                            }))
+                          }
+                        />
+                      </label>
+                    ) : null}
                   </div>
-                  <div className="roots-list-wrap">
-                    <QuizzesStructureTree nodes={quizzesTree} />
-                  </div>
-                </>
+                </section>
               ) : null}
 
-              {quizzesWarnings.length ? (
-                <div className="banner warn">
-                  {quizzesWarnings.map((warning, index) => (
-                    <div key={`quiz-warning-${index}`}>{warning}</div>
-                  ))}
+            {!settingsFilterHasMatches ? (
+              <div className="banner warn">No settings matched your search.</div>
+            ) : null}
+
+            {settingsMatches('quizzes', 'quiz folder', 'quiz library', 'import folder', 'open quizzes folder', 'drag and drop') ? (
+              <section className="roots-card">
+                <div className="row between roots-header">
+                  <div>
+                    <strong>Quizzes</strong>
+                    <div className="roots-count">{countQuizFiles(quizzesTree)} quiz file(s)</div>
+                  </div>
+                  <div className="row">
+                    <button type="button" onClick={() => importQuizzesFromFinder()}>
+                      Import Folder
+                    </button>
+                    <button type="button" onClick={() => openPath(quizzesDir)} disabled={!quizzesDir}>
+                      Open Quizzes Folder
+                    </button>
+                    <button type="button" onClick={() => loadQuizzesLibrary()}>
+                      Refresh
+                    </button>
+                    <button type="button" onClick={() => setShowQuizzesBox((prev) => !prev)}>
+                      {showQuizzesBox ? 'Minimize' : 'Expand'}
+                    </button>
+                  </div>
                 </div>
-              ) : null}
-            </section>
+
+                <div className="quizzes-dir-path">{quizzesDir || 'No quizzes directory available.'}</div>
+
+                {showQuizzesBox ? (
+                  <>
+                    <div
+                      className={`quizzes-drop-zone ${quizzesDragOver ? 'drag-over' : ''}`}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setQuizzesDragOver(true);
+                      }}
+                      onDragLeave={() => setQuizzesDragOver(false)}
+                      onDrop={(event) => {
+                        void handleQuizzesDrop(event);
+                      }}
+                    >
+                      Drag and drop quiz folders or .json files here to import into Quizzes.
+                    </div>
+                    <div className="roots-list-wrap">
+                      <QuizzesStructureTree nodes={quizzesTree} />
+                    </div>
+                  </>
+                ) : null}
+
+                {quizzesWarnings.length ? (
+                  <div className="banner warn">
+                    {quizzesWarnings.map((warning, index) => (
+                      <div key={`quiz-warning-${index}`}>{warning}</div>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
 
             <div className="form-grid two-col">
-              <label className="field">
-                <span>Claude API key</span>
-                <input
-                  value={settingsForm.claude_api_key || ''}
-                  onChange={(event) => setSettingsForm((prev) => ({ ...prev, claude_api_key: event.target.value }))}
-                />
-              </label>
+              {settingsMatches('claude api key', 'claude') ? (
+                <label className="field">
+                  <span>Claude API key</span>
+                  <input
+                    value={settingsForm.claude_api_key || ''}
+                    onChange={(event) => setSettingsForm((prev) => ({ ...prev, claude_api_key: event.target.value }))}
+                  />
+                </label>
+              ) : null}
 
-              <label className="field">
-                <span>Claude model selected</span>
-                <input
-                  value={settingsForm.claude_model_selected || ''}
-                  onChange={(event) =>
-                    setSettingsForm((prev) => ({ ...prev, claude_model_selected: event.target.value }))
-                  }
-                />
-              </label>
+              {settingsMatches('claude model selected', 'claude model', 'claude') ? (
+                <label className="field">
+                  <span>Claude model selected</span>
+                  <input
+                    value={settingsForm.claude_model_selected || ''}
+                    onChange={(event) =>
+                      setSettingsForm((prev) => ({ ...prev, claude_model_selected: event.target.value }))
+                    }
+                  />
+                </label>
+              ) : null}
 
-              <label className="field">
-                <span>OpenAI auth mode</span>
-                <select
-                  value={settingsForm.openai_auth_mode || 'api_key'}
-                  onChange={(event) =>
-                    setSettingsForm((prev) => ({ ...prev, openai_auth_mode: event.target.value }))
-                  }
-                >
-                  <option value="api_key">api_key</option>
-                  <option value="oauth">oauth</option>
-                </select>
-              </label>
+              {settingsMatches('openai auth mode', 'openai') ? (
+                <label className="field">
+                  <span>OpenAI auth mode</span>
+                  <select
+                    value={settingsForm.openai_auth_mode || 'api_key'}
+                    onChange={(event) =>
+                      setSettingsForm((prev) => ({ ...prev, openai_auth_mode: event.target.value }))
+                    }
+                  >
+                    <option value="api_key">api_key</option>
+                    <option value="oauth">oauth</option>
+                  </select>
+                </label>
+              ) : null}
 
-              <label className="field">
-                <span>OpenAI API key</span>
-                <input
-                  value={settingsForm.openai_api_key || ''}
-                  onChange={(event) => setSettingsForm((prev) => ({ ...prev, openai_api_key: event.target.value }))}
-                />
-              </label>
+              {settingsMatches('openai api key', 'openai') ? (
+                <label className="field">
+                  <span>OpenAI API key</span>
+                  <input
+                    value={settingsForm.openai_api_key || ''}
+                    onChange={(event) => setSettingsForm((prev) => ({ ...prev, openai_api_key: event.target.value }))}
+                  />
+                </label>
+              ) : null}
 
-              <label className="field">
-                <span>OpenAI model selected</span>
-                <input
-                  value={settingsForm.openai_model_selected || ''}
-                  onChange={(event) =>
-                    setSettingsForm((prev) => ({ ...prev, openai_model_selected: event.target.value }))
-                  }
-                />
-              </label>
+              {settingsMatches('openai model selected', 'openai model', 'openai') ? (
+                <label className="field">
+                  <span>OpenAI model selected</span>
+                  <input
+                    value={settingsForm.openai_model_selected || ''}
+                    onChange={(event) =>
+                      setSettingsForm((prev) => ({ ...prev, openai_model_selected: event.target.value }))
+                    }
+                  />
+                </label>
+              ) : null}
 
-              <label className="field">
-                <span>Generation output subdir</span>
-                <input
-                  value={settingsForm.generation_output_subdir || ''}
-                  onChange={(event) =>
-                    setSettingsForm((prev) => ({ ...prev, generation_output_subdir: event.target.value }))
-                  }
-                />
-              </label>
+              {settingsMatches('generation output subdir', 'output folder', 'generation') ? (
+                <label className="field">
+                  <span>Generation output subdir</span>
+                  <input
+                    value={settingsForm.generation_output_subdir || ''}
+                    onChange={(event) =>
+                      setSettingsForm((prev) => ({ ...prev, generation_output_subdir: event.target.value }))
+                    }
+                  />
+                </label>
+              ) : null}
             </div>
 
             <div className="row">

@@ -62,7 +62,9 @@ def _state(request: Request) -> APIState:
 
 
 def _settings(state: APIState) -> AppSettings:
-    return state.settings_store.load()
+    settings = state.settings_store.load()
+    _ensure_quizzes_library(state, settings)
+    return settings
 
 
 def _save_settings(state: APIState, settings: AppSettings) -> None:
@@ -257,27 +259,49 @@ def _quiz_file_allowed(path: Path) -> bool:
     return True
 
 
+def _path_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
 def _quizzes_library_dir(state: APIState, settings: AppSettings) -> Path:
-    quiz_dir_raw = str(settings.quiz_dir or "").strip()
-    if quiz_dir_raw:
-        base = Path(quiz_dir_raw).expanduser()
-        if not base.is_absolute():
-            base = (state.project_root / base).resolve()
-        else:
-            base = base.resolve()
-    else:
-        base = state.project_root
-    return (base / "Quizzes").resolve()
+    return (state.project_root / "Quizzes").resolve()
 
 
 def _ensure_quizzes_library(state: APIState, settings: AppSettings) -> Path:
+    # On first install/launch, normalize quiz storage into userData so it is writable.
+    user_data_root = state.settings_store.path.parent.parent.resolve()
+    changed = False
+    if str(settings.quiz_dir or "").strip() in {"", "."}:
+        settings.quiz_dir = str(user_data_root)
+        changed = True
+
     quizzes_dir = _quizzes_library_dir(state, settings)
     quizzes_dir.mkdir(parents=True, exist_ok=True)
     desired_roots = [str(quizzes_dir)]
     if settings.quiz_roots != desired_roots:
         settings.quiz_roots = desired_roots
+        changed = True
+    if changed:
         _save_settings(state, settings)
     return quizzes_dir
+
+
+def _quiz_display_name(path: Path) -> str:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return path.stem
+
+    if isinstance(raw, dict):
+        for key in ("title", "name"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return path.stem
 
 
 def _quiz_structure_tree(root_dir: Path) -> list[dict[str, Any]]:
@@ -306,7 +330,8 @@ def _quiz_structure_tree(root_dir: Path) -> list[dict[str, Any]]:
             if entry.is_file() and _quiz_file_allowed(entry):
                 nodes.append(
                     {
-                        "name": entry.name,
+                        "name": _quiz_display_name(entry),
+                        "file_name": entry.name,
                         "path": str(entry),
                         "kind": "quiz",
                         "children": [],
@@ -378,31 +403,47 @@ def _import_quiz_folder(source_dir: Path, quizzes_dir: Path) -> tuple[int, list[
 
 
 def _quiz_nodes_for_directory(root_path: Path) -> list[dict[str, Any]]:
-    candidates: list[Path] = []
-    try:
-        for candidate in root_path.rglob("*.json"):
-            if not candidate.is_file() or not _quiz_file_allowed(candidate):
-                continue
-            try:
-                rel_parts = candidate.relative_to(root_path).parts
-            except Exception:
-                continue
-            if any(part.startswith(".") for part in rel_parts):
-                continue
-            candidates.append(candidate)
-    except Exception:
-        return []
+    def _walk(current: Path) -> list[dict[str, Any]]:
+        nodes: list[dict[str, Any]] = []
+        try:
+            entries = sorted(current.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        except Exception:
+            return []
 
-    candidates.sort(key=lambda p: str(p.relative_to(root_path)).lower())
-    return [
-        {
-            "name": str(path.relative_to(root_path)),
-            "path": str(path),
-            "kind": "quiz",
-            "children": [],
-        }
-        for path in candidates
-    ]
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+
+            if entry.is_dir():
+                children = _walk(entry)
+                if children:
+                    nodes.append(
+                        {
+                            "name": entry.name,
+                            "path": str(entry),
+                            "relative_path": str(entry.relative_to(root_path)),
+                            "kind": "folder",
+                            "children": children,
+                        }
+                    )
+                continue
+
+            if not entry.is_file() or not _quiz_file_allowed(entry):
+                continue
+
+            nodes.append(
+                {
+                    "name": _quiz_display_name(entry),
+                    "path": str(entry),
+                    "relative_path": str(entry.relative_to(root_path)),
+                    "kind": "quiz",
+                    "children": [],
+                }
+            )
+
+        return nodes
+
+    return _walk(root_path)
 
 
 def _build_quiz_tree(roots: list[Path]) -> list[dict[str, Any]]:
@@ -423,7 +464,8 @@ def _build_quiz_tree(roots: list[Path]) -> list[dict[str, Any]]:
         elif root_path.exists() and root_path.is_file() and _quiz_file_allowed(root_path):
             root_node["children"].append(
                 {
-                    "name": root_path.name,
+                    "name": _quiz_display_name(root_path),
+                    "file_name": root_path.name,
                     "path": str(root_path),
                     "kind": "quiz",
                     "children": [],
@@ -519,7 +561,7 @@ def create_app(
             models = [
                 ModelOption(
                     id="",
-                    label="Self grading",
+                    label="No model",
                     provider="self",
                     capability_tags=(),
                 )
@@ -558,13 +600,25 @@ def create_app(
         settings = _settings(state)
         current = asdict(settings)
 
+        if (
+            "feedback_mode" in payload
+            and "show_feedback_on_answer" not in payload
+            and "auto_advance_enabled" not in payload
+        ):
+            mode = str(payload.get("feedback_mode", "")).strip()
+            payload["show_feedback_on_answer"] = mode != "end_only"
+            payload["auto_advance_enabled"] = mode == "auto_advance"
+            if "show_feedback_on_completion" not in payload:
+                payload["show_feedback_on_completion"] = True
+
         for key, value in payload.items():
             if key in current:
                 current[key] = value
 
         merged = state.settings_store._coerce_from_mapping(current)
         _save_settings(state, merged)
-        return {"settings": asdict(merged)}
+        normalized = _settings(state)
+        return {"settings": asdict(normalized)}
 
     @app.post("/v1/settings/import-legacy", dependencies=[Depends(_require_auth)])
     def import_legacy_settings(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
@@ -697,6 +751,51 @@ def create_app(
             "settings": asdict(current),
         }
 
+    @app.post("/v1/quizzes/library/rename", dependencies=[Depends(_require_auth)])
+    def quizzes_library_rename(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        path_value = str(payload.get("path", "")).strip()
+        new_title = str(payload.get("title", "")).strip()
+        if not path_value:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'path' is required.")
+        if not new_title:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'title' is required.")
+
+        settings = _settings(state)
+        quizzes_dir = _ensure_quizzes_library(state, settings)
+        quiz_path = Path(path_value).expanduser().resolve()
+
+        if not quiz_path.exists() or not quiz_path.is_file():
+            raise APIError(status_code=404, code="NOT_FOUND", message=f"Quiz not found: {quiz_path}")
+        if not _quiz_file_allowed(quiz_path):
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message=f"Unsupported quiz file: {quiz_path}")
+        if not _path_within(quiz_path, quizzes_dir):
+            raise APIError(
+                status_code=403,
+                code="FORBIDDEN",
+                message="Can only rename quizzes inside the managed Quizzes directory.",
+            )
+
+        try:
+            raw = json.loads(quiz_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message=f"Invalid JSON in {quiz_path}: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Quiz JSON must be an object.")
+
+        raw["title"] = new_title
+        try:
+            quiz_path.write_text(f"{json.dumps(raw, indent=2, ensure_ascii=False)}\n", encoding="utf-8")
+        except Exception as exc:
+            raise APIError(status_code=500, code="INTERNAL_ERROR", message=f"Failed to update quiz title: {exc}") from exc
+
+        current = _settings(state)
+        return {
+            "path": str(quiz_path),
+            "title": new_title,
+            "tree": _quiz_structure_tree(quizzes_dir),
+            "settings": asdict(current),
+        }
+
     @app.post("/v1/quizzes/load", dependencies=[Depends(_require_auth)])
     def load_quiz_endpoint(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         path_value = str(payload.get("path", "")).strip()
@@ -742,7 +841,7 @@ def create_app(
 
         if provider == "self":
             if "self_score" not in payload:
-                raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'self_score' is required for self grading.")
+                raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'self_score' is required for no-model scoring.")
             try:
                 score = int(payload.get("self_score", 0))
             except Exception as exc:

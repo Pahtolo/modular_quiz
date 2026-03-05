@@ -37,7 +37,11 @@ class AppSettings:
     performance_history_path: str = "settings/performance_history.json"
     short_grader: str = "claude"
     feedback_mode: str = "show_then_next"
+    show_feedback_on_answer: bool = True
+    show_feedback_on_completion: bool = True
+    auto_advance_enabled: bool = False
     auto_advance_ms: int = 600
+    question_timer_seconds: int = 0
 
     claude_api_key: str = ""
     claude_model: str = "claude-3-5-haiku-latest"
@@ -144,6 +148,20 @@ class SettingsStore:
             data.get("performance_history_path"),
             defaults.performance_history_path,
         )
+        feedback_mode = self._coerce_choice(data.get("feedback_mode"), ALLOWED_FEEDBACK_MODES, defaults.feedback_mode)
+        show_feedback_on_answer = self._coerce_bool(
+            data.get("show_feedback_on_answer"),
+            feedback_mode != "end_only",
+        )
+        show_feedback_on_completion = self._coerce_bool(
+            data.get("show_feedback_on_completion"),
+            True,
+        )
+        auto_advance_enabled = self._coerce_bool(
+            data.get("auto_advance_enabled"),
+            feedback_mode == "auto_advance",
+        )
+        feedback_mode = self._feedback_mode_from_flags(show_feedback_on_answer, auto_advance_enabled)
 
         return AppSettings(
             quiz_dir=quiz_dir,
@@ -151,8 +169,16 @@ class SettingsStore:
             preferred_model_key=preferred_model_key,
             performance_history_path=history_path,
             short_grader=short_grader,
-            feedback_mode=self._coerce_choice(data.get("feedback_mode"), ALLOWED_FEEDBACK_MODES, defaults.feedback_mode),
+            feedback_mode=feedback_mode,
+            show_feedback_on_answer=show_feedback_on_answer,
+            show_feedback_on_completion=show_feedback_on_completion,
+            auto_advance_enabled=auto_advance_enabled,
             auto_advance_ms=self._coerce_int(data.get("auto_advance_ms"), defaults.auto_advance_ms, minimum=0),
+            question_timer_seconds=self._coerce_int(
+                data.get("question_timer_seconds"),
+                defaults.question_timer_seconds,
+                minimum=0,
+            ),
             claude_api_key=self._coerce_str(data.get("claude_api_key"), defaults.claude_api_key),
             claude_model=claude_model,
             claude_model_selected=claude_model_selected,
@@ -208,6 +234,13 @@ class SettingsStore:
                 defaults.generation_output_subdir,
             ),
         )
+
+    def _feedback_mode_from_flags(self, show_feedback_on_answer: bool, auto_advance_enabled: bool) -> str:
+        if not show_feedback_on_answer:
+            return "end_only"
+        if auto_advance_enabled:
+            return "auto_advance"
+        return "show_then_next"
 
     def save(self, settings: AppSettings) -> None:
         self._ensure_parent_dir()
