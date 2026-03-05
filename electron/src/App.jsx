@@ -52,6 +52,17 @@ function flattenQuizNodes(nodes, out = []) {
   return out;
 }
 
+function countQuizFiles(nodes) {
+  let total = 0;
+  for (const node of nodes || []) {
+    if (node.kind === 'quiz') {
+      total += 1;
+    }
+    total += countQuizFiles(node.children || []);
+  }
+  return total;
+}
+
 function QuizTree({ nodes, selectedPath, onSelect }) {
   const renderNode = (node) => {
     const isQuiz = node.kind === 'quiz';
@@ -80,6 +91,27 @@ function QuizTree({ nodes, selectedPath, onSelect }) {
   return <ul className="tree-list">{(nodes || []).map((node) => renderNode(node))}</ul>;
 }
 
+function QuizzesStructureTree({ nodes }) {
+  const renderNode = (node) => (
+    <li key={`${node.kind}-${node.path}`}>
+      <div className={`quizzes-node ${node.kind}`}>
+        {node.kind === 'folder' ? '[Folder]' : '[Quiz]'} {node.name}
+      </div>
+      {node.children && node.children.length > 0 ? (
+        <ul className="quizzes-structure-list">
+          {node.children.map((child) => renderNode(child))}
+        </ul>
+      ) : null}
+    </li>
+  );
+
+  if (!(nodes || []).length) {
+    return <p className="roots-empty">No quizzes imported yet.</p>;
+  }
+
+  return <ul className="quizzes-structure-list">{(nodes || []).map((node) => renderNode(node))}</ul>;
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('quiz');
   const [startupError, setStartupError] = useState('');
@@ -88,6 +120,11 @@ function App() {
   const [settings, setSettings] = useState(null);
   const [settingsForm, setSettingsForm] = useState(null);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [quizzesDir, setQuizzesDir] = useState('');
+  const [quizzesTree, setQuizzesTree] = useState([]);
+  const [quizzesWarnings, setQuizzesWarnings] = useState([]);
+  const [showQuizzesBox, setShowQuizzesBox] = useState(true);
+  const [quizzesDragOver, setQuizzesDragOver] = useState(false);
 
   const [providerModels, setProviderModels] = useState({ self: [], claude: [], openai: [] });
   const [modelLoadError, setModelLoadError] = useState('');
@@ -209,11 +246,9 @@ function App() {
       setSettings(currentSettings);
       setSettingsForm({ ...currentSettings });
 
-      await Promise.all([
-        loadModels(),
-        loadQuizTree(currentSettings),
-        loadHistory(),
-      ]);
+      await Promise.all([loadModels(), loadHistory()]);
+      await loadQuizzesLibrary();
+      await loadQuizTree();
 
       setGenerationForm((prev) => ({
         ...prev,
@@ -263,13 +298,8 @@ function App() {
     });
   }
 
-  async function loadQuizTree(currentSettings = settings) {
-    if (!currentSettings) {
-      return;
-    }
-    const response = await apiRequest('/v1/quizzes/tree', 'POST', {
-      quiz_roots: currentSettings.quiz_roots,
-    });
+  async function loadQuizTree() {
+    const response = await apiRequest('/v1/quizzes/tree', 'POST', {});
     setQuizTreeRoots(response.roots || []);
 
     const allQuizPaths = flattenQuizNodes(response.roots || []);
@@ -277,6 +307,38 @@ function App() {
       return;
     }
     setSelectedQuizPath(allQuizPaths[0] || '');
+  }
+
+  async function loadQuizzesLibrary() {
+    const response = await apiRequest('/v1/quizzes/library', 'GET');
+    setQuizzesDir(response.quizzes_dir || '');
+    setQuizzesTree(response.tree || []);
+    setQuizzesWarnings([]);
+    if (response.settings) {
+      setSettings(response.settings);
+      setSettingsForm((prev) => (prev ? { ...prev, ...response.settings } : { ...response.settings }));
+    }
+    return response;
+  }
+
+  async function importQuizzesFromPaths(sourcePaths) {
+    const paths = [...new Set((sourcePaths || []).map((item) => String(item || '').trim()).filter((item) => item))];
+    if (!paths.length) {
+      return;
+    }
+
+    const response = await apiRequest('/v1/quizzes/library/import', 'POST', {
+      source_paths: paths,
+    });
+    setQuizzesDir(response.quizzes_dir || '');
+    setQuizzesTree(response.tree || []);
+    setQuizzesWarnings(response.warnings || []);
+    if (response.settings) {
+      setSettings(response.settings);
+      setSettingsForm((prev) => (prev ? { ...prev, ...response.settings } : { ...response.settings }));
+    }
+    await loadQuizTree();
+    setApiStatus(`Imported ${Number(response.imported_files || 0)} quiz file(s).`);
   }
 
   async function loadHistory() {
@@ -317,7 +379,9 @@ function App() {
       const response = await apiRequest('/v1/settings', 'PUT', payload);
       setSettings(response.settings);
       setSettingsForm({ ...response.settings });
-      await Promise.all([loadQuizTree(response.settings), loadHistory(), loadModels()]);
+      await Promise.all([loadHistory(), loadModels()]);
+      await loadQuizzesLibrary();
+      await loadQuizTree();
       setApiStatus('Settings saved.');
     } catch (err) {
       setStartupError(`Failed to save settings: ${err.message}`);
@@ -337,7 +401,9 @@ function App() {
       const settingsResponse = await apiRequest('/v1/settings', 'GET');
       setSettings(settingsResponse.settings);
       setSettingsForm({ ...settingsResponse.settings });
-      await Promise.all([loadQuizTree(settingsResponse.settings), loadHistory(), loadModels()]);
+      await Promise.all([loadHistory(), loadModels()]);
+      await loadQuizzesLibrary();
+      await loadQuizTree();
     } catch (err) {
       setStartupError(`Legacy import failed: ${err.message}`);
     }
@@ -352,6 +418,40 @@ function App() {
       setApiStatus('OpenAI OAuth connected successfully.');
     } catch (err) {
       setStartupError(`OAuth connect failed: ${err.message}`);
+    }
+  }
+
+  async function importQuizzesFromFinder() {
+    const folder = await pickFolder();
+    if (!folder) {
+      return;
+    }
+    try {
+      await importQuizzesFromPaths([folder]);
+    } catch (err) {
+      setQuizzesWarnings([err.message || 'Failed to import selected folder.']);
+    }
+  }
+
+  function droppedSourcePaths(event) {
+    const files = Array.from(event?.dataTransfer?.files || []);
+    return [...new Set(files
+      .map((file) => (typeof file.path === 'string' ? file.path.trim() : ''))
+      .filter((path) => path))];
+  }
+
+  async function handleQuizzesDrop(event) {
+    event.preventDefault();
+    setQuizzesDragOver(false);
+    const paths = droppedSourcePaths(event);
+    if (!paths.length) {
+      setQuizzesWarnings(['Dropped content did not include local file paths. Use "Import Folder" instead.']);
+      return;
+    }
+    try {
+      await importQuizzesFromPaths(paths);
+    } catch (err) {
+      setQuizzesWarnings([err.message || 'Failed to import dropped items.']);
     }
   }
 
@@ -638,7 +738,7 @@ function App() {
           <section className="quiz-layout">
             <aside className="card tree-card">
               <div className="row between">
-                <h2>Quiz Browser</h2>
+                <h2>Quizzes</h2>
                 <button type="button" onClick={() => loadQuizTree()}>
                   Refresh
                 </button>
@@ -1091,21 +1191,59 @@ function App() {
               </label>
             </div>
 
-            <label className="field">
-              <span>Quiz roots (one per line)</span>
-              <textarea
-                value={(settingsForm.quiz_roots || []).join('\n')}
-                onChange={(event) =>
-                  setSettingsForm((prev) => ({
-                    ...prev,
-                    quiz_roots: event.target.value
-                      .split('\n')
-                      .map((line) => line.trim())
-                      .filter((line) => line),
-                  }))
-                }
-              />
-            </label>
+            <section className="roots-card">
+              <div className="row between roots-header">
+                <div>
+                  <strong>Quizzes</strong>
+                  <div className="roots-count">{countQuizFiles(quizzesTree)} quiz file(s)</div>
+                </div>
+                <div className="row">
+                  <button type="button" onClick={() => importQuizzesFromFinder()}>
+                    Import Folder
+                  </button>
+                  <button type="button" onClick={() => openPath(quizzesDir)} disabled={!quizzesDir}>
+                    Open Quizzes Folder
+                  </button>
+                  <button type="button" onClick={() => loadQuizzesLibrary()}>
+                    Refresh
+                  </button>
+                  <button type="button" onClick={() => setShowQuizzesBox((prev) => !prev)}>
+                    {showQuizzesBox ? 'Minimize' : 'Expand'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="quizzes-dir-path">{quizzesDir || 'No quizzes directory available.'}</div>
+
+              {showQuizzesBox ? (
+                <>
+                  <div
+                    className={`quizzes-drop-zone ${quizzesDragOver ? 'drag-over' : ''}`}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setQuizzesDragOver(true);
+                    }}
+                    onDragLeave={() => setQuizzesDragOver(false)}
+                    onDrop={(event) => {
+                      void handleQuizzesDrop(event);
+                    }}
+                  >
+                    Drag and drop quiz folders or .json files here to import into Quizzes.
+                  </div>
+                  <div className="roots-list-wrap">
+                    <QuizzesStructureTree nodes={quizzesTree} />
+                  </div>
+                </>
+              ) : null}
+
+              {quizzesWarnings.length ? (
+                <div className="banner warn">
+                  {quizzesWarnings.map((warning, index) => (
+                    <div key={`quiz-warning-${index}`}>{warning}</div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
 
             <div className="form-grid two-col">
               <label className="field">
@@ -1178,6 +1316,8 @@ function App() {
                   const response = await apiRequest('/v1/settings', 'GET');
                   setSettings(response.settings);
                   setSettingsForm({ ...response.settings });
+                  await loadQuizzesLibrary();
+                  await loadQuizTree();
                 }}
               >
                 Reload Settings

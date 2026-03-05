@@ -183,7 +183,7 @@ class APIServerTests(unittest.TestCase):
             json={"quiz_roots": [str(self.root)]},
         )
 
-        tree = self._post("/v1/quizzes/tree", {})
+        tree = self._post("/v1/quizzes/tree", {"quiz_roots": [str(self.root)]})
         self.assertTrue(tree["roots"])
         root_node = tree["roots"][0]
         self.assertEqual(root_node["kind"], "root")
@@ -259,6 +259,84 @@ class APIServerTests(unittest.TestCase):
             self.assertEqual(len(node["children"]), 1)
             self.assertEqual(node["children"][0]["kind"], "quiz")
             self.assertTrue(node["children"][0]["path"].lower().endswith(".json"))
+
+    def test_quizzes_library_import_and_structure(self) -> None:
+        source_folder = self.root / "source-quizzes"
+        nested = source_folder / "week1"
+        nested.mkdir(parents=True, exist_ok=True)
+
+        (source_folder / "intro.json").write_text(
+            json.dumps(
+                {
+                    "title": "Intro",
+                    "instructions": "",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "A?",
+                            "options": ["A", "B"],
+                            "answer": "A",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (nested / "deep.json").write_text(
+            json.dumps(
+                {
+                    "title": "Deep",
+                    "instructions": "",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "B?",
+                            "options": ["A", "B"],
+                            "answer": "B",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (nested / "ignore.txt").write_text("ignore", encoding="utf-8")
+
+        library = self.client.get("/v1/quizzes/library", headers=self.headers)
+        self.assertEqual(library.status_code, 200, library.text)
+        quizzes_dir = Path(library.json()["quizzes_dir"])
+        self.assertTrue(quizzes_dir.exists())
+        self.assertEqual(quizzes_dir, (self.root / "Quizzes").resolve())
+        self.assertEqual(library.json()["settings"]["quiz_roots"], [str(quizzes_dir)])
+
+        imported = self._post(
+            "/v1/quizzes/library/import",
+            {"source_paths": [str(source_folder)]},
+        )
+        self.assertEqual(imported["imported_files"], 2)
+        self.assertFalse(imported["warnings"], imported["warnings"])
+        self.assertEqual(imported["settings"]["quiz_roots"], [str(quizzes_dir)])
+
+        def _collect_quiz_names(nodes: list[dict]) -> list[str]:
+            names: list[str] = []
+            for node in nodes:
+                if node.get("kind") == "quiz":
+                    names.append(str(node.get("name", "")))
+                names.extend(_collect_quiz_names(node.get("children", [])))
+            return names
+
+        quiz_names = _collect_quiz_names(imported["tree"])
+        self.assertIn("intro.json", quiz_names)
+        self.assertIn("deep.json", quiz_names)
+
+        tree_default = self._post("/v1/quizzes/tree", {})
+        self.assertTrue(tree_default["roots"])
+        default_root = tree_default["roots"][0]
+        self.assertEqual(default_root["path"], str(quizzes_dir))
+        default_paths = {child["name"] for child in default_root["children"]}
+        self.assertIn(f"{source_folder.name}/intro.json", default_paths)
+        self.assertIn(f"{source_folder.name}/week1/deep.json", default_paths)
 
     def test_grading_endpoints(self) -> None:
         mcq = self._post(

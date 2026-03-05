@@ -257,6 +257,126 @@ def _quiz_file_allowed(path: Path) -> bool:
     return True
 
 
+def _quizzes_library_dir(state: APIState, settings: AppSettings) -> Path:
+    quiz_dir_raw = str(settings.quiz_dir or "").strip()
+    if quiz_dir_raw:
+        base = Path(quiz_dir_raw).expanduser()
+        if not base.is_absolute():
+            base = (state.project_root / base).resolve()
+        else:
+            base = base.resolve()
+    else:
+        base = state.project_root
+    return (base / "Quizzes").resolve()
+
+
+def _ensure_quizzes_library(state: APIState, settings: AppSettings) -> Path:
+    quizzes_dir = _quizzes_library_dir(state, settings)
+    quizzes_dir.mkdir(parents=True, exist_ok=True)
+    desired_roots = [str(quizzes_dir)]
+    if settings.quiz_roots != desired_roots:
+        settings.quiz_roots = desired_roots
+        _save_settings(state, settings)
+    return quizzes_dir
+
+
+def _quiz_structure_tree(root_dir: Path) -> list[dict[str, Any]]:
+    def _walk(current: Path) -> list[dict[str, Any]]:
+        nodes: list[dict[str, Any]] = []
+        try:
+            entries = sorted(current.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        except Exception:
+            return []
+
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                children = _walk(entry)
+                if children:
+                    nodes.append(
+                        {
+                            "name": entry.name,
+                            "path": str(entry),
+                            "kind": "folder",
+                            "children": children,
+                        }
+                    )
+                continue
+            if entry.is_file() and _quiz_file_allowed(entry):
+                nodes.append(
+                    {
+                        "name": entry.name,
+                        "path": str(entry),
+                        "kind": "quiz",
+                        "children": [],
+                    }
+                )
+        return nodes
+
+    return _walk(root_dir)
+
+
+def _unique_destination(path: Path) -> Path:
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    idx = 2
+    while True:
+        candidate = path.with_name(f"{stem}-{idx}{suffix}")
+        if not candidate.exists():
+            return candidate
+        idx += 1
+
+
+def _unique_directory(path: Path) -> Path:
+    if not path.exists():
+        return path
+    idx = 2
+    while True:
+        candidate = path.parent / f"{path.name}-{idx}"
+        if not candidate.exists():
+            return candidate
+        idx += 1
+
+
+def _import_single_quiz_file(source_file: Path, quizzes_dir: Path) -> tuple[int, list[str], dict[str, Any] | None]:
+    if not _quiz_file_allowed(source_file):
+        return 0, [f"Skipped unsupported file: {source_file}"], None
+
+    destination = _unique_destination(quizzes_dir / source_file.name)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_file, destination)
+    return 1, [], {"source_path": str(source_file), "target_path": str(destination), "kind": "file", "files": 1}
+
+
+def _import_quiz_folder(source_dir: Path, quizzes_dir: Path) -> tuple[int, list[str], dict[str, Any] | None]:
+    target_root = _unique_directory(quizzes_dir / source_dir.name)
+    imported = 0
+    warnings: list[str] = []
+
+    for candidate in source_dir.rglob("*.json"):
+        if not candidate.is_file() or not _quiz_file_allowed(candidate):
+            continue
+        try:
+            rel_parts = candidate.relative_to(source_dir).parts
+        except Exception:
+            continue
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        destination = target_root / Path(*rel_parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(candidate, destination)
+        imported += 1
+
+    if imported == 0:
+        warnings.append(f"No quiz JSON files found in folder: {source_dir}")
+        return 0, warnings, None
+
+    return imported, warnings, {"source_path": str(source_dir), "target_path": str(target_root), "kind": "folder", "files": imported}
+
+
 def _quiz_nodes_for_directory(root_path: Path) -> list[dict[str, Any]]:
     candidates: list[Path] = []
     try:
@@ -503,12 +623,79 @@ def create_app(
     @app.post("/v1/quizzes/tree", dependencies=[Depends(_require_auth)])
     def quizzes_tree(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
         settings = _settings(state)
-        roots_raw = payload.get("quiz_roots") if isinstance(payload.get("quiz_roots"), list) else settings.quiz_roots
+        roots_payload = payload.get("quiz_roots")
+        if isinstance(roots_payload, list):
+            roots_raw = roots_payload
+        else:
+            roots_raw = [str(_ensure_quizzes_library(state, settings))]
         roots = [Path(str(item)).expanduser().resolve() for item in roots_raw if str(item).strip()]
         if not roots:
-            roots = [Path(settings.quiz_dir).expanduser().resolve()]
+            roots = [Path(_ensure_quizzes_library(state, settings))]
 
         return {"roots": _build_quiz_tree(roots)}
+
+    @app.get("/v1/quizzes/library", dependencies=[Depends(_require_auth)])
+    def quizzes_library() -> dict[str, Any]:
+        settings = _settings(state)
+        quizzes_dir = _ensure_quizzes_library(state, settings)
+        current = _settings(state)
+        return {
+            "quizzes_dir": str(quizzes_dir),
+            "tree": _quiz_structure_tree(quizzes_dir),
+            "settings": asdict(current),
+        }
+
+    @app.post("/v1/quizzes/library/import", dependencies=[Depends(_require_auth)])
+    def quizzes_library_import(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        paths_raw = payload.get("source_paths")
+        if isinstance(paths_raw, str):
+            source_values = [paths_raw]
+        elif isinstance(paths_raw, list):
+            source_values = [str(item) for item in paths_raw]
+        else:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'source_paths' must be a string or list.")
+
+        source_paths = [Path(value).expanduser().resolve() for value in source_values if str(value).strip()]
+        if not source_paths:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="At least one source path is required.")
+
+        settings = _settings(state)
+        quizzes_dir = _ensure_quizzes_library(state, settings)
+
+        imported_total = 0
+        warnings: list[str] = []
+        imported_items: list[dict[str, Any]] = []
+
+        for source_path in source_paths:
+            if not source_path.exists():
+                warnings.append(f"Source not found: {source_path}")
+                continue
+            if source_path.is_file():
+                imported, item_warnings, item = _import_single_quiz_file(source_path, quizzes_dir)
+                imported_total += imported
+                warnings.extend(item_warnings)
+                if item:
+                    imported_items.append(item)
+                continue
+            if source_path.is_dir():
+                imported, item_warnings, item = _import_quiz_folder(source_path, quizzes_dir)
+                imported_total += imported
+                warnings.extend(item_warnings)
+                if item:
+                    imported_items.append(item)
+                continue
+
+            warnings.append(f"Skipped unsupported source: {source_path}")
+
+        current = _settings(state)
+        return {
+            "quizzes_dir": str(quizzes_dir),
+            "imported_files": imported_total,
+            "imports": imported_items,
+            "warnings": warnings,
+            "tree": _quiz_structure_tree(quizzes_dir),
+            "settings": asdict(current),
+        }
 
     @app.post("/v1/quizzes/load", dependencies=[Depends(_require_auth)])
     def load_quiz_endpoint(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
