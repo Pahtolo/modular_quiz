@@ -239,6 +239,7 @@ Use this file as the single source of truth for feature work across features.
 - [x] Add `Windows Package` GitHub workflow to build unsigned NSIS installers and publish artifacts on tags/manual dispatch.
 - [x] Add full-history `Secret Scan` workflow using gitleaks as a release gate for public publishing.
 - [x] Add open-source readiness docs (`LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md`) plus README release checklist.
+- [x] Fix CI test workflow by installing backend dependencies before running unit tests.
 
 ### Notes
 
