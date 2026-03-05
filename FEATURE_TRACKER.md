@@ -246,6 +246,7 @@ Use this file as the single source of truth for feature work across features.
 - [x] Add open-source readiness docs (`LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md`) plus README release checklist.
 - [x] Fix CI test workflow by installing backend dependencies before running unit tests.
 - [x] Add `macOS Package` workflow to build arm64 DMG release artifacts on tags/manual dispatch.
+- [x] Harden Windows packaging OCR dependency setup by resolving Chocolatey `tesseract.exe` and `pdftoppm.exe` paths dynamically.
 
 ### Notes
 
