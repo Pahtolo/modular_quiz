@@ -1,7 +1,10 @@
 import base64
 import hashlib
 import json
+import os
 import secrets
+import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -94,7 +97,14 @@ class OpenAIPKCEAuthenticator:
     def _listen_for_callback(self, timeout_s: int = 180) -> dict[str, list[str]]:
         _OAuthCallbackHandler.event = threading.Event()
         _OAuthCallbackHandler.query = {}
-        server = HTTPServer(("127.0.0.1", self.config.redirect_port), _OAuthCallbackHandler)
+        callback_uri = f"http://127.0.0.1:{self.config.redirect_port}/oauth/callback"
+        try:
+            server = HTTPServer(("127.0.0.1", self.config.redirect_port), _OAuthCallbackHandler)
+        except OSError as exc:
+            raise OAuthError(
+                f"Failed to listen for OAuth callback on {callback_uri}: {exc}. "
+                "Make sure the redirect port is free, or change OpenAI OAuth redirect port in Settings."
+            ) from exc
         server.timeout = timeout_s
 
         def _serve() -> None:
@@ -108,8 +118,39 @@ class OpenAIPKCEAuthenticator:
         thread.start()
 
         if not _OAuthCallbackHandler.event.wait(timeout=timeout_s):
-            raise OAuthError("Timed out waiting for OAuth callback.")
+            raise OAuthError(
+                f"Timed out waiting for OAuth callback at {callback_uri}. "
+                "Complete sign-in in the opened browser window and ensure the redirect URI is allowed in your OAuth app."
+            )
         return _OAuthCallbackHandler.query
+
+    @staticmethod
+    def _open_in_system_browser(url: str) -> bool:
+        if sys.platform == "darwin":
+            commands = [["open", url]]
+        elif os.name == "nt":
+            commands = []
+            try:
+                os.startfile(url)  # type: ignore[attr-defined]
+                return True
+            except Exception:
+                pass
+        else:
+            commands = [["xdg-open", url]]
+
+        for command in commands:
+            try:
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if completed.returncode == 0:
+                    return True
+            except Exception:
+                continue
+        return False
 
     def _exchange_code(self, code: str, code_verifier: str) -> OAuthTokenSet:
         redirect_uri = f"http://127.0.0.1:{self.config.redirect_port}/oauth/callback"
@@ -145,8 +186,15 @@ class OpenAIPKCEAuthenticator:
         )
 
     def authorize_in_browser(self, opener: Callable[[str], bool] | None = None) -> OAuthTokenSet:
-        if not self.config.authorize_url or not self.config.token_url or not self.config.client_id:
-            raise OAuthError("OAuth config is incomplete.")
+        missing: list[str] = []
+        if not self.config.authorize_url:
+            missing.append("authorize_url")
+        if not self.config.token_url:
+            missing.append("token_url")
+        if not self.config.client_id:
+            missing.append("client_id")
+        if missing:
+            raise OAuthError(f"OAuth config is incomplete. Missing: {', '.join(missing)}.")
 
         opener = opener or webbrowser.open
         verifier = self._code_verifier()
@@ -154,9 +202,15 @@ class OpenAIPKCEAuthenticator:
         state = secrets.token_urlsafe(24)
         auth_url = self._build_auth_url(state, challenge)
 
-        opened = opener(auth_url)
+        opened = False
+        try:
+            opened = bool(opener(auth_url))
+        except Exception:
+            opened = False
         if not opened:
-            raise OAuthError("Could not open browser for OAuth authorization.")
+            opened = self._open_in_system_browser(auth_url)
+        if not opened:
+            raise OAuthError(f"Could not open browser for OAuth authorization. Open this URL manually: {auth_url}")
 
         params = self._listen_for_callback()
         if "error" in params:
