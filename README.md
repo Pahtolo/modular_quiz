@@ -2,6 +2,8 @@
 
 Electron + React desktop app with a Python backend for quiz taking, grading, and quiz generation.
 
+Repository note: `settings/settings.json` is a sanitized template for source control only. Runtime settings and API keys belong in the app userData directory and should never be committed.
+
 ## Current Runtime Targets
 - `electron/`: primary desktop UI (default)
 - `run_api.py`: local FastAPI backend entrypoint
@@ -82,8 +84,40 @@ npm run build:sidecar
 Create macOS package artifact:
 ```bash
 cd electron
-npm run dist
+npm run dist -- --mac dmg
 ```
+
+Create Windows NSIS installer (run on Windows):
+```bash
+cd electron
+npm run dist -- --win nsis
+```
+
+GitHub Actions:
+- `Windows Package` builds and uploads unsigned NSIS artifacts on `v*` tags and manual dispatch.
+- `Secret Scan` runs full-history gitleaks scans on `v*` tags and manual dispatch.
+
+## Open-Source Publish Checklist
+1. Run tests and tracked-settings hygiene checks:
+```bash
+python3 -m unittest tests.test_repo_hygiene
+python3 -m unittest discover -s tests -p "test_*.py"
+```
+2. Run a full-history secret scan locally before publishing:
+```bash
+docker run --rm -v "$(pwd):/repo" ghcr.io/gitleaks/gitleaks:latest \
+  detect --source /repo --redact --report-format json --report-path /repo/gitleaks-report.json
+```
+3. If any leak is detected, rotate affected credentials immediately, then either rewrite git history or publish a clean snapshot repository.
+4. Build and verify release artifacts:
+  - macOS DMG: `npm run dist -- --mac dmg` (from `electron/`)
+  - Windows NSIS: push a `v*` tag to trigger the `Windows Package` workflow, or run it manually.
+5. Tag and publish:
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+6. Attach/verify both macOS and Windows artifacts in the GitHub release entry.
 
 ## Features
 - Quiz browser from configured `quiz_roots`

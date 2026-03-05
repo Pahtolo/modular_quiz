@@ -22,6 +22,10 @@ Use this file as the single source of truth for feature work across features.
 - [x] Add prompt validation checks before quiz generation is run.
 - [x] Consolidate provider-specific quiz generation prompts into one shared prompt builder.
 - [x] Feedback now speaks directly to the learner (`you/your`) instead of speaking about the user.
+- [x] Context injection now requests backend extracted text and supports `.pptx`, `.pdf`, `.docx`, `.md`, and `.txt`.
+- [x] Removed `Total` and `MCQ options` input fields; generation now always uses 4 options per MCQ.
+- [x] Hardened Claude quiz generation JSON parsing with cleanup + retry when the first response is invalid.
+- [x] Fixed generation count parsing to preserve `0` values and derive `total` from `mcq_count + short_count`.
 
 ### Notes
 
@@ -30,8 +34,7 @@ Use this file as the single source of truth for feature work across features.
 ## Feature: Quiz Library & Selector (QS)
 
 ### Action Items
-
-
+- [x] If new feedback has been given without the feedback tab open, add a glowing animation to the feedback tab. Remove the animation once the tab is opened. 
 
 ### Completed Tasks
 
@@ -84,6 +87,9 @@ Use this file as the single source of truth for feature work across features.
 - [x] Prompt with the same mid-quiz confirmation message when switching to a different quiz.
 - [x] Add retrospective grading action in Performance History for attempts with ungraded questions.
 - [x] Add `Inject Context` button left of `Explain`/`Next` to import supporting materials for better model feedback.
+- [x] Add `View Injected Context` with a minimize-friendly file list so users can quickly return to the quiz.
+- [x] Replace `Latest Feedback` with a follow-up chatbox so users can ask additional feedback questions.
+- [x] Add `Quizzes`/`Feedback` tabs to the left quiz directory card so users can switch between directory and feedback chat in one panel.
 
 ### Notes
 
@@ -114,7 +120,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- _No pending action items._
+- [ ] for the 'Output Folder' dropdown menu, add a ' Create New Folder ' option, maybe with a '+' somewhere in there. 
 
 
 ### Completed Tasks
@@ -140,8 +146,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
- - [x] Models like Claude Opus 4.6 are instead formatted "Claude Opus 4 6". Adjust to the correct formatting.
- - [x] Add setting 'Automatically inject context' that automatically injects the same files as context to help the model give more accurate feedback. These files will be the same files used to generate the quiz. 
+- _No pending action items._
 
 
 ### Completed Tasks
@@ -176,6 +181,8 @@ Use this file as the single source of truth for feature work across features.
 - [x] Model options should not be formatted "Claude: claude-3-haiku-20240307". Should instead be formated "Claude 3 Haiku"
 - [x] Preserve decimal version formatting in model labels (for example, `Claude Opus 4.6`, not `Claude Opus 4 6`).
 - [x] Add `Automatically inject context` setting to reuse quiz-generation source files as grading/explanation context.
+- [x] Sanitize tracked `settings/settings.json` and `settings/performance_history.json` to safe template defaults.
+- [x] Add CI hygiene guard to block committed credentials and user-specific home-directory paths in tracked settings.
 ### Notes
 
 - _Add private notes for this feature here._
@@ -229,6 +236,9 @@ Use this file as the single source of truth for feature work across features.
 - [x] Remove thread-link tracking from the workflow to avoid ambiguity.
 - [x] Merge `To-Do`, `Bugs`, and `Ideas` into `Action Items`.
 - [x] Add `Completed Tasks` sections for each feature.
+- [x] Add `Windows Package` GitHub workflow to build unsigned NSIS installers and publish artifacts on tags/manual dispatch.
+- [x] Add full-history `Secret Scan` workflow using gitleaks as a release gate for public publishing.
+- [x] Add open-source readiness docs (`LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md`) plus README release checklist.
 
 ### Notes
 

@@ -18,8 +18,14 @@ function projectRoot() {
 }
 
 function resolveBackendLaunch() {
-  const packagedSidecar = path.join(process.resourcesPath, 'backend', 'modular-quiz-api');
-  if (app.isPackaged && fs.existsSync(packagedSidecar)) {
+  const packagedCandidates = [
+    path.join(process.resourcesPath, 'backend', 'modular-quiz-api'),
+    path.join(process.resourcesPath, 'backend', 'modular-quiz-api.exe'),
+  ];
+  const packagedSidecar = app.isPackaged
+    ? packagedCandidates.find((candidate) => fs.existsSync(candidate))
+    : null;
+  if (packagedSidecar) {
     return {
       cmd: packagedSidecar,
       args: [],
@@ -36,7 +42,7 @@ function resolveBackendLaunch() {
     };
   }
 
-  const pythonBin = process.env.PYTHON_BIN || 'python3';
+  const pythonBin = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
   const runApiPath = path.resolve(projectRoot(), 'run_api.py');
   return {
     cmd: pythonBin,

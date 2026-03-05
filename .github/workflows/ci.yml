@@ -21,5 +21,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Validate tracked settings hygiene
+        run: python -m unittest tests.test_repo_hygiene
+
       - name: Run unit tests
         run: python -m unittest discover -s tests -p "test_*.py"

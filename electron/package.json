@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "build:renderer": "vite build",
-    "build:sidecar": "bash scripts/build_sidecar.sh",
+    "build:sidecar": "node scripts/build_sidecar.cjs",
     "build": "npm run build:renderer && electron-builder --dir",
     "dist": "npm run build:renderer && npm run build:sidecar && electron-builder"
   },
@@ -40,8 +40,12 @@
     ],
     "extraResources": [
       {
-        "from": "build/backend/modular-quiz-api",
-        "to": "backend/modular-quiz-api"
+        "from": "build/backend",
+        "to": "backend",
+        "filter": [
+          "modular-quiz-api",
+          "modular-quiz-api.exe"
+        ]
       }
     ],
     "mac": {
@@ -50,6 +54,11 @@
       ],
       "identity": null,
       "category": "public.app-category.education"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
     }
   }
 }
