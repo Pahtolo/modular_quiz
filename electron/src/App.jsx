@@ -463,7 +463,8 @@ function App() {
   });
 
   const [historyRecords, setHistoryRecords] = useState([]);
-  const [historyFilterPath, setHistoryFilterPath] = useState('');
+  const [historyContextPaths, setHistoryContextPaths] = useState([]);
+  const [historyContextIndex, setHistoryContextIndex] = useState(-1);
   const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(-1);
   const [quizSidebarMode, setQuizSidebarMode] = useState('question_nav');
   const [quizContextMenu, setQuizContextMenu] = useState({
@@ -576,17 +577,23 @@ function App() {
   const quizTimerRemainingMs = Math.max(0, quizTimerDurationMs - quizElapsedMs);
   const quizTimerExpired = quizClockMode === 'timer' && quizTimerDurationMs > 0 && quizElapsedMs >= quizTimerDurationMs;
 
-  const historyFiltered = useMemo(() => {
-    if (!historyFilterPath) {
-      return historyRecords;
+  const activeHistoryQuizPath = useMemo(() => {
+    if (historyContextIndex < 0 || historyContextIndex >= historyContextPaths.length) {
+      return '';
     }
-    return historyRecords.filter((record) => record.quiz_path === historyFilterPath);
-  }, [historyFilterPath, historyRecords]);
+    return historyContextPaths[historyContextIndex] || '';
+  }, [historyContextIndex, historyContextPaths]);
 
-  const historyFilterPaths = useMemo(
-    () => [...new Set(historyRecords.map((record) => record.quiz_path).filter(Boolean))],
-    [historyRecords],
-  );
+  const historyFiltered = useMemo(() => {
+    if (!activeHistoryQuizPath) {
+      return [];
+    }
+    return historyRecords.filter((record) => record.quiz_path === activeHistoryQuizPath);
+  }, [activeHistoryQuizPath, historyRecords]);
+
+  const hasOlderHistoryContext = historyContextIndex >= 0 && historyContextIndex < historyContextPaths.length - 1;
+  const hasNewerHistoryContext = historyContextIndex > 0;
+  const activeHistoryQuizLabel = activeHistoryQuizPath ? shortPathLabel(activeHistoryQuizPath) : '';
 
   const selectedAttempt = useMemo(() => {
     if (selectedAttemptIndex < 0 || selectedAttemptIndex >= historyFiltered.length) {
@@ -684,6 +691,18 @@ function App() {
     }
     setGenerationOutputSubdir(generationOutputFolderOptions[0].value);
   }, [generationOutputFolderOptions, generationOutputSubdir, settings?.generation_output_subdir]);
+
+  useEffect(() => {
+    if (!historyContextPaths.length) {
+      if (historyContextIndex !== -1) {
+        setHistoryContextIndex(-1);
+      }
+      return;
+    }
+    if (historyContextIndex < 0 || historyContextIndex >= historyContextPaths.length) {
+      setHistoryContextIndex(0);
+    }
+  }, [historyContextPaths, historyContextIndex]);
 
   useEffect(() => {
     if (activeTab !== 'quiz') {
@@ -1057,13 +1076,61 @@ function App() {
     await loadQuizTree();
   }
 
-  async function loadHistory({ preserveFilter = false } = {}) {
+  async function loadHistory() {
     const response = await apiRequest('/v1/history', 'GET');
-    const records = response.records || [];
-    setHistoryRecords(records);
-    if (!preserveFilter && historyFilterPath && !records.some((record) => record.quiz_path === historyFilterPath)) {
-      setHistoryFilterPath('');
+    setHistoryRecords(response.records || []);
+    setSelectedAttemptIndex(-1);
+  }
+
+  function resetQuizSessionState(nextSidebarMode = 'question_nav') {
+    if (autoAdvanceTimeoutRef.current) {
+      window.clearTimeout(autoAdvanceTimeoutRef.current);
+      autoAdvanceTimeoutRef.current = null;
     }
+    if (questionTimerIntervalRef.current) {
+      window.clearInterval(questionTimerIntervalRef.current);
+      questionTimerIntervalRef.current = null;
+    }
+    setQuiz(null);
+    setQuizIndex(0);
+    setQuizScore(0);
+    setQuizStartedAt(0);
+    setQuestionResult(null);
+    setQuestionLocked(false);
+    setMcqAnswer('');
+    setShortAnswer('');
+    setSelfScore('');
+    setQuizNotes([]);
+    setAttemptQuestions([]);
+    setQuestionStates({});
+    setQuestionTimeLeftMs(0);
+    setQuizSaved(false);
+    setQuizSidebarMode(nextSidebarMode);
+  }
+
+  function pushHistoryContext(targetPath) {
+    const nextPath = String(targetPath || '').trim();
+    if (!nextPath) {
+      return;
+    }
+    setHistoryContextPaths((prev) => [nextPath, ...prev.filter((item) => item !== nextPath)]);
+    setHistoryContextIndex(0);
+    setSelectedAttemptIndex(-1);
+  }
+
+  function goToOlderHistoryContext() {
+    if (!hasOlderHistoryContext) {
+      return;
+    }
+    setHistoryContextIndex((prev) => prev + 1);
+    setSelectedAttemptIndex(-1);
+  }
+
+  function goToNewerHistoryContext() {
+    if (!hasNewerHistoryContext) {
+      return;
+    }
+    setHistoryContextIndex((prev) => prev - 1);
     setSelectedAttemptIndex(-1);
   }
 
@@ -1151,11 +1218,26 @@ function App() {
 
   async function openPerformanceHistoryForQuiz(pathValue) {
     const targetPath = String(pathValue || '').trim();
-    setHistoryFilterPath(targetPath);
-    setSelectedAttemptIndex(-1);
-    setQuizSidebarMode('performance_history');
+    if (!targetPath) {
+      return;
+    }
+    if (quiz && !quizSaved) {
+      const shouldExit = window.confirm('Are you sure you want to exit the quiz? Your progress will not be saved.');
+      if (!shouldExit) {
+        return;
+      }
+    }
+    if (quiz) {
+      resetQuizSessionState('performance_history');
+    } else {
+      setQuizSidebarMode('performance_history');
+    }
+    pushHistoryContext(targetPath);
+    setActiveTab('quiz');
+    setQuizLoadError('');
+    closeQuizClockMenu();
     try {
-      await loadHistory({ preserveFilter: true });
+      await loadHistory();
     } catch (err) {
       setQuizLoadError(err.message || 'Failed to load performance history.');
     }
@@ -1214,27 +1296,6 @@ function App() {
       await loadQuizTree();
     } catch (err) {
       setStartupError(`Legacy import failed: ${err.message}`);
-    }
-  }
-
-  async function handleOpenAISignIn() {
-    try {
-      if (!(settingsForm?.openai_oauth_client_id || '').trim()) {
-        setStartupError('OpenAI OAuth client ID is required. Add it in Settings, then try signing in again.');
-        return;
-      }
-      if (settingsDirty) {
-        const saved = await handleSaveSettings();
-        if (!saved) {
-          return;
-        }
-      }
-      await apiRequest('/v1/oauth/openai/connect', 'POST', {});
-      const settingsResponse = await apiRequest('/v1/settings', 'GET');
-      setSettings(settingsResponse.settings);
-      setSettingsForm({ ...settingsResponse.settings });
-    } catch (err) {
-      setStartupError(`OpenAI sign-in failed: ${err.message}`);
     }
   }
 
@@ -1705,7 +1766,6 @@ function App() {
   const selectedProviderModel = providerAndModelFromKey(
     settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:',
   );
-  const isQuizInProgress = Boolean(quiz && currentQuestion);
   const showingPerformanceHistory = quizSidebarMode === 'performance_history';
   const quizComplete = Boolean(quiz && quizIndex >= quiz.questions.length - 1 && questionLocked && questionResult);
   const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
@@ -1718,7 +1778,7 @@ function App() {
     settingsMatches('mcq explanations', 'explanations', 'explain'),
     settingsMatches('quizzes', 'quiz folder', 'quiz library', 'import folder', 'open quizzes folder', 'drag and drop'),
     settingsMatches('claude api key', 'claude model selected', 'claude'),
-    settingsMatches('openai auth mode', 'openai oauth client id', 'openai api key', 'openai model selected', 'openai'),
+    settingsMatches('openai api key', 'openai model selected', 'openai'),
   ].some(Boolean);
   const settingsDirty = useMemo(() => {
     if (!settingsForm || !settings) {
@@ -1728,41 +1788,37 @@ function App() {
   }, [settingsForm, settings]);
   const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
 
-  function renderPerformanceHistoryPanel({ showReturnToQuiz = false } = {}) {
+  function renderPerformanceHistoryPanel() {
+    const contextOrderText = activeHistoryQuizPath
+      ? `${historyContextIndex + 1} of ${historyContextPaths.length} (most recent first)`
+      : '';
     return (
       <div className="performance-sidebar">
         <div className="row between performance-sidebar-header">
           <h4>Performance History</h4>
-          <button type="button" onClick={() => loadHistory({ preserveFilter: true })}>
+          <button type="button" onClick={() => loadHistory()}>
             Refresh
           </button>
         </div>
 
-        <label className="field">
-          <span>Filter</span>
-          <select
-            value={historyFilterPath}
-            onChange={(event) => {
-              setHistoryFilterPath(event.target.value);
-              setSelectedAttemptIndex(-1);
-            }}
-          >
-            <option value="">(All quizzes)</option>
-            {historyFilterPaths.map((path) => (
-              <option key={path} value={path}>
-                {path.split('/').slice(-1)[0]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {showReturnToQuiz ? (
-          <button type="button" onClick={() => setQuizSidebarMode('question_nav')}>
-            Return to quiz
-          </button>
+        {activeHistoryQuizPath ? (
+          <div className="row performance-context-nav">
+            <button type="button" onClick={() => goToOlderHistoryContext()} disabled={!hasOlderHistoryContext}>
+              ←
+            </button>
+            <div className="performance-context-label">
+              <strong>{activeHistoryQuizLabel || activeHistoryQuizPath}</strong>
+              <span>{contextOrderText}</span>
+            </div>
+            <button type="button" onClick={() => goToNewerHistoryContext()} disabled={!hasNewerHistoryContext}>
+              →
+            </button>
+          </div>
         ) : null}
 
-        {historyFiltered.length ? (
+        {!activeHistoryQuizPath ? (
+          <p className="roots-empty">Right-click a quiz and choose Performance History to view attempts.</p>
+        ) : historyFiltered.length ? (
           <ul className="attempt-list performance-attempt-list">
             {historyFiltered.map((record, index) => (
               <li key={`${record.timestamp}-${index}`}>
@@ -1782,11 +1838,11 @@ function App() {
             ))}
           </ul>
         ) : (
-          <p className="roots-empty">No attempts yet for this filter.</p>
+          <p className="roots-empty">No attempts yet for this quiz.</p>
         )}
 
         <div className="attempt-detail performance-attempt-detail">
-          {selectedAttempt ? (
+          {selectedAttempt && activeHistoryQuizPath ? (
             <>
               <h5>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h5>
               <p>
@@ -1816,6 +1872,8 @@ function App() {
                 </tbody>
               </table>
             </>
+          ) : !activeHistoryQuizPath ? (
+            <p>Choose a quiz from the quiz tree to open its performance history.</p>
           ) : (
             <p>Select an attempt to inspect details.</p>
           )}
@@ -2125,7 +2183,7 @@ function App() {
 
                   {showingPerformanceHistory ? (
                     <aside className="question-nav-column performance-history-column">
-                      {renderPerformanceHistoryPanel({ showReturnToQuiz: isQuizInProgress })}
+                      {renderPerformanceHistoryPanel()}
                     </aside>
                   ) : (
                     <aside className="question-nav-column">
@@ -2155,7 +2213,7 @@ function App() {
                 </div>
               ) : showingPerformanceHistory ? (
                 <section className="performance-standalone">
-                  {renderPerformanceHistoryPanel({ showReturnToQuiz: false })}
+                  {renderPerformanceHistoryPanel()}
                 </section>
               ) : (
                 <p>Select and start a quiz to begin.</p>
@@ -2393,14 +2451,9 @@ function App() {
           <section className="card settings-layout">
             <div className="row between">
               <h2>Settings</h2>
-              <div className="row">
-                <button type="button" onClick={() => handleImportLegacy()}>
-                  Import Legacy
-                </button>
-                <button type="button" onClick={() => handleOpenAISignIn()}>
-                  Sign in with OpenAI
-                </button>
-              </div>
+              <button type="button" onClick={() => handleImportLegacy()}>
+                Import Legacy
+              </button>
             </div>
 
             <label className="field settings-search-field">
@@ -2655,37 +2708,11 @@ function App() {
                 </label>
               ) : null}
 
-              {settingsMatches('openai auth mode', 'openai') ? (
-                <label className="field">
-                  <span>OpenAI auth mode</span>
-                  <select
-                    value={settingsForm.openai_auth_mode || 'api_key'}
-                    onChange={(event) =>
-                      setSettingsForm((prev) => ({ ...prev, openai_auth_mode: event.target.value }))
-                    }
-                  >
-                    <option value="api_key">api_key</option>
-                    <option value="oauth">oauth</option>
-                  </select>
-                </label>
-              ) : null}
-
-              {settingsMatches('openai oauth client id', 'oauth client id', 'openai') ? (
-                <label className="field">
-                  <span>OpenAI OAuth client ID</span>
-                  <input
-                    value={settingsForm.openai_oauth_client_id || ''}
-                    onChange={(event) =>
-                      setSettingsForm((prev) => ({ ...prev, openai_oauth_client_id: event.target.value }))
-                    }
-                  />
-                </label>
-              ) : null}
-
               {settingsMatches('openai api key', 'openai') ? (
                 <label className="field">
                   <span>OpenAI API key</span>
                   <input
+                    type="password"
                     value={settingsForm.openai_api_key || ''}
                     onChange={(event) => setSettingsForm((prev) => ({ ...prev, openai_api_key: event.target.value }))}
                   />
