@@ -48,12 +48,24 @@ jobs:
           if ($null -eq $popplerRoot) {
             throw "Unable to locate Chocolatey poppler installation"
           }
-          $pdftoppmExe = Get-ChildItem $popplerRoot.FullName -Recurse -Filter "pdftoppm.exe" -File -ErrorAction SilentlyContinue |
-            Select-Object -First 1
+
+          $pdftoppmExe = Get-Command "pdftoppm.exe" -ErrorAction SilentlyContinue
+          if ($null -eq $pdftoppmExe -and (Test-Path "C:\ProgramData\chocolatey\bin\pdftoppm.exe")) {
+            $pdftoppmExe = Get-Item "C:\ProgramData\chocolatey\bin\pdftoppm.exe"
+          }
+          if ($null -eq $pdftoppmExe) {
+            $pdftoppmExe = Get-ChildItem $popplerRoot.FullName -Recurse -Filter "pdftoppm.exe" -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          }
+          if ($null -eq $pdftoppmExe) {
+            choco install -y xpdf-utils
+            $pdftoppmExe = Get-Command "pdftoppm.exe" -ErrorAction SilentlyContinue
+          }
           if ($null -eq $pdftoppmExe) {
             throw "Unable to locate pdftoppm.exe in Chocolatey poppler installation"
           }
-          $popplerBin = Split-Path $pdftoppmExe.FullName -Parent
+          $pdftoppmPath = if ($pdftoppmExe.PSObject.Properties.Name -contains "Source") { $pdftoppmExe.Source } else { $pdftoppmExe.FullName }
+          $popplerBin = Split-Path $pdftoppmPath -Parent
 
           "$tesseractBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "$popplerBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
