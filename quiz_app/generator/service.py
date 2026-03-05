@@ -33,7 +33,12 @@ def _quiz_to_payload(quiz: Quiz) -> dict:
                 }
             )
 
-    return {"title": quiz.title, "instructions": quiz.instructions, "questions": questions}
+    return {
+        "name": quiz.title,
+        "title": quiz.title,
+        "instructions": quiz.instructions,
+        "questions": questions,
+    }
 
 
 def _slugify(value: str) -> str:

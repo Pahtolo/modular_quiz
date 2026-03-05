@@ -298,6 +298,23 @@ function setupIpcHandlers() {
     return result.filePaths[0];
   });
 
+  ipcMain.handle('dialog:pick-source-inputs', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Import Source Materials',
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      filters: [
+        {
+          name: 'Supported Files',
+          extensions: ['txt', 'md', 'pdf', 'pptx', 'docx'],
+        },
+      ],
+    });
+    if (result.canceled) {
+      return [];
+    }
+    return result.filePaths;
+  });
+
   ipcMain.handle('shell:open-path', async (_event, payload) => {
     const target = String(payload?.path || '').trim();
     if (!target) {

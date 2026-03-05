@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import renderMathInElement from 'katex/contrib/auto-render';
-import { apiRequest, backendInfo, openPath, pickFiles, pickFolder } from './api';
+import { apiRequest, backendInfo, openPath, pickFolder, pickSourceInputs } from './api';
 
-const TABS = ['quiz', 'generate', 'performance', 'settings'];
+const TABS = ['quiz', 'generate', 'settings'];
 const THEME_STORAGE_KEY = 'modular-quiz-theme';
 const KATEX_DELIMITERS = [
   { left: '$$', right: '$$', display: true },
@@ -72,6 +72,47 @@ function shortPathLabel(value) {
   const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '');
   const parts = normalized.split('/').filter(Boolean);
   return parts.length ? parts[parts.length - 1] : raw;
+}
+
+function normalizePathText(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '');
+}
+
+function normalizeRelativePath(value) {
+  const normalized = normalizePathText(value);
+  if (!normalized || normalized === '.') {
+    return '';
+  }
+  return normalized;
+}
+
+function relativePathFromRoot(pathValue, rootPath) {
+  const normalizedPath = normalizePathText(pathValue);
+  const normalizedRoot = normalizePathText(rootPath);
+  if (!normalizedPath || !normalizedRoot) {
+    return '';
+  }
+  if (normalizedPath === normalizedRoot) {
+    return '';
+  }
+  const rootPrefix = `${normalizedRoot}/`;
+  if (!normalizedPath.startsWith(rootPrefix)) {
+    return '';
+  }
+  return normalizedPath.slice(rootPrefix.length);
+}
+
+function collectFolderNodePaths(nodes, out = []) {
+  for (const node of nodes || []) {
+    if (node?.kind === 'folder' && node?.path) {
+      out.push(String(node.path));
+    }
+    collectFolderNodePaths(node?.children || [], out);
+  }
+  return out;
 }
 
 function omitManagedQuizzesRoot(nodes) {
@@ -186,6 +227,17 @@ function formatCountdown(milliseconds) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatElapsedTime(milliseconds) {
+  const totalSeconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 function ancestorPathsForTarget(nodes, targetPath, trail = []) {
   for (const node of nodes || []) {
     const nextTrail = [...trail, node.path];
@@ -200,9 +252,8 @@ function ancestorPathsForTarget(nodes, targetPath, trail = []) {
   return null;
 }
 
-function QuizTree({ nodes, selectedPath, onSelect, onRename }) {
+function QuizTree({ nodes, selectedPath, onSelect, onOpenContextMenu }) {
   const [collapsedPaths, setCollapsedPaths] = useState({});
-  const rightClickRenameHandledRef = useRef(false);
 
   useEffect(() => {
     if (!selectedPath) {
@@ -239,18 +290,19 @@ function QuizTree({ nodes, selectedPath, onSelect, onRename }) {
     return node.name || shortPathLabel(node.path) || '';
   };
 
-  const triggerRename = (event, node) => {
+  const openQuizContextMenu = (event, node) => {
     const isQuiz = node?.kind === 'quiz';
-    if (!isQuiz || typeof onRename !== 'function') {
+    if (!isQuiz || typeof onOpenContextMenu !== 'function') {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
-    rightClickRenameHandledRef.current = true;
-    onRename(node.path, nodeLabel(node));
-    window.setTimeout(() => {
-      rightClickRenameHandledRef.current = false;
-    }, 0);
+    onOpenContextMenu({
+      path: node.path,
+      name: nodeLabel(node),
+      x: event.clientX,
+      y: event.clientY,
+    });
   };
 
   const renderNode = (node) => {
@@ -288,17 +340,7 @@ function QuizTree({ nodes, selectedPath, onSelect, onRename }) {
               }
             }}
             onContextMenu={(event) => {
-              if (rightClickRenameHandledRef.current) {
-                rightClickRenameHandledRef.current = false;
-                return;
-              }
-              triggerRename(event, node);
-            }}
-            onMouseDown={(event) => {
-              if (event.button !== 2) {
-                return;
-              }
-              triggerRename(event, node);
+              openQuizContextMenu(event, node);
             }}
           >
             <span className={`tree-node-kind ${isQuiz ? 'quiz' : 'group'}`}>{nodeKindLabel}</span>
@@ -406,7 +448,9 @@ function App() {
   const [collectedSources, setCollectedSources] = useState([]);
   const [generateWarnings, setGenerateWarnings] = useState([]);
   const [generateErrors, setGenerateErrors] = useState([]);
+  const [generateDragOver, setGenerateDragOver] = useState(false);
   const [generateOutputPath, setGenerateOutputPath] = useState('');
+  const [generationOutputSubdir, setGenerationOutputSubdir] = useState('');
   const [generationForm, setGenerationForm] = useState({
     provider: 'claude',
     model: '',
@@ -421,6 +465,23 @@ function App() {
   const [historyRecords, setHistoryRecords] = useState([]);
   const [historyFilterPath, setHistoryFilterPath] = useState('');
   const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(-1);
+  const [quizSidebarMode, setQuizSidebarMode] = useState('question_nav');
+  const [quizContextMenu, setQuizContextMenu] = useState({
+    open: false,
+    x: 0,
+    y: 0,
+    path: '',
+    name: '',
+  });
+  const [quizClockMode, setQuizClockMode] = useState('stopwatch');
+  const [quizTimerDurationSeconds, setQuizTimerDurationSeconds] = useState(15 * 60);
+  const [quizClockTickMs, setQuizClockTickMs] = useState(Date.now());
+  const [quizClockMenu, setQuizClockMenu] = useState({
+    open: false,
+    x: 0,
+    y: 0,
+    draftMinutes: '15',
+  });
 
   const combinedModelOptions = useMemo(() => {
     const options = [{ key: 'self:', label: 'No model', provider: 'self' }];
@@ -450,13 +511,6 @@ function App() {
     const filteredNodes = filterQuizNodes(baseNodes, quizSearchText);
     return sortQuizNodes(filteredNodes, quizSortMode);
   }, [quizTreeRoots, quizSearchText, quizSortMode]);
-
-  const selectedQuizLabel = useMemo(() => {
-    if (selectedQuizNode?.name) {
-      return selectedQuizNode.name;
-    }
-    return shortPathLabel(selectedQuizPath) || 'None';
-  }, [selectedQuizNode, selectedQuizPath]);
 
   const maxScore = useMemo(() => {
     if (!quiz || !quiz.questions) {
@@ -512,6 +566,15 @@ function App() {
   const showQuestionTimer = Boolean(
     activeTab === 'quiz' && quiz && currentQuestion && !questionLocked && questionTimerSeconds > 0,
   );
+  const quizElapsedMs = useMemo(() => {
+    if (!quiz || quizStartedAt <= 0) {
+      return 0;
+    }
+    return Math.max(0, quizClockTickMs - quizStartedAt);
+  }, [quiz, quizStartedAt, quizClockTickMs]);
+  const quizTimerDurationMs = Math.max(0, Number(quizTimerDurationSeconds || 0)) * 1000;
+  const quizTimerRemainingMs = Math.max(0, quizTimerDurationMs - quizElapsedMs);
+  const quizTimerExpired = quizClockMode === 'timer' && quizTimerDurationMs > 0 && quizElapsedMs >= quizTimerDurationMs;
 
   const historyFiltered = useMemo(() => {
     if (!historyFilterPath) {
@@ -519,6 +582,11 @@ function App() {
     }
     return historyRecords.filter((record) => record.quiz_path === historyFilterPath);
   }, [historyFilterPath, historyRecords]);
+
+  const historyFilterPaths = useMemo(
+    () => [...new Set(historyRecords.map((record) => record.quiz_path).filter(Boolean))],
+    [historyRecords],
+  );
 
   const selectedAttempt = useMemo(() => {
     if (selectedAttemptIndex < 0 || selectedAttemptIndex >= historyFiltered.length) {
@@ -533,6 +601,43 @@ function App() {
     }
     return providerModels.claude || [];
   }, [generationForm.provider, providerModels]);
+
+  const generationOutputFolderOptions = useMemo(() => {
+    const root = String(quizzesDir || '').trim();
+    if (!root) {
+      return [];
+    }
+    const unique = new Map();
+    const includePath = (pathValue) => {
+      const relative = normalizeRelativePath(relativePathFromRoot(pathValue, root));
+      const key = relative;
+      if (unique.has(key)) {
+        return;
+      }
+      const absolutePath = relative ? `${normalizePathText(root)}/${relative}` : normalizePathText(root);
+      const label = relative ? `Quizzes/${relative}` : 'Quizzes';
+      unique.set(key, {
+        value: relative,
+        label,
+        absolute_path: absolutePath,
+      });
+    };
+
+    includePath(root);
+    includePath(`${normalizePathText(root)}/Generated`);
+    for (const pathValue of collectFolderNodePaths(quizzesTree)) {
+      includePath(pathValue);
+    }
+
+    return [...unique.values()].sort((left, right) => left.label.localeCompare(right.label));
+  }, [quizzesDir, quizzesTree]);
+
+  const selectedGenerationOutputFolder = useMemo(() => {
+    if (!generationOutputFolderOptions.length) {
+      return null;
+    }
+    return generationOutputFolderOptions.find((option) => option.value === generationOutputSubdir) || generationOutputFolderOptions[0];
+  }, [generationOutputFolderOptions, generationOutputSubdir]);
 
   const settingsSearchQuery = (settingsSearch || '').trim().toLowerCase();
 
@@ -556,6 +661,29 @@ function App() {
   useEffect(() => {
     void boot();
   }, []);
+
+  useEffect(() => {
+    if (!generationOutputFolderOptions.length) {
+      if (generationOutputSubdir !== '') {
+        setGenerationOutputSubdir('');
+      }
+      return;
+    }
+    const allowedValues = new Set(generationOutputFolderOptions.map((option) => option.value));
+    if (allowedValues.has(generationOutputSubdir)) {
+      return;
+    }
+    const preferred = normalizeRelativePath(settings?.generation_output_subdir || '');
+    if (preferred && allowedValues.has(preferred)) {
+      setGenerationOutputSubdir(preferred);
+      return;
+    }
+    if (allowedValues.has('Generated')) {
+      setGenerationOutputSubdir('Generated');
+      return;
+    }
+    setGenerationOutputSubdir(generationOutputFolderOptions[0].value);
+  }, [generationOutputFolderOptions, generationOutputSubdir, settings?.generation_output_subdir]);
 
   useEffect(() => {
     if (activeTab !== 'quiz') {
@@ -641,11 +769,58 @@ function App() {
   }, [themeMode]);
 
   useEffect(() => {
+    if (!quiz || quizStartedAt <= 0) {
+      return undefined;
+    }
+    setQuizClockTickMs(Date.now());
+    const timerId = window.setInterval(() => {
+      setQuizClockTickMs(Date.now());
+    }, 250);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [quiz, quizStartedAt]);
+
+  useEffect(() => {
+    if (!quizContextMenu.open) {
+      return undefined;
+    }
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+      event.preventDefault();
+      closeQuizContextMenu();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [quizContextMenu.open]);
+
+  useEffect(() => {
+    if (!quizClockMenu.open) {
+      return undefined;
+    }
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+      event.preventDefault();
+      closeQuizClockMenu();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [quizClockMenu.open]);
+
+  useEffect(() => {
     const onKeyDown = (event) => {
       if (activeTab !== 'quiz' || !quiz || !currentQuestion || isEditableTarget(event.target)) {
         return;
       }
-      if (event.key === 'ArrowLeft' && canGoPrevQuestion) {
+      if (event.key === 'ArrowLeft' && canGoPrevQuestion && !autoAdvanceEnabled) {
         event.preventDefault();
         setQuizIndex((prev) => Math.max(prev - 1, 0));
         return;
@@ -653,6 +828,15 @@ function App() {
       if (event.key === 'ArrowRight' && canGoForwardQuestion) {
         event.preventDefault();
         setQuizIndex((prev) => Math.min(prev + 1, furthestReachableIndex));
+        return;
+      }
+      const upperKey = String(event.key || '').toUpperCase();
+      if (currentQuestion.type === 'mcq' && !questionLocked && ['A', 'B', 'C', 'D'].includes(upperKey)) {
+        const optionIndex = upperKey.charCodeAt(0) - 65;
+        if (optionIndex >= 0 && optionIndex < (currentQuestion.options || []).length) {
+          event.preventDefault();
+          void submitMcqAnswer(upperKey);
+        }
         return;
       }
       if (event.key !== 'Enter') {
@@ -678,6 +862,7 @@ function App() {
     canGoPrevQuestion,
     canGoForwardQuestion,
     furthestReachableIndex,
+    autoAdvanceEnabled,
     questionLocked,
   ]);
 
@@ -872,14 +1057,108 @@ function App() {
     await loadQuizTree();
   }
 
-  async function loadHistory() {
+  async function loadHistory({ preserveFilter = false } = {}) {
     const response = await apiRequest('/v1/history', 'GET');
     const records = response.records || [];
     setHistoryRecords(records);
-    if (historyFilterPath && !records.some((record) => record.quiz_path === historyFilterPath)) {
+    if (!preserveFilter && historyFilterPath && !records.some((record) => record.quiz_path === historyFilterPath)) {
       setHistoryFilterPath('');
     }
     setSelectedAttemptIndex(-1);
+  }
+
+  function closeQuizContextMenu() {
+    setQuizContextMenu((prev) => {
+      if (!prev.open) {
+        return prev;
+      }
+      return {
+        ...prev,
+        open: false,
+      };
+    });
+  }
+
+  function closeQuizClockMenu() {
+    setQuizClockMenu((prev) => {
+      if (!prev.open) {
+        return prev;
+      }
+      return {
+        ...prev,
+        open: false,
+      };
+    });
+  }
+
+  function openQuizClockMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const MENU_WIDTH = 280;
+    const MENU_HEIGHT = 250;
+    const EDGE_PADDING = 10;
+    const requestedX = Number(event.clientX || 0);
+    const requestedY = Number(event.clientY || 0);
+    const maxX = Math.max(EDGE_PADDING, window.innerWidth - MENU_WIDTH - EDGE_PADDING);
+    const maxY = Math.max(EDGE_PADDING, window.innerHeight - MENU_HEIGHT - EDGE_PADDING);
+    const x = Math.min(Math.max(requestedX, EDGE_PADDING), maxX);
+    const y = Math.min(Math.max(requestedY, EDGE_PADDING), maxY);
+    setQuizClockMenu({
+      open: true,
+      x,
+      y,
+      draftMinutes: String(Math.max(1, Math.floor((quizTimerDurationSeconds || 60) / 60))),
+    });
+  }
+
+  function applyQuizTimerFromMenu() {
+    const rawMinutes = Number.parseInt(String(quizClockMenu.draftMinutes || '').trim(), 10);
+    if (Number.isNaN(rawMinutes) || rawMinutes <= 0) {
+      setQuizClockMenu((prev) => ({ ...prev, draftMinutes: '15' }));
+      return;
+    }
+    const nextMinutes = Math.min(24 * 60, Math.max(1, rawMinutes));
+    setQuizTimerDurationSeconds(nextMinutes * 60);
+    setQuizClockMode('timer');
+    closeQuizClockMenu();
+  }
+
+  function openQuizContextMenuForNode(menuPayload) {
+    const targetPath = String(menuPayload?.path || '').trim();
+    if (!targetPath) {
+      return;
+    }
+
+    const MENU_WIDTH = 220;
+    const MENU_HEIGHT = 120;
+    const EDGE_PADDING = 10;
+    const requestedX = Number(menuPayload?.x || 0);
+    const requestedY = Number(menuPayload?.y || 0);
+    const maxX = Math.max(EDGE_PADDING, window.innerWidth - MENU_WIDTH - EDGE_PADDING);
+    const maxY = Math.max(EDGE_PADDING, window.innerHeight - MENU_HEIGHT - EDGE_PADDING);
+    const x = Math.min(Math.max(requestedX, EDGE_PADDING), maxX);
+    const y = Math.min(Math.max(requestedY, EDGE_PADDING), maxY);
+
+    setSelectedQuizPath(targetPath);
+    setQuizContextMenu({
+      open: true,
+      x,
+      y,
+      path: targetPath,
+      name: String(menuPayload?.name || '').trim() || shortPathLabel(targetPath),
+    });
+  }
+
+  async function openPerformanceHistoryForQuiz(pathValue) {
+    const targetPath = String(pathValue || '').trim();
+    setHistoryFilterPath(targetPath);
+    setSelectedAttemptIndex(-1);
+    setQuizSidebarMode('performance_history');
+    try {
+      await loadHistory({ preserveFilter: true });
+    } catch (err) {
+      setQuizLoadError(err.message || 'Failed to load performance history.');
+    }
   }
 
   async function handleSaveSettings() {
@@ -974,6 +1253,8 @@ function App() {
       }
     }
 
+    closeQuizContextMenu();
+    closeQuizClockMenu();
     setActiveTab(nextTab);
   }
 
@@ -994,6 +1275,20 @@ function App() {
     return [...new Set(files
       .map((file) => (typeof file.path === 'string' ? file.path.trim() : ''))
       .filter((path) => path))];
+  }
+
+  async function handleGenerateSourcesDrop(event) {
+    event.preventDefault();
+    setGenerateDragOver(false);
+    const paths = droppedSourcePaths(event);
+    if (!paths.length) {
+      setGenerateErrors(['Dropped content did not include local file paths. Use "Import from Finder" instead.']);
+      return;
+    }
+    setSourceInputs((prev) => [...new Set([...prev, ...paths])]);
+    setCollectedSources([]);
+    setGenerateWarnings([]);
+    setGenerateErrors([]);
   }
 
   async function handleQuizzesDrop(event) {
@@ -1044,6 +1339,7 @@ function App() {
   }
 
   async function handleQuizContextRename(pathValue, currentTitle) {
+    closeQuizContextMenu();
     if (renamingQuiz) {
       return;
     }
@@ -1058,6 +1354,20 @@ function App() {
       currentTitle: baseTitle,
       nextTitle: baseTitle,
     });
+  }
+
+  function handleQuizTreeContextMenu(menuPayload) {
+    setQuizLoadError('');
+    openQuizContextMenuForNode(menuPayload);
+  }
+
+  function openHistoryFromContextMenu() {
+    const targetPath = String(quizContextMenu.path || '').trim();
+    closeQuizContextMenu();
+    if (!targetPath) {
+      return;
+    }
+    void openPerformanceHistoryForQuiz(targetPath);
   }
 
   function closeRenameDialog() {
@@ -1108,6 +1418,9 @@ function App() {
       setAttemptQuestions([]);
       setQuestionStates({});
       setQuizSaved(false);
+      setQuizSidebarMode('question_nav');
+      setQuizClockTickMs(Date.now());
+      closeQuizClockMenu();
       setActiveTab('quiz');
     } catch (err) {
       setQuizLoadError(err.message);
@@ -1275,7 +1588,7 @@ function App() {
   }
 
   function goToPreviousQuestion() {
-    if (!canGoPrevQuestion) {
+    if (!canGoPrevQuestion || autoAdvanceEnabled) {
       return;
     }
     setQuizIndex((prev) => Math.max(prev - 1, 0));
@@ -1295,6 +1608,9 @@ function App() {
     if (targetIndex < 0 || targetIndex > furthestReachableIndex) {
       return;
     }
+    if (autoAdvanceEnabled && targetIndex < quizIndex) {
+      return;
+    }
     setQuizIndex(targetIndex);
   }
 
@@ -1304,25 +1620,20 @@ function App() {
     }
   }
 
-  async function addFilesToSources() {
-    const files = await pickFiles();
-    if (!files || !files.length) {
+  async function importSourcesFromFinder() {
+    const paths = await pickSourceInputs();
+    if (!paths || !paths.length) {
       return;
     }
-    setSourceInputs((prev) => [...new Set([...prev, ...files])]);
-  }
-
-  async function addFolderToSources() {
-    const folder = await pickFolder();
-    if (!folder) {
-      return;
-    }
-    setSourceInputs((prev) => [...new Set([...prev, folder])]);
+    setSourceInputs((prev) => [...new Set([...prev, ...paths])]);
+    setCollectedSources([]);
+    setGenerateWarnings([]);
+    setGenerateErrors([]);
   }
 
   async function collectSourcePaths() {
     if (!sourceInputs.length) {
-      setGenerateErrors(['Add files or folders first.']);
+      setGenerateErrors(['Add source material using drag and drop or Import from Finder.']);
       return [];
     }
 
@@ -1334,6 +1645,20 @@ function App() {
     setGenerateWarnings(response.warnings || []);
     setGenerateErrors([]);
     return response.sources || [];
+  }
+
+  async function buildGenerationPreflight() {
+    setGenerateOutputPath('');
+    setGenerateErrors([]);
+    setGenerateWarnings([]);
+    try {
+      const sources = await collectSourcePaths();
+      if (!sources.length) {
+        setGenerateErrors(['No supported source files were collected.']);
+      }
+    } catch (err) {
+      setGenerateErrors([err.message]);
+    }
   }
 
   async function runGeneration() {
@@ -1363,7 +1688,7 @@ function App() {
         mcq_options: Number(generationForm.mcq_options),
         title_hint: generationForm.title_hint,
         instructions_hint: generationForm.instructions_hint,
-        output_subdir: settings?.generation_output_subdir || 'Generated',
+        output_subdir: selectedGenerationOutputFolder?.value || '',
       };
 
       const result = await apiRequest('/v1/generate/run', 'POST', payload);
@@ -1377,8 +1702,11 @@ function App() {
     }
   }
 
-  const selectedModelKey = settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:';
-  const selectedProviderModel = providerAndModelFromKey(selectedModelKey);
+  const selectedProviderModel = providerAndModelFromKey(
+    settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:',
+  );
+  const isQuizInProgress = Boolean(quiz && currentQuestion);
+  const showingPerformanceHistory = quizSidebarMode === 'performance_history';
   const quizComplete = Boolean(quiz && quizIndex >= quiz.questions.length - 1 && questionLocked && questionResult);
   const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
   const settingsFilterHasMatches = [
@@ -1391,7 +1719,6 @@ function App() {
     settingsMatches('quizzes', 'quiz folder', 'quiz library', 'import folder', 'open quizzes folder', 'drag and drop'),
     settingsMatches('claude api key', 'claude model selected', 'claude'),
     settingsMatches('openai auth mode', 'openai oauth client id', 'openai api key', 'openai model selected', 'openai'),
-    settingsMatches('generation output subdir', 'output folder', 'generation'),
   ].some(Boolean);
   const settingsDirty = useMemo(() => {
     if (!settingsForm || !settings) {
@@ -1400,6 +1727,102 @@ function App() {
     return JSON.stringify(settingsForm) !== JSON.stringify(settings);
   }, [settingsForm, settings]);
   const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
+
+  function renderPerformanceHistoryPanel({ showReturnToQuiz = false } = {}) {
+    return (
+      <div className="performance-sidebar">
+        <div className="row between performance-sidebar-header">
+          <h4>Performance History</h4>
+          <button type="button" onClick={() => loadHistory({ preserveFilter: true })}>
+            Refresh
+          </button>
+        </div>
+
+        <label className="field">
+          <span>Filter</span>
+          <select
+            value={historyFilterPath}
+            onChange={(event) => {
+              setHistoryFilterPath(event.target.value);
+              setSelectedAttemptIndex(-1);
+            }}
+          >
+            <option value="">(All quizzes)</option>
+            {historyFilterPaths.map((path) => (
+              <option key={path} value={path}>
+                {path.split('/').slice(-1)[0]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {showReturnToQuiz ? (
+          <button type="button" onClick={() => setQuizSidebarMode('question_nav')}>
+            Return to quiz
+          </button>
+        ) : null}
+
+        {historyFiltered.length ? (
+          <ul className="attempt-list performance-attempt-list">
+            {historyFiltered.map((record, index) => (
+              <li key={`${record.timestamp}-${index}`}>
+                <button
+                  type="button"
+                  className={selectedAttemptIndex === index ? 'selected' : ''}
+                  onClick={() => setSelectedAttemptIndex(index)}
+                >
+                  <strong>{record.quiz_title || record.quiz_path}</strong>
+                  <span>{record.timestamp.replace('T', ' ')}</span>
+                  <span>
+                    {record.score}/{record.max_score} ({Number(record.percent || 0).toFixed(1)}%)
+                  </span>
+                  <span>{record.model_key}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="roots-empty">No attempts yet for this filter.</p>
+        )}
+
+        <div className="attempt-detail performance-attempt-detail">
+          {selectedAttempt ? (
+            <>
+              <h5>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h5>
+              <p>
+                {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
+              </p>
+              <p>Duration: {Number(selectedAttempt.duration_seconds || 0).toFixed(1)}s</p>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Question</th>
+                    <th>User</th>
+                    <th>Expected</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(selectedAttempt.questions || []).map((question, idx) => (
+                    <tr key={`${question.question_id}-${idx}`}>
+                      <td>{question.question_id}</td>
+                      <td><MathText as="span" className="math-text" text={question.user_answer} /></td>
+                      <td><MathText as="span" className="math-text" text={question.correct_answer_or_expected} /></td>
+                      <td>
+                        {question.points_awarded}/{question.max_points}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <p>Select an attempt to inspect details.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-root">
@@ -1448,19 +1871,103 @@ function App() {
         </div>
       ) : null}
 
-      <nav className="tabs">
-        {TABS.map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            className={activeTab === tab ? 'active' : ''}
-            onClick={() => {
-              void handleTabChange(tab);
-            }}
+      {quizContextMenu.open ? (
+        <div className="quiz-context-menu-overlay" onClick={() => closeQuizContextMenu()}>
+          <div
+            className="quiz-context-menu"
+            style={{ top: `${quizContextMenu.y}px`, left: `${quizContextMenu.x}px` }}
+            onClick={(event) => event.stopPropagation()}
           >
-            {tab[0].toUpperCase() + tab.slice(1)}
-          </button>
-        ))}
+            <button
+              type="button"
+              onClick={() => {
+                void handleQuizContextRename(quizContextMenu.path, quizContextMenu.name);
+              }}
+            >
+              Rename
+            </button>
+            <button type="button" onClick={() => openHistoryFromContextMenu()}>
+              Performance History
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {quizClockMenu.open ? (
+        <div className="quiz-clock-menu-overlay" onClick={() => closeQuizClockMenu()}>
+          <div
+            className="quiz-clock-menu"
+            style={{ top: `${quizClockMenu.y}px`, left: `${quizClockMenu.x}px` }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="quiz-clock-menu-title">Quiz Clock</div>
+            <div className="quiz-clock-menu-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  setQuizClockMode('stopwatch');
+                  closeQuizClockMenu();
+                }}
+              >
+                Stopwatch
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuizClockMode('timer');
+                  closeQuizClockMenu();
+                }}
+              >
+                Timer
+              </button>
+            </div>
+            <label className="field quiz-clock-menu-field">
+              <span>Timer duration (minutes)</span>
+              <input
+                type="number"
+                min={1}
+                max={24 * 60}
+                step={1}
+                value={quizClockMenu.draftMinutes}
+                onChange={(event) =>
+                  setQuizClockMenu((prev) => ({
+                    ...prev,
+                    draftMinutes: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <button type="button" className="primary" onClick={() => applyQuizTimerFromMenu()}>
+              Save and use timer
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <nav className="tabs">
+        <div className="tabs-list">
+          {TABS.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
+              onClick={() => {
+                void handleTabChange(tab);
+              }}
+            >
+              {tab[0].toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className={`quiz-clock tabs-quiz-clock ${quizClockMode === 'timer' ? 'timer-mode' : ''}${quizTimerExpired ? ' expired' : ''}`}
+          onContextMenu={(event) => openQuizClockMenu(event)}
+          title="Right-click to switch between stopwatch and timer."
+        >
+          {quizClockMode === 'timer'
+            ? `Timer: ${formatCountdown(quizTimerRemainingMs)}`
+            : `Stopwatch: ${formatElapsedTime(quizElapsedMs)}`}
+        </button>
       </nav>
 
       <main className="tab-panel">
@@ -1470,7 +1977,7 @@ function App() {
               <div className="card tree-card">
                 <div className="row between">
                   <h2>Quizzes</h2>
-                  <span className="quiz-tree-hint">Click folders to collapse. Right-click quizzes to rename.</span>
+                  <span className="quiz-tree-hint">Click folders to collapse. Right-click quizzes for options.</span>
                 </div>
                 <div className="quiz-selector-controls">
                   <label className="field">
@@ -1495,9 +2002,7 @@ function App() {
                   nodes={visibleQuizTreeNodes}
                   selectedPath={selectedQuizPath}
                   onSelect={setSelectedQuizPath}
-                  onRename={(path, name) => {
-                    void handleQuizContextRename(path, name);
-                  }}
+                  onOpenContextMenu={handleQuizTreeContextMenu}
                 />
                 {!visibleQuizTreeNodes.length ? (
                   <p className="roots-empty">No quizzes match the current filter.</p>
@@ -1519,43 +2024,24 @@ function App() {
                 <div className="score">{quiz ? `Score: ${quizScore}/${maxScore}` : 'No quiz loaded'}</div>
               </div>
 
-              <div className="selected-quiz-label">
-                <strong>Selected quiz:</strong> {selectedQuizLabel}
-              </div>
-
-              <label className="field">
-                <span>Preferred model</span>
-                <select
-                  value={selectedModelKey}
-                  onChange={(event) => {
-                    const nextKey = event.target.value;
-                    setSettingsForm((prev) => ({ ...prev, preferred_model_key: nextKey }));
-                  }}
-                >
-                  {combinedModelOptions.map((option) => (
-                    <option key={option.key} value={option.key}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
               {quizLoadError ? <div className="banner error">{quizLoadError}</div> : null}
 
               {quiz && currentQuestion ? (
-                <div className="question-shell">
+                <div className={`question-shell ${showingPerformanceHistory ? 'performance-history-open' : ''}`}>
                   <div className="question-block">
                     <div className="row question-step-controls">
-                      <button type="button" disabled={!canGoPrevQuestion} onClick={() => goToPreviousQuestion()}>
+                      <button type="button" disabled={!canGoPrevQuestion || autoAdvanceEnabled} onClick={() => goToPreviousQuestion()}>
                         ← Previous
                       </button>
                       <button type="button" disabled={!canGoForwardQuestion} onClick={() => goToForwardQuestion()}>
                         Forward →
                       </button>
                       {showQuestionTimer ? (
-                        <span className={`question-timer ${questionTimeLeftMs <= 5000 ? 'urgent' : ''}`}>
-                          Time left: {formatCountdown(questionTimeLeftMs)}
-                        </span>
+                        <div className="question-step-right">
+                          <span className={`question-timer ${questionTimeLeftMs <= 5000 ? 'urgent' : ''}`}>
+                            Time left: {formatCountdown(questionTimeLeftMs)}
+                          </span>
+                        </div>
                       ) : null}
                     </div>
 
@@ -1637,29 +2123,40 @@ function App() {
                     </div>
                   </div>
 
-                  <aside className="question-nav-column">
-                    <h4>Question Nav</h4>
-                    <div className="question-nav-list">
-                      {quiz.questions.map((q, index) => {
-                        const answered = Boolean(questionStates[index]);
-                        const reachable = index <= furthestReachableIndex;
-                        const current = index === quizIndex;
-                        return (
-                          <button
-                            key={`qnav-${q.id || index}`}
-                            type="button"
-                            disabled={!reachable}
-                            className={`question-nav-button${current ? ' current' : ''}${answered ? ' answered' : ''}`}
-                            onClick={() => jumpToQuestion(index)}
-                          >
-                            <span>Q{index + 1}</span>
-                            <span>{answered ? 'Done' : reachable ? 'Open' : 'Locked'}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </aside>
+                  {showingPerformanceHistory ? (
+                    <aside className="question-nav-column performance-history-column">
+                      {renderPerformanceHistoryPanel({ showReturnToQuiz: isQuizInProgress })}
+                    </aside>
+                  ) : (
+                    <aside className="question-nav-column">
+                      <h4>Question Nav</h4>
+                      <div className="question-nav-list">
+                        {quiz.questions.map((q, index) => {
+                          const answered = Boolean(questionStates[index]);
+                          const reachable = index <= furthestReachableIndex;
+                          const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
+                          const current = index === quizIndex;
+                          return (
+                            <button
+                              key={`qnav-${q.id || index}`}
+                              type="button"
+                              disabled={!reachable || blockedByAutoAdvance}
+                              className={`question-nav-button${current ? ' current' : ''}${answered ? ' answered' : ''}`}
+                              onClick={() => jumpToQuestion(index)}
+                            >
+                              <span>Q{index + 1}</span>
+                              <span>{blockedByAutoAdvance ? 'Locked' : answered ? 'Done' : reachable ? 'Open' : 'Locked'}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </aside>
+                  )}
                 </div>
+              ) : showingPerformanceHistory ? (
+                <section className="performance-standalone">
+                  {renderPerformanceHistoryPanel({ showReturnToQuiz: false })}
+                </section>
               ) : (
                 <p>Select and start a quiz to begin.</p>
               )}
@@ -1680,25 +2177,47 @@ function App() {
               <div className="row between">
                 <h2>Sources</h2>
                 <div className="row">
-                  <button type="button" onClick={() => addFilesToSources()}>
-                    Add Files
+                  <button type="button" onClick={() => importSourcesFromFinder()}>
+                    Import from Finder
                   </button>
-                  <button type="button" onClick={() => addFolderToSources()}>
-                    Add Folder
-                  </button>
-                  <button type="button" onClick={() => setSourceInputs([])}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSourceInputs([]);
+                      setCollectedSources([]);
+                      setGenerateWarnings([]);
+                      setGenerateErrors([]);
+                    }}
+                  >
                     Clear
                   </button>
                 </div>
               </div>
+              <div
+                className={`generate-source-drop ${generateDragOver ? 'drag-over' : ''}`}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setGenerateDragOver(true);
+                }}
+                onDragLeave={() => setGenerateDragOver(false)}
+                onDrop={(event) => {
+                  void handleGenerateSourcesDrop(event);
+                }}
+              >
+                Drag and drop source files/folders here.
+              </div>
               <ul className="source-list">
-                {sourceInputs.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
+                {sourceInputs.length ? (
+                  sourceInputs.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))
+                ) : (
+                  <li className="source-placeholder">No sources selected yet.</li>
+                )}
               </ul>
               <div className="row">
-                <button type="button" onClick={() => collectSourcePaths()}>
-                  Collect Supported Sources
+                <button type="button" onClick={() => buildGenerationPreflight()}>
+                  Build Preflight Summary
                 </button>
               </div>
             </section>
@@ -1774,6 +2293,24 @@ function App() {
                     onChange={(event) => setGenerationForm((prev) => ({ ...prev, mcq_options: Number(event.target.value) }))}
                   />
                 </label>
+
+                <label className="field">
+                  <span>Output folder (inside Quizzes)</span>
+                  <select
+                    value={selectedGenerationOutputFolder?.value || ''}
+                    onChange={(event) => setGenerationOutputSubdir(event.target.value)}
+                  >
+                    {generationOutputFolderOptions.length ? (
+                      generationOutputFolderOptions.map((option) => (
+                        <option key={option.value || '__root__'} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">Quizzes</option>
+                    )}
+                  </select>
+                </label>
               </div>
 
               <label className="field">
@@ -1792,10 +2329,38 @@ function App() {
                 />
               </label>
 
+              <section className="preflight-summary">
+                <h3>Preflight Summary</h3>
+                <div className="preflight-item">
+                  <strong>Source files</strong>
+                  <span>{collectedSources.length ? `${collectedSources.length} supported files ready.` : 'Not collected yet.'}</span>
+                </div>
+                <ul className="source-list preflight-list">
+                  {collectedSources.length ? (
+                    collectedSources.map((source) => (
+                      <li key={`${source.path}:${source.source_kind}`}>
+                        {source.path}
+                      </li>
+                    ))
+                  ) : (
+                    <li className="source-placeholder">Run "Build Preflight Summary" to list supported files.</li>
+                  )}
+                </ul>
+                <div className="preflight-item">
+                  <strong>Target output folder</strong>
+                  <span>{selectedGenerationOutputFolder?.absolute_path || quizzesDir || 'Quizzes'}</span>
+                </div>
+              </section>
+
               <div className="row">
                 <button type="button" className="primary" onClick={() => runGeneration()}>
                   Generate Quiz
                 </button>
+                {selectedGenerationOutputFolder?.absolute_path ? (
+                  <button type="button" onClick={() => openPath(selectedGenerationOutputFolder.absolute_path)}>
+                    Open Target Folder
+                  </button>
+                ) : null}
                 {generateOutputPath ? (
                   <button type="button" onClick={() => openPath(generateOutputPath)}>
                     Open Output
@@ -1821,90 +2386,6 @@ function App() {
 
               {generateOutputPath ? <div className="banner success">Saved: {generateOutputPath}</div> : null}
             </section>
-          </section>
-        ) : null}
-
-        {activeTab === 'performance' ? (
-          <section className="card performance-layout">
-            <div className="row between">
-              <h2>Performance History</h2>
-              <div className="row">
-                <select
-                  value={historyFilterPath}
-                  onChange={(event) => {
-                    setHistoryFilterPath(event.target.value);
-                    setSelectedAttemptIndex(-1);
-                  }}
-                >
-                  <option value="">(All quizzes)</option>
-                  {[...new Set(historyRecords.map((record) => record.quiz_path).filter(Boolean))].map((path) => (
-                    <option key={path} value={path}>
-                      {path.split('/').slice(-1)[0]}
-                    </option>
-                  ))}
-                </select>
-                <button type="button" onClick={() => loadHistory()}>
-                  Refresh
-                </button>
-              </div>
-            </div>
-
-            <div className="performance-grid">
-              <ul className="attempt-list">
-                {historyFiltered.map((record, index) => (
-                  <li key={`${record.timestamp}-${index}`}>
-                    <button
-                      type="button"
-                      className={selectedAttemptIndex === index ? 'selected' : ''}
-                      onClick={() => setSelectedAttemptIndex(index)}
-                    >
-                      <strong>{record.quiz_title || record.quiz_path}</strong>
-                      <span>{record.timestamp.replace('T', ' ')}</span>
-                      <span>
-                        {record.score}/{record.max_score} ({Number(record.percent || 0).toFixed(1)}%)
-                      </span>
-                      <span>{record.model_key}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-
-              <div className="attempt-detail">
-                {selectedAttempt ? (
-                  <>
-                    <h3>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h3>
-                    <p>
-                      {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
-                    </p>
-                    <p>Duration: {Number(selectedAttempt.duration_seconds || 0).toFixed(1)}s</p>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Question</th>
-                          <th>User</th>
-                          <th>Expected</th>
-                          <th>Score</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(selectedAttempt.questions || []).map((question, idx) => (
-                          <tr key={`${question.question_id}-${idx}`}>
-                            <td>{question.question_id}</td>
-                            <td><MathText as="span" className="math-text" text={question.user_answer} /></td>
-                            <td><MathText as="span" className="math-text" text={question.correct_answer_or_expected} /></td>
-                            <td>
-                              {question.points_awarded}/{question.max_points}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </>
-                ) : (
-                  <p>Select an attempt to inspect details.</p>
-                )}
-              </div>
-            </div>
           </section>
         ) : null}
 
@@ -2062,6 +2543,12 @@ function App() {
                             }
                           />
                         </label>
+
+                        {autoAdvanceEnabled ? (
+                          <div className="settings-warning-note">
+                            Auto-advance is enabled. Going back to previous questions is disabled during quizzes.
+                          </div>
+                        ) : null}
                       </>
                     ) : null}
 
@@ -2217,17 +2704,6 @@ function App() {
                 </label>
               ) : null}
 
-              {settingsMatches('generation output subdir', 'output folder', 'generation') ? (
-                <label className="field">
-                  <span>Generation output subdir</span>
-                  <input
-                    value={settingsForm.generation_output_subdir || ''}
-                    onChange={(event) =>
-                      setSettingsForm((prev) => ({ ...prev, generation_output_subdir: event.target.value }))
-                    }
-                  />
-                </label>
-              ) : null}
             </div>
 
             <div className="row">

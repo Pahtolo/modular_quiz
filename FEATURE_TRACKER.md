@@ -57,8 +57,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [ ] When auto-advance is enabled, it should be impossible to navigate to previous questions (add a warning in the settings)
-- [ ] "A", "B", "C", and "D" on the keyboard should click A, B, C, and D, respectively.
+- _No pending action items._
 
 
 ### Completed Tasks
@@ -69,6 +68,10 @@ Use this file as the single source of truth for feature work across features.
 - [x] Bind Enter key to move forward.
 - [x] Fix auto-advance so it works reliably.
 - [x] Add optional per-question timer with visible countdown.
+- [x] When auto-advance is enabled, it should be impossible to navigate to previous questions (add a warning in the settings).
+- [x] "A", "B", "C", and "D" on the keyboard should click A, B, C, and D, respectively.
+- [x] Remove the 'Selected quiz' element from the Quiz Navigation block.
+- [x] Remove duplicate quiz-screen preferred model dropdown; keep model selection only in Settings.
 
 ### Notes
 
@@ -77,12 +80,17 @@ Use this file as the single source of truth for feature work across features.
 ## Feature: UI/UX
 
 ### Action Items
-- [ ] Quiz screen should not have to scroll when application is maximized
+
+- _No pending action items._
 
 ### Completed Tasks
 
 - [x] Feedback log should show only most recent feedback.
 - [x] Remove the top status/header banner and move theme mode toggle into Settings.
+- [x] Quiz screen no longer requires page scrolling when the app window is maximized.
+- [x] Add a quiz stopwatch on the right side of the navigation controls that starts with each quiz run.
+- [x] Add a right-click stopwatch dropdown to switch to a customizable quiz timer that also starts with quiz start.
+- [x] Move stopwatch/timer display to the right side of the top navigation banner (`Quiz`, `Generate`, `Settings`).
 
 ### Notes
 
@@ -92,14 +100,14 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [ ] Add option to choose output folder for newly generated quizzes (must remain inside `Quizzes`).
-- [ ] Keep only two source input options: drag and drop, and import from Finder.
-- [ ] Generator does not offer constrained output-folder selection.
-- [ ] Add a preflight summary showing source files and target output folder.
+- _No pending action items._
 
 ### Completed Tasks
 
-- _No completed tasks yet._
+- [x] Add option to choose output folder for newly generated quizzes (must remain inside `Quizzes`).
+- [x] Keep only two source input options: drag and drop, and import from Finder.
+- [x] Add constrained output-folder selection for generator outputs.
+- [x] Add a preflight summary showing source files and target output folder.
 
 ### Notes
 
@@ -128,6 +136,25 @@ Use this file as the single source of truth for feature work across features.
 - [x] Ensure `Sign in with OpenAI` completes OAuth connection and stores OAuth tokens in app settings.
 - [x] Add OpenAI OAuth client-ID validation and defaults for OpenAI OAuth endpoints.
 - [x] Scaffold MCP bridge server that maps backend quiz/settings routes into MCP tools for ChatGPT Apps integration.
+
+### Notes
+
+- _Add private notes for this feature here._
+
+## Feature: Performance History
+
+### Action Items
+
+- [ ] Remove the filter dropdown menu
+- [ ] Performance history gives users an advantage if they look at it while taking the quiz. Instead, looking at the performance history should exit the quiz and not save the user's progress
+- [ ] If the user tries to look at performance history before they've finished the quiz, prompt the user: Are you sure you want to exit the quiz? Your progress will not be saved. 
+
+### Completed Tasks
+
+- [x] Add `Performance History` section to `FEATURE_TRACKER.md`.
+- [x] Remove `Performance History` top tab and add right-click quiz context menu with `Rename` and `Performance History`.
+- [x] Move Performance History UI into the quiz sidebar so it replaces the quiz navigation block.
+- [x] Add `Return to quiz` button in Performance History view, shown only during an active quiz.
 
 ### Notes
 

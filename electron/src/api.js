@@ -31,6 +31,10 @@ export async function pickFolder() {
   return bridge.dialog.pickFolder();
 }
 
+export async function pickSourceInputs() {
+  return bridge.dialog.pickSourceInputs();
+}
+
 export async function openPath(path) {
   return bridge.shell.openPath(path);
 }

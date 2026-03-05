@@ -1,4 +1,5 @@
 {
+  "name": "Your Quiz Name",
   "title": "Your Quiz Title",
   "instructions": "Optional instructions shown before questions.",
   "questions": [

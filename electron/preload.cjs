@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('modularQuiz', {
   dialog: {
     pickFiles: () => ipcRenderer.invoke('dialog:pick-files'),
     pickFolder: () => ipcRenderer.invoke('dialog:pick-folder'),
+    pickSourceInputs: () => ipcRenderer.invoke('dialog:pick-source-inputs'),
   },
   shell: {
     openPath: (path) => ipcRenderer.invoke('shell:open-path', { path }),

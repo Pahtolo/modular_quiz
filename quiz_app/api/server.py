@@ -290,6 +290,30 @@ def _ensure_quizzes_library(state: APIState, settings: AppSettings) -> Path:
     return quizzes_dir
 
 
+def _normalize_generation_output_subdir(value: Any, quizzes_dir: Path) -> str:
+    raw = str(value or "").strip()
+    if raw in {"", "."}:
+        return ""
+
+    candidate = Path(raw).expanduser()
+    resolved = candidate.resolve() if candidate.is_absolute() else (quizzes_dir / candidate).resolve()
+    if not _path_within(resolved, quizzes_dir):
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="Generation output folder must remain inside the managed Quizzes directory.",
+        )
+    if resolved.exists() and not resolved.is_dir():
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="Generation output folder must be a directory.",
+        )
+
+    relative = resolved.relative_to(quizzes_dir).as_posix()
+    return "" if relative in {"", "."} else relative
+
+
 def _quiz_display_name(path: Path) -> str:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -928,11 +952,12 @@ def create_app(
     @app.post("/v1/generate/run", dependencies=[Depends(_require_auth)])
     def generate_run(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         settings = _settings(state)
+        quizzes_dir = _ensure_quizzes_library(state, settings)
 
         provider = str(payload.get("provider", "")).strip().lower()
         model = str(payload.get("model", "") or "").strip()
-        quiz_dir_raw = str(payload.get("quiz_dir", settings.quiz_dir)).strip() or settings.quiz_dir
         sources_raw = payload.get("sources")
+        output_subdir_payload = payload.get("output_subdir")
 
         if provider not in {"claude", "openai"}:
             raise APIError(status_code=422, code="VALIDATION_ERROR", message="Generation provider must be claude|openai.")
@@ -958,8 +983,17 @@ def create_app(
         if client is None:
             raise APIError(status_code=404, code="NOT_FOUND", message=f"Provider '{provider}' unavailable.")
 
+        if output_subdir_payload is None:
+            default_subdir = settings.generation_output_subdir or "Generated"
+            try:
+                output_subdir = _normalize_generation_output_subdir(default_subdir, quizzes_dir)
+            except APIError:
+                output_subdir = _normalize_generation_output_subdir("Generated", quizzes_dir)
+        else:
+            output_subdir = _normalize_generation_output_subdir(output_subdir_payload, quizzes_dir)
+
         req = GenerationRequest(
-            quiz_dir=Path(quiz_dir_raw).expanduser().resolve(),
+            quiz_dir=quizzes_dir,
             sources=source_files,
             provider=provider,
             model=model,
@@ -969,7 +1003,7 @@ def create_app(
             mcq_options=int(payload.get("mcq_options", 4) or 4),
             title_hint=str(payload.get("title_hint", "")),
             instructions_hint=str(payload.get("instructions_hint", "")),
-            output_subdir=str(payload.get("output_subdir", settings.generation_output_subdir or "Generated")),
+            output_subdir=output_subdir,
             warnings=[str(x) for x in payload.get("warnings", [])] if isinstance(payload.get("warnings"), list) else [],
             errors=[str(x) for x in payload.get("errors", [])] if isinstance(payload.get("errors"), list) else [],
         )

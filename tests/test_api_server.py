@@ -592,11 +592,31 @@ class APIServerTests(unittest.TestCase):
 
         self.assertTrue(generated["ok"], generated.get("errors"))
         self.assertTrue(generated["output_path"])
-        self.assertTrue(Path(generated["output_path"]).exists())
+        output_path = Path(generated["output_path"])
+        self.assertTrue(output_path.exists())
+        self.assertEqual(output_path.parent.parent, (self.root / "Quizzes").resolve())
 
         pdf_materials = [m for m in generated["extracted_materials"] if m["path"].endswith(".pdf")]
         self.assertEqual(len(pdf_materials), 1)
         self.assertTrue(pdf_materials[0]["needs_ocr"])
+
+        bad_response = self.client.post(
+            "/v1/generate/run",
+            headers=self.headers,
+            json={
+                "sources": collect["sources"],
+                "provider": "claude",
+                "model": "stub-model",
+                "total": 2,
+                "mcq_count": 1,
+                "short_count": 1,
+                "mcq_options": 4,
+                "title_hint": "Blocked",
+                "output_subdir": "../outside",
+            },
+        )
+        self.assertEqual(bad_response.status_code, 422, bad_response.text)
+        self.assertIn("inside the managed Quizzes directory", bad_response.text)
 
 
 if __name__ == "__main__":
