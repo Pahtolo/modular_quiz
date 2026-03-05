@@ -4,6 +4,7 @@ import { apiRequest, backendInfo, openPath, pickFolder, pickSourceInputs } from 
 
 const TABS = ['quiz', 'generate', 'settings'];
 const THEME_STORAGE_KEY = 'modular-quiz-theme';
+const QUIZ_EXIT_CONFIRM_MESSAGE = 'Are you sure you want to exit the quiz? Your progress will not be saved.';
 const KATEX_DELIMITERS = [
   { left: '$$', right: '$$', display: true },
   { left: '$', right: '$', display: false },
@@ -43,6 +44,17 @@ function modelKey(provider, model) {
   return `${provider}:${model || ''}`;
 }
 
+function normalizeTabKey(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'generator') {
+    return 'generate';
+  }
+  if (TABS.includes(normalized)) {
+    return normalized;
+  }
+  return 'quiz';
+}
+
 function parseNonNegativeInt(value, fallback = 0) {
   const normalized = String(value ?? '').trim();
   if (!normalized) {
@@ -53,6 +65,60 @@ function parseNonNegativeInt(value, fallback = 0) {
     return Math.max(0, Number(fallback) || 0);
   }
   return parsed;
+}
+
+function toTitleWord(token) {
+  const raw = String(token || '').trim();
+  if (!raw) {
+    return '';
+  }
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    return raw;
+  }
+  const upper = raw.toUpperCase();
+  if (['GPT', 'O1', 'O3', 'O4', 'API'].includes(upper)) {
+    return upper;
+  }
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function formatModelName(provider, modelId) {
+  const rawId = String(modelId || '').trim();
+  if (!rawId) {
+    return '';
+  }
+
+  const rawTokens = rawId
+    .replace(/[_:]/g, '-')
+    .replace(/\./g, '-')
+    .split('-')
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .filter((token) => token.toLowerCase() !== 'latest')
+    .filter((token) => !/^\d{8}$/.test(token));
+
+  if (!rawTokens.length) {
+    return rawId;
+  }
+
+  let tokens = [...rawTokens];
+  const providerKey = String(provider || '').toLowerCase();
+  if (providerKey === 'claude' && tokens[0]?.toLowerCase() !== 'claude') {
+    tokens = ['claude', ...tokens];
+  } else if (providerKey === 'openai' && !['gpt', 'o1', 'o3', 'o4'].includes(tokens[0]?.toLowerCase() || '')) {
+    tokens = ['openai', ...tokens];
+  }
+
+  if (
+    tokens.length >= 3
+    && /^\d+$/.test(tokens[1])
+    && /^\d+$/.test(tokens[2])
+  ) {
+    const version = `${tokens[1]}.${tokens[2]}`;
+    tokens = [tokens[0], version, ...tokens.slice(3)];
+  }
+
+  return tokens.map((token) => toTitleWord(token)).join(' ');
 }
 
 function flattenQuizNodes(nodes, out = []) {
@@ -445,6 +511,7 @@ function App() {
 
   const [quizTreeRoots, setQuizTreeRoots] = useState([]);
   const [selectedQuizPath, setSelectedQuizPath] = useState('');
+  const [activeQuizPath, setActiveQuizPath] = useState('');
   const [quizSearchText, setQuizSearchText] = useState('');
   const [quizSortMode, setQuizSortMode] = useState('title_asc');
   const [renamingQuiz, setRenamingQuiz] = useState(false);
@@ -514,23 +581,31 @@ function App() {
     y: 0,
     draftMinutes: '15',
   });
+  const normalizedActiveTab = normalizeTabKey(activeTab);
 
   const combinedModelOptions = useMemo(() => {
     const options = [{ key: 'self:', label: 'No model', provider: 'self' }];
     for (const model of providerModels.claude || []) {
-      options.push({ key: modelKey('claude', model.id), label: `Claude: ${model.label}`, provider: 'claude' });
+      options.push({
+        key: modelKey('claude', model.id),
+        label: formatModelName('claude', model.id),
+        provider: 'claude',
+      });
     }
     for (const model of providerModels.openai || []) {
-      options.push({ key: modelKey('openai', model.id), label: `OpenAI: ${model.label}`, provider: 'openai' });
+      options.push({
+        key: modelKey('openai', model.id),
+        label: formatModelName('openai', model.id),
+        provider: 'openai',
+      });
     }
     const preferredKey = String(settingsForm?.preferred_model_key || settings?.preferred_model_key || '').trim();
     if (preferredKey && !options.some((option) => option.key === preferredKey)) {
       const { provider, model } = providerAndModelFromKey(preferredKey);
       if (provider === 'claude' || provider === 'openai') {
-        const providerLabel = provider === 'claude' ? 'Claude' : 'OpenAI';
         options.push({
           key: preferredKey,
-          label: `${providerLabel}: ${model || 'Unknown model'} (custom)`,
+          label: `${formatModelName(provider, model || 'unknown model')} (custom)`,
           provider,
         });
       }
@@ -608,7 +683,7 @@ function App() {
     Number(settingsForm?.question_timer_seconds ?? settings?.question_timer_seconds ?? 0) || 0,
   );
   const showQuestionTimer = Boolean(
-    activeTab === 'quiz' && quiz && currentQuestion && !questionLocked && questionTimerSeconds > 0,
+    normalizedActiveTab === 'quiz' && quiz && currentQuestion && !questionLocked && questionTimerSeconds > 0,
   );
   const quizElapsedMs = useMemo(() => {
     if (!quiz || quizStartedAt <= 0) {
@@ -790,7 +865,14 @@ function App() {
   }, [historySortMode]);
 
   useEffect(() => {
-    if (activeTab !== 'quiz') {
+    if (normalizedActiveTab === activeTab) {
+      return;
+    }
+    setActiveTab(normalizedActiveTab);
+  }, [activeTab, normalizedActiveTab]);
+
+  useEffect(() => {
+    if (normalizedActiveTab !== 'quiz') {
       return undefined;
     }
 
@@ -811,7 +893,7 @@ function App() {
     return () => {
       window.clearInterval(timerId);
     };
-  }, [activeTab, selectedQuizPath]);
+  }, [normalizedActiveTab, selectedQuizPath]);
 
   useEffect(() => {
     if (!settingsForm || combinedModelOptions.length === 0) {
@@ -915,7 +997,7 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (activeTab !== 'quiz' || isEditableTarget(event.target)) {
+      if (normalizedActiveTab !== 'quiz' || isEditableTarget(event.target)) {
         return;
       }
       if (showingPerformanceHistory) {
@@ -970,7 +1052,7 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
-    activeTab,
+    normalizedActiveTab,
     showingPerformanceHistory,
     hasOlderHistoryContext,
     hasNewerHistoryContext,
@@ -989,7 +1071,7 @@ function App() {
       autoAdvanceTimeoutRef.current = null;
     }
 
-    if (activeTab !== 'quiz' || !quiz || !currentQuestion || !questionLocked || !questionResult) {
+    if (normalizedActiveTab !== 'quiz' || !quiz || !currentQuestion || !questionLocked || !questionResult) {
       return;
     }
     if (!autoAdvanceEnabled) {
@@ -1012,7 +1094,7 @@ function App() {
       }
     };
   }, [
-    activeTab,
+    normalizedActiveTab,
     quiz,
     currentQuestion,
     questionLocked,
@@ -1029,7 +1111,7 @@ function App() {
       questionTimerIntervalRef.current = null;
     }
 
-    if (activeTab !== 'quiz' || !quiz || !currentQuestion || questionLocked || questionTimerSeconds <= 0) {
+    if (normalizedActiveTab !== 'quiz' || !quiz || !currentQuestion || questionLocked || questionTimerSeconds <= 0) {
       setQuestionTimeLeftMs(0);
       return;
     }
@@ -1066,7 +1148,7 @@ function App() {
         questionTimerIntervalRef.current = null;
       }
     };
-  }, [activeTab, quiz, currentQuestion, quizIndex, questionLocked, questionTimerSeconds]);
+  }, [normalizedActiveTab, quiz, currentQuestion, quizIndex, questionLocked, questionTimerSeconds]);
 
   async function boot() {
     setStartupError('');
@@ -1194,6 +1276,7 @@ function App() {
     setQuestionStates({});
     setQuestionTimeLeftMs(0);
     setQuizSaved(false);
+    setActiveQuizPath('');
     setQuizSidebarMode(nextSidebarMode);
   }
 
@@ -1305,16 +1388,20 @@ function App() {
     });
   }
 
+  function confirmExitInProgressQuiz() {
+    if (!(quiz && !quizSaved && hasQuizProgress)) {
+      return true;
+    }
+    return window.confirm(QUIZ_EXIT_CONFIRM_MESSAGE);
+  }
+
   async function openPerformanceHistoryForQuiz(pathValue) {
     const targetPath = String(pathValue || '').trim();
     if (!targetPath) {
       return;
     }
-    if (quiz && !quizSaved && hasQuizProgress) {
-      const shouldExit = window.confirm('Are you sure you want to exit the quiz? Your progress will not be saved.');
-      if (!shouldExit) {
-        return;
-      }
+    if (!confirmExitInProgressQuiz()) {
+      return;
     }
     if (quiz) {
       resetQuizSessionState('performance_history');
@@ -1394,11 +1481,12 @@ function App() {
   }
 
   async function handleTabChange(nextTab) {
-    if (nextTab === activeTab) {
+    const normalizedNextTab = normalizeTabKey(nextTab);
+    if (normalizedNextTab === normalizedActiveTab) {
       return;
     }
 
-    if (activeTab === 'settings' && nextTab !== 'settings' && settingsDirty) {
+    if (normalizedActiveTab === 'settings' && normalizedNextTab !== 'settings' && settingsDirty) {
       const shouldSave = window.confirm('You have unsaved Settings changes. Save before leaving this tab?');
       if (shouldSave) {
         const saved = await handleSaveSettings();
@@ -1410,7 +1498,7 @@ function App() {
 
     closeQuizContextMenu();
     closeQuizClockMenu();
-    setActiveTab(nextTab);
+    setActiveTab(normalizedNextTab);
   }
 
   async function importQuizzesFromFinder() {
@@ -1551,14 +1639,15 @@ function App() {
     await renameQuizAtPath(targetPath, trimmed);
   }
 
-  async function startSelectedQuiz() {
-    if (!selectedQuizPath) {
+  async function startQuizFromPath(pathValue) {
+    const targetPath = String(pathValue || '').trim();
+    if (!targetPath) {
       return;
     }
 
     setQuizLoadError('');
     try {
-      const response = await apiRequest('/v1/quizzes/load', 'POST', { path: selectedQuizPath });
+      const response = await apiRequest('/v1/quizzes/load', 'POST', { path: targetPath });
       const loadedQuiz = response.quiz;
       setQuiz(loadedQuiz);
       setQuizIndex(0);
@@ -1573,6 +1662,7 @@ function App() {
       setAttemptQuestions([]);
       setQuestionStates({});
       setQuizSaved(false);
+      setActiveQuizPath(targetPath);
       setQuizSidebarMode('question_nav');
       setQuizClockTickMs(Date.now());
       closeQuizClockMenu();
@@ -1580,6 +1670,18 @@ function App() {
     } catch (err) {
       setQuizLoadError(err.message);
     }
+  }
+
+  async function startSelectedQuiz() {
+    const targetPath = String(selectedQuizPath || '').trim();
+    if (!targetPath) {
+      return;
+    }
+    const switchingToAnotherQuiz = Boolean(quiz && activeQuizPath && activeQuizPath !== targetPath);
+    if (switchingToAnotherQuiz && !confirmExitInProgressQuiz()) {
+      return;
+    }
+    await startQuizFromPath(targetPath);
   }
 
   function lockQuestionAfterResult(result, userAnswer, expectedText) {
@@ -1741,7 +1843,7 @@ function App() {
       try {
         await apiRequest('/v1/history/append', 'POST', {
           timestamp: new Date().toISOString(),
-          quiz_path: selectedQuizPath,
+          quiz_path: String(activeQuizPath || selectedQuizPath || '').trim(),
           quiz_title: quiz.title,
           score: quizScore,
           max_score: maxScore,
@@ -1795,9 +1897,22 @@ function App() {
   }
 
   function restartQuiz() {
-    if (selectedQuizPath) {
-      void startSelectedQuiz();
+    const targetPath = String(activeQuizPath || selectedQuizPath || '').trim();
+    if (!targetPath) {
+      return;
     }
+    if (selectedQuizPath !== targetPath) {
+      setSelectedQuizPath(targetPath);
+    }
+    void startQuizFromPath(targetPath);
+  }
+
+  function openCurrentQuizPerformanceHistory() {
+    const targetPath = String(activeQuizPath || selectedQuizPath || '').trim();
+    if (!targetPath) {
+      return;
+    }
+    void openPerformanceHistoryForQuiz(targetPath);
   }
 
   async function importSourcesFromFinder() {
@@ -1907,8 +2022,7 @@ function App() {
     if (selectedProviderModel.provider === 'self') {
       return 'No model';
     }
-    const providerLabel = selectedProviderModel.provider === 'claude' ? 'Claude' : 'OpenAI';
-    return `${providerLabel}: ${selectedProviderModel.model || 'Unknown model'}`;
+    return formatModelName(selectedProviderModel.provider, selectedProviderModel.model || 'unknown model');
   }, [combinedModelOptions, selectedProviderModel.model, selectedProviderModel.provider, settings?.preferred_model_key, settingsForm?.preferred_model_key]);
   const quizComplete = quizCompleted;
   const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
@@ -2164,7 +2278,7 @@ function App() {
             <button
               key={tab}
               type="button"
-              className={`tab-link ${activeTab === tab ? 'active' : ''}`.trim()}
+              className={`tab-link ${normalizedActiveTab === tab ? 'active' : ''}`.trim()}
               onClick={() => {
                 void handleTabChange(tab);
               }}
@@ -2186,7 +2300,7 @@ function App() {
       </nav>
 
       <main className="tab-panel">
-        {activeTab === 'quiz' ? (
+        {normalizedActiveTab === 'quiz' ? (
           <section className="quiz-layout">
             <aside className="quiz-selector-column">
               <div className="card tree-card">
@@ -2321,6 +2435,12 @@ function App() {
                       ) : null}
 
                       {quizComplete ? (
+                        <button type="button" onClick={() => openCurrentQuizPerformanceHistory()}>
+                          See Performance History
+                        </button>
+                      ) : null}
+
+                      {quizComplete ? (
                         <button type="button" onClick={() => restartQuiz()}>
                           Restart Quiz
                         </button>
@@ -2350,14 +2470,16 @@ function App() {
                           if (blockedByAutoAdvance) {
                             navStatusLabel = 'Locked';
                           } else if (answered) {
-                            navStatusLabel = 'Done';
-                            navStatusClass = ' done';
                             if (showFeedbackOnAnswer && hasGradedOutcome) {
                               navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
                               navStatusClass = result.correct ? ' correct' : ' incorrect';
-                            } else if (showFeedbackOnCompletion && quizComplete && hasGradedOutcome) {
-                              navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
-                              navStatusClass = result.correct ? ' correct' : ' incorrect';
+                            } else if (showFeedbackOnCompletion) {
+                              navStatusLabel = 'Done';
+                              navStatusClass = ' done';
+                              if (quizComplete && hasGradedOutcome) {
+                                navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
+                                navStatusClass = result.correct ? ' correct' : ' incorrect';
+                              }
                             }
                           }
 
@@ -2396,7 +2518,7 @@ function App() {
           </section>
         ) : null}
 
-        {activeTab === 'generate' ? (
+        {normalizedActiveTab === 'generate' ? (
           <section className="generate-layout">
             <section className="card">
               <div className="row between">
@@ -2595,7 +2717,7 @@ function App() {
           </section>
         ) : null}
 
-        {activeTab === 'settings' && settingsForm ? (
+        {normalizedActiveTab === 'settings' && settingsForm ? (
           <section className="card settings-layout">
             <div className="row between">
               <h2>Settings</h2>
