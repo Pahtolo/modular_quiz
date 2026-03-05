@@ -980,6 +980,12 @@ def create_app(
     @app.post("/v1/oauth/openai/connect", dependencies=[Depends(_require_auth)])
     def oauth_openai_connect() -> dict[str, Any]:
         settings = _settings(state)
+        if not (settings.openai_oauth_client_id or "").strip():
+            raise APIError(
+                status_code=422,
+                code="VALIDATION_ERROR",
+                message="OpenAI OAuth client ID is required. Add it in Settings, then try signing in again.",
+            )
         cfg = OAuthConfig(
             authorize_url=settings.openai_oauth_authorize_url,
             token_url=settings.openai_oauth_token_url,
@@ -989,6 +995,7 @@ def create_app(
         )
         token = OpenAIPKCEAuthenticator(cfg).authorize_in_browser()
 
+        settings.openai_auth_mode = "oauth"
         settings.openai_oauth_access_token = token.access_token
         settings.openai_oauth_refresh_token = token.refresh_token
         settings.openai_oauth_expires_at = token.expires_at

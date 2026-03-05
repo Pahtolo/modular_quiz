@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from quiz_app.api.server import create_app
 from quiz_app.models import MCQQuestion, Quiz, ShortQuestion
+from quiz_app.openai_auth import OAuthTokenSet
 
 
 class _StubProvider:
@@ -241,6 +242,54 @@ class APIServerTests(unittest.TestCase):
             json={"path": str(self.root / "missing.json")},
         )
         self.assertEqual(invalid.status_code, 404)
+
+    @patch("quiz_app.api.server.OpenAIPKCEAuthenticator.authorize_in_browser")
+    def test_openai_oauth_connect_persists_tokens(self, mock_authorize) -> None:
+        mock_authorize.return_value = OAuthTokenSet(
+            access_token="access-token-123",
+            refresh_token="refresh-token-123",
+            expires_at=1234567890.0,
+            token_type="Bearer",
+        )
+        update = self.client.put(
+            "/v1/settings",
+            headers=self.headers,
+            json={
+                "openai_oauth_client_id": "client-id-123",
+            },
+        )
+        self.assertEqual(update.status_code, 200, update.text)
+
+        response = self.client.post(
+            "/v1/oauth/openai/connect",
+            headers=self.headers,
+            json={},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["token_type"], "Bearer")
+        self.assertEqual(payload["expires_at"], 1234567890.0)
+        self.assertTrue(payload["refresh_token_present"])
+
+        settings_response = self.client.get("/v1/settings", headers=self.headers)
+        self.assertEqual(settings_response.status_code, 200, settings_response.text)
+        settings = settings_response.json()["settings"]
+        self.assertEqual(settings["openai_auth_mode"], "oauth")
+        self.assertEqual(settings["openai_oauth_access_token"], "access-token-123")
+        self.assertEqual(settings["openai_oauth_refresh_token"], "refresh-token-123")
+        self.assertEqual(settings["openai_oauth_expires_at"], 1234567890.0)
+
+    def test_openai_oauth_connect_requires_client_id(self) -> None:
+        response = self.client.post(
+            "/v1/oauth/openai/connect",
+            headers=self.headers,
+            json={},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("client ID", payload["message"])
 
     def test_quiz_tree_multiple_roots_distinct_paths(self) -> None:
         root_one = self.root / "coursesA" / "quizzes"

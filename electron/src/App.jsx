@@ -186,7 +186,52 @@ function formatCountdown(milliseconds) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function ancestorPathsForTarget(nodes, targetPath, trail = []) {
+  for (const node of nodes || []) {
+    const nextTrail = [...trail, node.path];
+    if (node?.path === targetPath) {
+      return trail;
+    }
+    const nested = ancestorPathsForTarget(node?.children || [], targetPath, nextTrail);
+    if (nested) {
+      return nested;
+    }
+  }
+  return null;
+}
+
 function QuizTree({ nodes, selectedPath, onSelect, onRename }) {
+  const [collapsedPaths, setCollapsedPaths] = useState({});
+  const rightClickRenameHandledRef = useRef(false);
+
+  useEffect(() => {
+    if (!selectedPath) {
+      return;
+    }
+    const ancestors = ancestorPathsForTarget(nodes, selectedPath);
+    if (!ancestors || !ancestors.length) {
+      return;
+    }
+    setCollapsedPaths((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const path of ancestors) {
+        if (next[path]) {
+          next[path] = false;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [nodes, selectedPath]);
+
+  const toggleCollapsed = (path) => {
+    setCollapsedPaths((prev) => ({
+      ...prev,
+      [path]: !prev[path],
+    }));
+  };
+
   const nodeLabel = (node) => {
     if (node.kind === 'root') {
       return shortPathLabel(node.path || node.name) || 'Quizzes';
@@ -194,29 +239,73 @@ function QuizTree({ nodes, selectedPath, onSelect, onRename }) {
     return node.name || shortPathLabel(node.path) || '';
   };
 
+  const triggerRename = (event, node) => {
+    const isQuiz = node?.kind === 'quiz';
+    if (!isQuiz || typeof onRename !== 'function') {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    rightClickRenameHandledRef.current = true;
+    onRename(node.path, nodeLabel(node));
+    window.setTimeout(() => {
+      rightClickRenameHandledRef.current = false;
+    }, 0);
+  };
+
   const renderNode = (node) => {
     const isQuiz = node.kind === 'quiz';
+    const hasChildren = Boolean(node.children && node.children.length > 0);
+    const isCollapsible = !isQuiz && hasChildren;
+    const isCollapsed = Boolean(collapsedPaths[node.path]);
+    const nodeKindLabel = isQuiz ? 'FILE' : (node.kind === 'root' ? 'ROOT' : 'FOLDER');
     return (
       <li key={`${node.kind}-${node.path}`}>
-        <button
-          className={`tree-node ${isQuiz ? 'quiz' : 'group'} ${selectedPath === node.path ? 'selected' : ''}`}
-          type="button"
-          onClick={() => {
-            if (isQuiz) {
-              onSelect(node.path);
-            }
-          }}
-          onContextMenu={(event) => {
-            if (!isQuiz || typeof onRename !== 'function') {
-              return;
-            }
-            event.preventDefault();
-            onRename(node.path, nodeLabel(node));
-          }}
-        >
-          {nodeLabel(node)}
-        </button>
-        {node.children && node.children.length > 0 ? (
+        <div className="tree-row">
+          {isCollapsible ? (
+            <button
+              type="button"
+              className="tree-toggle"
+              onClick={() => toggleCollapsed(node.path)}
+              aria-label={isCollapsed ? 'Expand folder' : 'Collapse folder'}
+              title={isCollapsed ? 'Expand folder' : 'Collapse folder'}
+            >
+              {isCollapsed ? '+' : '-'}
+            </button>
+          ) : (
+            <span className="tree-toggle-spacer" />
+          )}
+          <button
+            className={`tree-node ${isQuiz ? 'quiz' : 'group'} ${selectedPath === node.path ? 'selected' : ''}`}
+            type="button"
+            onClick={() => {
+              if (isQuiz) {
+                onSelect(node.path);
+                return;
+              }
+              if (isCollapsible) {
+                toggleCollapsed(node.path);
+              }
+            }}
+            onContextMenu={(event) => {
+              if (rightClickRenameHandledRef.current) {
+                rightClickRenameHandledRef.current = false;
+                return;
+              }
+              triggerRename(event, node);
+            }}
+            onMouseDown={(event) => {
+              if (event.button !== 2) {
+                return;
+              }
+              triggerRename(event, node);
+            }}
+          >
+            <span className={`tree-node-kind ${isQuiz ? 'quiz' : 'group'}`}>{nodeKindLabel}</span>
+            <span className="tree-node-name">{nodeLabel(node)}</span>
+          </button>
+        </div>
+        {hasChildren && !isCollapsed ? (
           <ul className="tree-list">
             {node.children.map((child) => renderNode(child))}
           </ul>
@@ -266,7 +355,6 @@ function App() {
   });
   const [activeTab, setActiveTab] = useState('quiz');
   const [startupError, setStartupError] = useState('');
-  const [apiStatus, setApiStatus] = useState('');
 
   const [settings, setSettings] = useState(null);
   const [settingsForm, setSettingsForm] = useState(null);
@@ -285,8 +373,13 @@ function App() {
   const [selectedQuizPath, setSelectedQuizPath] = useState('');
   const [quizSearchText, setQuizSearchText] = useState('');
   const [quizSortMode, setQuizSortMode] = useState('title_asc');
-  const [renameQuizTitle, setRenameQuizTitle] = useState('');
   const [renamingQuiz, setRenamingQuiz] = useState(false);
+  const [renameDialog, setRenameDialog] = useState({
+    open: false,
+    path: '',
+    currentTitle: '',
+    nextTitle: '',
+  });
   const [quizLoadError, setQuizLoadError] = useState('');
   const [quiz, setQuiz] = useState(null);
   const [quizIndex, setQuizIndex] = useState(0);
@@ -328,8 +421,6 @@ function App() {
   const [historyRecords, setHistoryRecords] = useState([]);
   const [historyFilterPath, setHistoryFilterPath] = useState('');
   const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(-1);
-
-  const [globalBusy, setGlobalBusy] = useState(false);
 
   const combinedModelOptions = useMemo(() => {
     const options = [{ key: 'self:', label: 'No model', provider: 'self' }];
@@ -524,14 +615,6 @@ function App() {
   }, [quiz, quizIndex, questionStates]);
 
   useEffect(() => {
-    if (!selectedQuizPath) {
-      setRenameQuizTitle('');
-      return;
-    }
-    setRenameQuizTitle(selectedQuizNode?.name || shortPathLabel(selectedQuizPath));
-  }, [selectedQuizNode, selectedQuizPath]);
-
-  useEffect(() => {
     questionStatesRef.current = questionStates || {};
   }, [questionStates]);
 
@@ -684,7 +767,6 @@ function App() {
   }, [activeTab, quiz, currentQuestion, quizIndex, questionLocked, questionTimerSeconds]);
 
   async function boot() {
-    setGlobalBusy(true);
     setStartupError('');
 
     try {
@@ -692,7 +774,6 @@ function App() {
       if (!info.ready) {
         throw new Error('Backend is not ready.');
       }
-      setApiStatus(`Connected to ${info.baseUrl}`);
 
       const settingsResponse = await apiRequest('/v1/settings', 'GET');
       const currentSettings = settingsResponse.settings;
@@ -712,8 +793,6 @@ function App() {
       }));
     } catch (err) {
       setStartupError(err.message || 'Failed to start app.');
-    } finally {
-      setGlobalBusy(false);
     }
   }
 
@@ -791,7 +870,6 @@ function App() {
       setSettingsForm((prev) => (prev ? { ...prev, ...response.settings } : { ...response.settings }));
     }
     await loadQuizTree();
-    setApiStatus(`Imported ${Number(response.imported_files || 0)} quiz file(s).`);
   }
 
   async function loadHistory() {
@@ -806,7 +884,7 @@ function App() {
 
   async function handleSaveSettings() {
     if (!settingsForm) {
-      return;
+      return false;
     }
     setSavingSettings(true);
     try {
@@ -835,9 +913,10 @@ function App() {
       await Promise.all([loadHistory(), loadModels()]);
       await loadQuizzesLibrary();
       await loadQuizTree();
-      setApiStatus('Settings saved.');
+      return true;
     } catch (err) {
       setStartupError(`Failed to save settings: ${err.message}`);
+      return false;
     } finally {
       setSavingSettings(false);
     }
@@ -848,9 +927,6 @@ function App() {
       const response = await apiRequest('/v1/settings/import-legacy', 'POST', {
         overwrite_existing: false,
       });
-      setApiStatus(
-        `Legacy import: settings=${response.imported_settings ? 'yes' : 'no'}, history=${response.imported_history ? 'yes' : 'no'}`,
-      );
       const settingsResponse = await apiRequest('/v1/settings', 'GET');
       setSettings(settingsResponse.settings);
       setSettingsForm({ ...settingsResponse.settings });
@@ -862,16 +938,43 @@ function App() {
     }
   }
 
-  async function handleOAuthConnect() {
+  async function handleOpenAISignIn() {
     try {
+      if (!(settingsForm?.openai_oauth_client_id || '').trim()) {
+        setStartupError('OpenAI OAuth client ID is required. Add it in Settings, then try signing in again.');
+        return;
+      }
+      if (settingsDirty) {
+        const saved = await handleSaveSettings();
+        if (!saved) {
+          return;
+        }
+      }
       await apiRequest('/v1/oauth/openai/connect', 'POST', {});
       const settingsResponse = await apiRequest('/v1/settings', 'GET');
       setSettings(settingsResponse.settings);
       setSettingsForm({ ...settingsResponse.settings });
-      setApiStatus('OpenAI OAuth connected successfully.');
     } catch (err) {
-      setStartupError(`OAuth connect failed: ${err.message}`);
+      setStartupError(`OpenAI sign-in failed: ${err.message}`);
     }
+  }
+
+  async function handleTabChange(nextTab) {
+    if (nextTab === activeTab) {
+      return;
+    }
+
+    if (activeTab === 'settings' && nextTab !== 'settings' && settingsDirty) {
+      const shouldSave = window.confirm('You have unsaved Settings changes. Save before leaving this tab?');
+      if (shouldSave) {
+        const saved = await handleSaveSettings();
+        if (!saved) {
+          return;
+        }
+      }
+    }
+
+    setActiveTab(nextTab);
   }
 
   async function importQuizzesFromFinder() {
@@ -923,20 +1026,21 @@ function App() {
         title: nextTitle,
       });
       await Promise.all([loadQuizzesLibrary(), loadQuizTree()]);
-      setRenameQuizTitle(response.title || nextTitle);
       if (quiz && response.path === targetPath) {
         setQuiz((prev) => (prev ? { ...prev, title: response.title || nextTitle } : prev));
       }
-      setApiStatus(`Renamed quiz to "${response.title || nextTitle}".`);
+      setRenameDialog((prev) => ({
+        ...prev,
+        open: false,
+        path: '',
+        currentTitle: '',
+        nextTitle: '',
+      }));
     } catch (err) {
       setQuizLoadError(err.message || 'Failed to rename quiz.');
     } finally {
       setRenamingQuiz(false);
     }
-  }
-
-  async function renameSelectedQuiz() {
-    await renameQuizAtPath(selectedQuizPath, renameQuizTitle);
   }
 
   async function handleQuizContextRename(pathValue, currentTitle) {
@@ -947,12 +1051,34 @@ function App() {
     if (!targetPath) {
       return;
     }
+    const baseTitle = String(currentTitle || '').trim() || shortPathLabel(targetPath);
+    setRenameDialog({
+      open: true,
+      path: targetPath,
+      currentTitle: baseTitle,
+      nextTitle: baseTitle,
+    });
+  }
 
-    const nextTitle = window.prompt('Rename quiz title', String(currentTitle || '').trim());
-    if (nextTitle === null) {
+  function closeRenameDialog() {
+    if (renamingQuiz) {
       return;
     }
-    const trimmed = String(nextTitle).trim();
+    setRenameDialog({
+      open: false,
+      path: '',
+      currentTitle: '',
+      nextTitle: '',
+    });
+  }
+
+  async function submitRenameDialog(event) {
+    event.preventDefault();
+    const targetPath = String(renameDialog.path || '').trim();
+    const trimmed = String(renameDialog.nextTitle || '').trim();
+    if (!targetPath) {
+      return;
+    }
     if (!trimmed) {
       setQuizLoadError('Quiz title cannot be empty.');
       return;
@@ -1256,6 +1382,7 @@ function App() {
   const quizComplete = Boolean(quiz && quizIndex >= quiz.questions.length - 1 && questionLocked && questionResult);
   const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
   const settingsFilterHasMatches = [
+    settingsMatches('appearance', 'theme', 'dark mode', 'light mode'),
     settingsMatches('preferred model', 'model selection', 'grading model'),
     settingsMatches('feedback', 'show feedback on answer', 'show feedback on quiz completion'),
     settingsMatches('auto advance', 'auto-advance', 'auto advance delay', 'question delay'),
@@ -1263,32 +1390,63 @@ function App() {
     settingsMatches('mcq explanations', 'explanations', 'explain'),
     settingsMatches('quizzes', 'quiz folder', 'quiz library', 'import folder', 'open quizzes folder', 'drag and drop'),
     settingsMatches('claude api key', 'claude model selected', 'claude'),
-    settingsMatches('openai auth mode', 'openai api key', 'openai model selected', 'openai'),
+    settingsMatches('openai auth mode', 'openai oauth client id', 'openai api key', 'openai model selected', 'openai'),
     settingsMatches('generation output subdir', 'output folder', 'generation'),
   ].some(Boolean);
+  const settingsDirty = useMemo(() => {
+    if (!settingsForm || !settings) {
+      return false;
+    }
+    return JSON.stringify(settingsForm) !== JSON.stringify(settings);
+  }, [settingsForm, settings]);
   const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
 
   return (
     <div className="app-root">
-      <header className="topbar">
-        <div>
-          <h1>Modular Quiz</h1>
-          <p>{apiStatus || 'Initializing...'}</p>
-        </div>
-        <div className="topbar-actions">
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-          >
-            {themeMode === 'dark' ? 'Light mode' : 'Dark mode'}
-          </button>
-          {globalBusy ? <span className="pill">Loading</span> : null}
-        </div>
-      </header>
-
       {startupError ? <div className="banner error">{startupError}</div> : null}
       {modelLoadError ? <div className="banner warn">{modelLoadError}</div> : null}
+      {renameDialog.open ? (
+        <div className="rename-dialog-overlay" onClick={() => closeRenameDialog()}>
+          <form
+            className="card rename-dialog-card"
+            onSubmit={(event) => {
+              void submitRenameDialog(event);
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>Rename Quiz</h3>
+            <div className="rename-dialog-path">{shortPathLabel(renameDialog.path)}</div>
+            <label className="field">
+              <span>Title</span>
+              <input
+                autoFocus
+                type="text"
+                value={renameDialog.nextTitle}
+                disabled={renamingQuiz}
+                onChange={(event) =>
+                  setRenameDialog((prev) => ({
+                    ...prev,
+                    nextTitle: event.target.value,
+                  }))
+                }
+                placeholder="Quiz title"
+              />
+            </label>
+            <div className="row rename-dialog-actions">
+              <button type="button" onClick={() => closeRenameDialog()} disabled={renamingQuiz}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="primary"
+                disabled={!String(renameDialog.nextTitle || '').trim() || renamingQuiz}
+              >
+                {renamingQuiz ? 'Renaming...' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       <nav className="tabs">
         {TABS.map((tab) => (
@@ -1296,7 +1454,9 @@ function App() {
             key={tab}
             type="button"
             className={activeTab === tab ? 'active' : ''}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => {
+              void handleTabChange(tab);
+            }}
           >
             {tab[0].toUpperCase() + tab.slice(1)}
           </button>
@@ -1310,7 +1470,7 @@ function App() {
               <div className="card tree-card">
                 <div className="row between">
                   <h2>Quizzes</h2>
-                  <span className="quiz-tree-hint">Right-click a quiz to rename</span>
+                  <span className="quiz-tree-hint">Click folders to collapse. Right-click quizzes to rename.</span>
                 </div>
                 <div className="quiz-selector-controls">
                   <label className="field">
@@ -1351,25 +1511,6 @@ function App() {
               >
                 Start Selected Quiz
               </button>
-              <div className="card rename-quiz-card">
-                <label className="field">
-                  <span>Rename selected quiz title</span>
-                  <input
-                    type="text"
-                    value={renameQuizTitle}
-                    disabled={!selectedQuizPath || renamingQuiz}
-                    onChange={(event) => setRenameQuizTitle(event.target.value)}
-                    placeholder="Quiz title"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => renameSelectedQuiz()}
-                  disabled={!selectedQuizPath || !String(renameQuizTitle || '').trim() || renamingQuiz}
-                >
-                  {renamingQuiz ? 'Renaming...' : 'Rename Quiz'}
-                </button>
-              </div>
             </aside>
 
             <section className="card quiz-card">
@@ -1775,8 +1916,8 @@ function App() {
                 <button type="button" onClick={() => handleImportLegacy()}>
                   Import Legacy
                 </button>
-                <button type="button" onClick={() => handleOAuthConnect()}>
-                  Connect OpenAI OAuth
+                <button type="button" onClick={() => handleOpenAISignIn()}>
+                  Sign in with OpenAI
                 </button>
               </div>
             </div>
@@ -1786,9 +1927,26 @@ function App() {
               <input
                 value={settingsSearch}
                 onChange={(event) => setSettingsSearch(event.target.value)}
-                placeholder="Try: feedback, auto-advance, OpenAI, quiz library"
+                placeholder="Try: theme, feedback, auto-advance, OpenAI, quiz library"
               />
             </label>
+
+            {settingsMatches('appearance', 'theme', 'dark mode', 'light mode') ? (
+              <section className="settings-group">
+                <h3>Appearance</h3>
+                <div className="form-grid two-col">
+                  <div className="field">
+                    <span>Theme mode</span>
+                    <button
+                      type="button"
+                      onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+                    >
+                      {themeMode === 'dark' ? 'Light mode' : 'Dark mode'}
+                    </button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
 
             <div className="form-grid two-col">
               {settingsMatches('preferred model', 'model selection', 'grading model') ? (
@@ -2022,6 +2180,18 @@ function App() {
                     <option value="api_key">api_key</option>
                     <option value="oauth">oauth</option>
                   </select>
+                </label>
+              ) : null}
+
+              {settingsMatches('openai oauth client id', 'oauth client id', 'openai') ? (
+                <label className="field">
+                  <span>OpenAI OAuth client ID</span>
+                  <input
+                    value={settingsForm.openai_oauth_client_id || ''}
+                    onChange={(event) =>
+                      setSettingsForm((prev) => ({ ...prev, openai_oauth_client_id: event.target.value }))
+                    }
+                  />
                 </label>
               ) : null}
 

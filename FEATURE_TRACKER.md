@@ -28,9 +28,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [x] Add sort/filter controls for large quiz libraries.
-- [x] Add feature to rename quizzes by right clicking the quiz. This should edit the JSON file behind the scenes.
-- [x] Remove the refresh button and add an auto-refresh feature
+
 
 ### Completed Tasks
 
@@ -44,7 +42,13 @@ Use this file as the single source of truth for feature work across features.
 - [x] Avoid displaying full file paths in QS.
 - [x] Move dedicated quizzes folder to `/modular_quiz`.
 - [x] QS showed JSON filename instead of in-file quiz title.
-
+- [x] Add sort/filter controls for large quiz libraries.
+- [x] Add feature to rename quizzes by right clicking the quiz. This should edit the JSON file behind the scenes.
+- [x] Remove the refresh button and add an auto-refresh feature
+- [x] Allow folders to collapse
+- [x] Remove the "Rename" box. Renaming should be done by Right clicking the quiz
+- [x] Create a visual difference between folders and files
+- [x] Fix right-click rename flow by replacing browser prompt with in-app rename dialog.
 ### Notes
 
 - _Add private notes for this feature here._
@@ -53,7 +57,9 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- _No pending action items._
+- [ ] When auto-advance is enabled, it should be impossible to navigate to previous questions (add a warning in the settings)
+- [ ] "A", "B", "C", and "D" on the keyboard should click A, B, C, and D, respectively.
+
 
 ### Completed Tasks
 
@@ -76,6 +82,7 @@ Use this file as the single source of truth for feature work across features.
 ### Completed Tasks
 
 - [x] Feedback log should show only most recent feedback.
+- [x] Remove the top status/header banner and move theme mode toggle into Settings.
 
 ### Notes
 
@@ -102,7 +109,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- _No pending action items._
+- [ ] Configure production HTTPS endpoint and MCP auth metadata for ChatGPT connector deployment.
 
 ### Completed Tasks
 
@@ -115,6 +122,12 @@ Use this file as the single source of truth for feature work across features.
 - [x] Add feedback option: Show feedback on quiz completion.
 - [x] Group auto-advance controls as one feature.
 - [x] Add settings search/filter for faster navigation.
+- [x] Prompt the user to save settings if they try to click off the settings tab.
+- [x] Rename `Connect OpenAI OAuth` to `Sign in with OpenAI`.
+- [x] Wire `Sign in with OpenAI` to open the OpenAI sign-in webpage.
+- [x] Ensure `Sign in with OpenAI` completes OAuth connection and stores OAuth tokens in app settings.
+- [x] Add OpenAI OAuth client-ID validation and defaults for OpenAI OAuth endpoints.
+- [x] Scaffold MCP bridge server that maps backend quiz/settings routes into MCP tools for ChatGPT Apps integration.
 
 ### Notes
 

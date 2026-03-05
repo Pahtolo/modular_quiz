@@ -22,8 +22,8 @@
   ],
   "openai_auth_mode": "oauth",
   "openai_api_key": "",
-  "openai_oauth_authorize_url": "",
-  "openai_oauth_token_url": "",
+  "openai_oauth_authorize_url": "https://auth.openai.com/oauth/authorize",
+  "openai_oauth_token_url": "https://auth.openai.com/oauth/token",
   "openai_oauth_client_id": "",
   "openai_oauth_scopes": [
     "model.read",

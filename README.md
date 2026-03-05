@@ -31,6 +31,23 @@ Run the backend standalone:
 python3 run_api.py --host 127.0.0.1 --port 8766 --token dev-token
 ```
 
+## MCP Bridge (for ChatGPT Apps / MCP clients)
+Run the MCP server that proxies to the backend API routes:
+```bash
+python3 run_mcp.py --api-base-url http://127.0.0.1:8766 --api-token dev-token
+```
+
+Default streamable HTTP endpoint:
+```text
+http://127.0.0.1:8768/mcp
+```
+
+Typical local workflow:
+1. Start the backend API (`run_api.py`) and keep its token.
+2. Start the MCP bridge (`run_mcp.py`) with the same token.
+3. Expose `http://127.0.0.1:8768/mcp` through an HTTPS tunnel when connecting from ChatGPT.
+4. Add the HTTPS MCP URL in ChatGPT connector settings.
+
 ## Build and Package (Electron)
 Build renderer:
 ```bash
@@ -57,6 +74,7 @@ npm run dist
 - PDF low-text detection with OCR handoff marker (`needs_ocr`)
 - Performance history and attempt drill-down
 - Settings persistence and legacy import
+- MCP bridge exposing quiz/settings tools over streamable HTTP
 
 ## Tests
 Run all tests:

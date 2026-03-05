@@ -17,6 +17,8 @@ DEFAULT_CLAUDE_MODELS = [
     "claude-3-opus-latest",
 ]
 DEFAULT_OPENAI_SCOPES = ["model.read", "response.write"]
+DEFAULT_OPENAI_OAUTH_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
+DEFAULT_OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 DEFAULT_GENERATION_DEFAULTS = {
     "total": 20,
     "mcq_count": 15,
@@ -50,8 +52,8 @@ class AppSettings:
 
     openai_auth_mode: str = "api_key"
     openai_api_key: str = ""
-    openai_oauth_authorize_url: str = ""
-    openai_oauth_token_url: str = ""
+    openai_oauth_authorize_url: str = DEFAULT_OPENAI_OAUTH_AUTHORIZE_URL
+    openai_oauth_token_url: str = DEFAULT_OPENAI_OAUTH_TOKEN_URL
     openai_oauth_client_id: str = ""
     openai_oauth_scopes: list[str] = field(default_factory=lambda: list(DEFAULT_OPENAI_SCOPES))
     openai_oauth_redirect_port: int = 8765
