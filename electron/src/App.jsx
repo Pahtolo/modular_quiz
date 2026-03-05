@@ -43,6 +43,18 @@ function modelKey(provider, model) {
   return `${provider}:${model || ''}`;
 }
 
+function parseNonNegativeInt(value, fallback = 0) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    return 0;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    return Math.max(0, Number(fallback) || 0);
+  }
+  return parsed;
+}
+
 function flattenQuizNodes(nodes, out = []) {
   for (const node of nodes || []) {
     if (node.kind === 'quiz') {
@@ -238,6 +250,25 @@ function formatElapsedTime(milliseconds) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function timestampToMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  if (Number.isNaN(parsed)) {
+    return 0;
+  }
+  return parsed;
+}
+
+function formatHistoryTimestamp(value) {
+  const parsedMs = timestampToMs(value);
+  if (!parsedMs) {
+    return 'Unknown date/time';
+  }
+  return new Date(parsedMs).toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
 function ancestorPathsForTarget(nodes, targetPath, trail = []) {
   for (const node of nodes || []) {
     const nextTrail = [...trail, node.path];
@@ -401,6 +432,7 @@ function App() {
   const [settings, setSettings] = useState(null);
   const [settingsForm, setSettingsForm] = useState(null);
   const [settingsSearch, setSettingsSearch] = useState('');
+  const [autoAdvanceDelayDraft, setAutoAdvanceDelayDraft] = useState('600');
   const [savingSettings, setSavingSettings] = useState(false);
   const [quizzesDir, setQuizzesDir] = useState('');
   const [quizzesTree, setQuizzesTree] = useState([]);
@@ -452,8 +484,6 @@ function App() {
   const [generateOutputPath, setGenerateOutputPath] = useState('');
   const [generationOutputSubdir, setGenerationOutputSubdir] = useState('');
   const [generationForm, setGenerationForm] = useState({
-    provider: 'claude',
-    model: '',
     total: 20,
     mcq_count: 15,
     short_count: 5,
@@ -466,6 +496,7 @@ function App() {
   const [historyContextPaths, setHistoryContextPaths] = useState([]);
   const [historyContextIndex, setHistoryContextIndex] = useState(-1);
   const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(-1);
+  const [historySortMode, setHistorySortMode] = useState('most_recent');
   const [quizSidebarMode, setQuizSidebarMode] = useState('question_nav');
   const [quizContextMenu, setQuizContextMenu] = useState({
     open: false,
@@ -492,38 +523,20 @@ function App() {
     for (const model of providerModels.openai || []) {
       options.push({ key: modelKey('openai', model.id), label: `OpenAI: ${model.label}`, provider: 'openai' });
     }
-    return options;
-  }, [providerModels]);
-
-  const claudeModelSelectedOptions = useMemo(() => {
-    const currentValue = String(settingsForm?.claude_model_selected || settings?.claude_model_selected || '').trim();
-    const options = (providerModels.claude || []).map((model) => ({
-      value: model.id,
-      label: model.label || model.id,
-    }));
-    if (currentValue && !options.some((option) => option.value === currentValue)) {
-      options.unshift({
-        value: currentValue,
-        label: `${currentValue} (custom)`,
-      });
+    const preferredKey = String(settingsForm?.preferred_model_key || settings?.preferred_model_key || '').trim();
+    if (preferredKey && !options.some((option) => option.key === preferredKey)) {
+      const { provider, model } = providerAndModelFromKey(preferredKey);
+      if (provider === 'claude' || provider === 'openai') {
+        const providerLabel = provider === 'claude' ? 'Claude' : 'OpenAI';
+        options.push({
+          key: preferredKey,
+          label: `${providerLabel}: ${model || 'Unknown model'} (custom)`,
+          provider,
+        });
+      }
     }
     return options;
-  }, [providerModels.claude, settingsForm?.claude_model_selected, settings?.claude_model_selected]);
-
-  const openaiModelSelectedOptions = useMemo(() => {
-    const currentValue = String(settingsForm?.openai_model_selected || settings?.openai_model_selected || '').trim();
-    const options = (providerModels.openai || []).map((model) => ({
-      value: model.id,
-      label: model.label || model.id,
-    }));
-    if (currentValue && !options.some((option) => option.value === currentValue)) {
-      options.unshift({
-        value: currentValue,
-        label: `${currentValue} (custom)`,
-      });
-    }
-    return options;
-  }, [providerModels.openai, settingsForm?.openai_model_selected, settings?.openai_model_selected]);
+  }, [providerModels, settingsForm?.preferred_model_key, settings?.preferred_model_key]);
 
   const currentQuestion = useMemo(() => {
     if (!quiz || !quiz.questions || quizIndex >= quiz.questions.length) {
@@ -619,8 +632,25 @@ function App() {
     if (!activeHistoryQuizPath) {
       return [];
     }
-    return historyRecords.filter((record) => record.quiz_path === activeHistoryQuizPath);
-  }, [activeHistoryQuizPath, historyRecords]);
+    const oldestFirst = historyRecords
+      .filter((record) => record.quiz_path === activeHistoryQuizPath)
+      .sort((left, right) => {
+        const leftTime = timestampToMs(left?.timestamp);
+        const rightTime = timestampToMs(right?.timestamp);
+        if (leftTime !== rightTime) {
+          return leftTime - rightTime;
+        }
+        return String(left?.quiz_path || '').localeCompare(String(right?.quiz_path || ''));
+      })
+      .map((record, index) => ({
+        ...record,
+        attempt_number: index + 1,
+      }));
+    if (historySortMode === 'least_recent') {
+      return oldestFirst;
+    }
+    return [...oldestFirst].reverse();
+  }, [activeHistoryQuizPath, historyRecords, historySortMode]);
 
   const hasOlderHistoryContext = historyContextIndex >= 0 && historyContextIndex < historyContextPaths.length - 1;
   const hasNewerHistoryContext = historyContextIndex > 0;
@@ -655,13 +685,6 @@ function App() {
     }
     return historyFiltered[selectedAttemptIndex];
   }, [selectedAttemptIndex, historyFiltered]);
-
-  const generationProviderModels = useMemo(() => {
-    if (generationForm.provider === 'openai') {
-      return providerModels.openai || [];
-    }
-    return providerModels.claude || [];
-  }, [generationForm.provider, providerModels]);
 
   const generationOutputFolderOptions = useMemo(() => {
     const root = String(quizzesDir || '').trim();
@@ -724,6 +747,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    setAutoAdvanceDelayDraft(String(parseNonNegativeInt(settings?.auto_advance_ms, 0)));
+  }, [settings?.auto_advance_ms]);
+
+  useEffect(() => {
     if (!generationOutputFolderOptions.length) {
       if (generationOutputSubdir !== '') {
         setGenerationOutputSubdir('');
@@ -757,6 +784,10 @@ function App() {
       setHistoryContextIndex(0);
     }
   }, [historyContextPaths, historyContextIndex]);
+
+  useEffect(() => {
+    setSelectedAttemptIndex(-1);
+  }, [historySortMode]);
 
   useEffect(() => {
     if (activeTab !== 'quiz') {
@@ -1090,15 +1121,6 @@ function App() {
     }
 
     setProviderModels(next);
-
-    setGenerationForm((prev) => {
-      const modelOptions = prev.provider === 'openai' ? next.openai : next.claude;
-      const fallback = modelOptions.length ? modelOptions[0].id : '';
-      if (!prev.model || !modelOptions.some((m) => m.id === prev.model)) {
-        return { ...prev, model: fallback };
-      }
-      return prev;
-    });
   }
 
   async function loadQuizTree() {
@@ -1316,8 +1338,13 @@ function App() {
     }
     setSavingSettings(true);
     try {
+      const autoAdvanceMs = parseNonNegativeInt(
+        autoAdvanceDelayDraft,
+        settingsForm.auto_advance_ms ?? settings?.auto_advance_ms ?? 0,
+      );
       const payload = {
         ...settingsForm,
+        auto_advance_ms: autoAdvanceMs,
         quiz_roots: (settingsForm.quiz_roots || [])
           .map((item) => String(item).trim())
           .filter((item) => item),
@@ -1834,11 +1861,18 @@ function App() {
         return;
       }
 
+      const preferredModelKey = settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:';
+      const selectedModel = providerAndModelFromKey(preferredModelKey);
+      if (selectedModel.provider === 'self' || !selectedModel.model) {
+        setGenerateErrors(['Select a non-self Preferred model in Settings before generating a quiz.']);
+        return;
+      }
+
       const payload = {
         quiz_dir: settings?.quiz_dir,
         sources,
-        provider: generationForm.provider,
-        model: generationForm.model,
+        provider: selectedModel.provider,
+        model: selectedModel.model,
         total: Number(generationForm.total),
         mcq_count: Number(generationForm.mcq_count),
         short_count: Number(generationForm.short_count),
@@ -1864,6 +1898,18 @@ function App() {
   const selectedProviderModel = providerAndModelFromKey(
     settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:',
   );
+  const preferredModelLabel = useMemo(() => {
+    const currentKey = settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:';
+    const matched = combinedModelOptions.find((option) => option.key === currentKey);
+    if (matched?.label) {
+      return matched.label;
+    }
+    if (selectedProviderModel.provider === 'self') {
+      return 'No model';
+    }
+    const providerLabel = selectedProviderModel.provider === 'claude' ? 'Claude' : 'OpenAI';
+    return `${providerLabel}: ${selectedProviderModel.model || 'Unknown model'}`;
+  }, [combinedModelOptions, selectedProviderModel.model, selectedProviderModel.provider, settings?.preferred_model_key, settingsForm?.preferred_model_key]);
   const quizComplete = quizCompleted;
   const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
   const settingsFilterHasMatches = [
@@ -1874,15 +1920,23 @@ function App() {
     settingsMatches('question timer', 'timer', 'countdown'),
     settingsMatches('mcq explanations', 'explanations', 'explain'),
     settingsMatches('quizzes', 'quiz folder', 'quiz library', 'import folder', 'open quizzes folder', 'drag and drop'),
-    settingsMatches('claude api key', 'claude model selected', 'claude'),
-    settingsMatches('openai api key', 'openai model selected', 'openai'),
+    settingsMatches('claude api key', 'claude'),
+    settingsMatches('openai api key', 'openai'),
   ].some(Boolean);
   const settingsDirty = useMemo(() => {
     if (!settingsForm || !settings) {
       return false;
     }
-    return JSON.stringify(settingsForm) !== JSON.stringify(settings);
-  }, [settingsForm, settings]);
+    const normalizedAutoAdvanceMs = parseNonNegativeInt(
+      autoAdvanceDelayDraft,
+      settingsForm.auto_advance_ms ?? settings.auto_advance_ms ?? 0,
+    );
+    const nextForm = {
+      ...settingsForm,
+      auto_advance_ms: normalizedAutoAdvanceMs,
+    };
+    return JSON.stringify(nextForm) !== JSON.stringify(settings);
+  }, [autoAdvanceDelayDraft, settingsForm, settings]);
   const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
 
   function renderPerformanceHistoryPanel() {
@@ -1899,6 +1953,16 @@ function App() {
             <button type="button" onClick={() => goToNewerHistoryContext()} disabled={!hasNewerHistoryContext}>
               →
             </button>
+            <label className="performance-sort-control">
+              <span>Sort by</span>
+              <select
+                value={historySortMode}
+                onChange={(event) => setHistorySortMode(String(event.target.value || 'most_recent'))}
+              >
+                <option value="most_recent">Most recent</option>
+                <option value="least_recent">Least recent</option>
+              </select>
+            </label>
             <button type="button" onClick={() => loadHistory()}>
               Refresh
             </button>
@@ -1911,13 +1975,13 @@ function App() {
           <div className="performance-session-grid">
             <ul className="attempt-list performance-attempt-list">
               {historyFiltered.map((record, index) => (
-                <li key={`${record.timestamp}-${index}`}>
+                <li key={`${record.timestamp}-${record.attempt_number}-${index}`}>
                   <button
                     type="button"
                     className={selectedAttemptIndex === index ? 'selected' : ''}
                     onClick={() => setSelectedAttemptIndex(index)}
                   >
-                    <span className="performance-attempt-cell attempt">{`Attempt #${index + 1}`}</span>
+                    <span className="performance-attempt-cell attempt">{`Attempt #${record.attempt_number}`}</span>
                     <span className="performance-attempt-cell percent">
                       {`${Number(record.percent || 0).toFixed(1)}% correct`}
                     </span>
@@ -1930,7 +1994,12 @@ function App() {
             <div className="attempt-detail performance-attempt-detail">
               {selectedAttempt && activeHistoryQuizPath ? (
                 <>
-                  <h5>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h5>
+                  <div className="performance-attempt-header">
+                    <h5>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h5>
+                    <span className="performance-attempt-timestamp">
+                      {formatHistoryTimestamp(selectedAttempt.timestamp)}
+                    </span>
+                  </div>
                   <p>
                     {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
                   </p>
@@ -2365,7 +2434,7 @@ function App() {
               <ul className="source-list">
                 {sourceInputs.length ? (
                   sourceInputs.map((item) => (
-                    <li key={item}>{item}</li>
+                    <li key={item}>{shortPathLabel(item) || item}</li>
                   ))
                 ) : (
                   <li className="source-placeholder">No sources selected yet.</li>
@@ -2381,38 +2450,12 @@ function App() {
             <section className="card">
               <h2>Generation</h2>
               <div className="form-grid">
-                <label className="field">
-                  <span>Provider</span>
-                  <select
-                    value={generationForm.provider}
-                    onChange={(event) => {
-                      const provider = event.target.value;
-                      const candidates = provider === 'openai' ? providerModels.openai : providerModels.claude;
-                      setGenerationForm((prev) => ({
-                        ...prev,
-                        provider,
-                        model: candidates.length ? candidates[0].id : '',
-                      }));
-                    }}
-                  >
-                    <option value="claude">Claude</option>
-                    <option value="openai">OpenAI</option>
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Model</span>
-                  <select
-                    value={generationForm.model}
-                    onChange={(event) => setGenerationForm((prev) => ({ ...prev, model: event.target.value }))}
-                  >
-                    {generationProviderModels.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="field">
+                  <span>Preferred model</span>
+                  <div className="settings-warning-note">
+                    Quiz generation and grading use: <strong>{preferredModelLabel}</strong>
+                  </div>
+                </div>
 
                 <label className="field">
                   <span>Total</span>
@@ -2495,7 +2538,7 @@ function App() {
                   {collectedSources.length ? (
                     collectedSources.map((source) => (
                       <li key={`${source.path}:${source.source_kind}`}>
-                        {source.path}
+                        {shortPathLabel(source.path) || source.path}
                       </li>
                     ))
                   ) : (
@@ -2692,13 +2735,21 @@ function App() {
                         <label className="field">
                           <span>Auto-advance delay (ms)</span>
                           <input
-                            type="number"
-                            min={0}
-                            value={settingsForm.auto_advance_ms || 0}
-                            disabled={!autoAdvanceEnabled}
-                            onChange={(event) =>
-                              setSettingsForm((prev) => ({ ...prev, auto_advance_ms: Number(event.target.value) }))
-                            }
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={autoAdvanceDelayDraft}
+                            onChange={(event) => {
+                              const next = event.target.value;
+                              if (!/^\d*$/.test(next)) {
+                                return;
+                              }
+                              setAutoAdvanceDelayDraft(next);
+                            }}
+                            onBlur={() => {
+                              const normalized = String(parseNonNegativeInt(autoAdvanceDelayDraft, 0));
+                              setAutoAdvanceDelayDraft(normalized);
+                            }}
                           />
                         </label>
 
@@ -2802,25 +2853,6 @@ function App() {
                 </label>
               ) : null}
 
-              {settingsMatches('claude model selected', 'claude model', 'claude') ? (
-                <label className="field">
-                  <span>Claude model selected</span>
-                  <select
-                    value={settingsForm.claude_model_selected || ''}
-                    onChange={(event) =>
-                      setSettingsForm((prev) => ({ ...prev, claude_model_selected: event.target.value }))
-                    }
-                  >
-                    <option value="">(Select Claude model)</option>
-                    {claudeModelSelectedOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-
               {settingsMatches('openai api key', 'openai') ? (
                 <label className="field">
                   <span>OpenAI API key</span>
@@ -2829,25 +2861,6 @@ function App() {
                     value={settingsForm.openai_api_key || ''}
                     onChange={(event) => setSettingsForm((prev) => ({ ...prev, openai_api_key: event.target.value }))}
                   />
-                </label>
-              ) : null}
-
-              {settingsMatches('openai model selected', 'openai model', 'openai') ? (
-                <label className="field">
-                  <span>OpenAI model selected</span>
-                  <select
-                    value={settingsForm.openai_model_selected || ''}
-                    onChange={(event) =>
-                      setSettingsForm((prev) => ({ ...prev, openai_model_selected: event.target.value }))
-                    }
-                  >
-                    <option value="">(Select OpenAI model)</option>
-                    {openaiModelSelectedOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
                 </label>
               ) : null}
 
