@@ -495,6 +495,36 @@ function App() {
     return options;
   }, [providerModels]);
 
+  const claudeModelSelectedOptions = useMemo(() => {
+    const currentValue = String(settingsForm?.claude_model_selected || settings?.claude_model_selected || '').trim();
+    const options = (providerModels.claude || []).map((model) => ({
+      value: model.id,
+      label: model.label || model.id,
+    }));
+    if (currentValue && !options.some((option) => option.value === currentValue)) {
+      options.unshift({
+        value: currentValue,
+        label: `${currentValue} (custom)`,
+      });
+    }
+    return options;
+  }, [providerModels.claude, settingsForm?.claude_model_selected, settings?.claude_model_selected]);
+
+  const openaiModelSelectedOptions = useMemo(() => {
+    const currentValue = String(settingsForm?.openai_model_selected || settings?.openai_model_selected || '').trim();
+    const options = (providerModels.openai || []).map((model) => ({
+      value: model.id,
+      label: model.label || model.id,
+    }));
+    if (currentValue && !options.some((option) => option.value === currentValue)) {
+      options.unshift({
+        value: currentValue,
+        label: `${currentValue} (custom)`,
+      });
+    }
+    return options;
+  }, [providerModels.openai, settingsForm?.openai_model_selected, settings?.openai_model_selected]);
+
   const currentQuestion = useMemo(() => {
     if (!quiz || !quiz.questions || quizIndex >= quiz.questions.length) {
       return null;
@@ -2699,12 +2729,19 @@ function App() {
               {settingsMatches('claude model selected', 'claude model', 'claude') ? (
                 <label className="field">
                   <span>Claude model selected</span>
-                  <input
+                  <select
                     value={settingsForm.claude_model_selected || ''}
                     onChange={(event) =>
                       setSettingsForm((prev) => ({ ...prev, claude_model_selected: event.target.value }))
                     }
-                  />
+                  >
+                    <option value="">(Select Claude model)</option>
+                    {claudeModelSelectedOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               ) : null}
 
@@ -2722,12 +2759,19 @@ function App() {
               {settingsMatches('openai model selected', 'openai model', 'openai') ? (
                 <label className="field">
                   <span>OpenAI model selected</span>
-                  <input
+                  <select
                     value={settingsForm.openai_model_selected || ''}
                     onChange={(event) =>
                       setSettingsForm((prev) => ({ ...prev, openai_model_selected: event.target.value }))
                     }
-                  />
+                  >
+                    <option value="">(Select OpenAI model)</option>
+                    {openaiModelSelectedOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               ) : null}
 
