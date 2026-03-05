@@ -428,11 +428,11 @@ function App() {
   const [quizScore, setQuizScore] = useState(0);
   const [quizStartedAt, setQuizStartedAt] = useState(0);
   const [quizSaved, setQuizSaved] = useState(false);
+  const [quizCompleted, setQuizCompleted] = useState(false);
   const [questionResult, setQuestionResult] = useState(null);
   const [questionLocked, setQuestionLocked] = useState(false);
   const [mcqAnswer, setMcqAnswer] = useState('');
   const [shortAnswer, setShortAnswer] = useState('');
-  const [selfScore, setSelfScore] = useState('');
   const [quizNotes, setQuizNotes] = useState([]);
   const [attemptQuestions, setAttemptQuestions] = useState([]);
   const [questionStates, setQuestionStates] = useState({});
@@ -442,13 +442,13 @@ function App() {
   const questionStatesRef = useRef({});
   const mcqAnswerRef = useRef('');
   const shortAnswerRef = useRef('');
-  const selfScoreRef = useRef('');
 
   const [sourceInputs, setSourceInputs] = useState([]);
   const [collectedSources, setCollectedSources] = useState([]);
   const [generateWarnings, setGenerateWarnings] = useState([]);
   const [generateErrors, setGenerateErrors] = useState([]);
   const [generateDragOver, setGenerateDragOver] = useState(false);
+  const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
   const [generateOutputPath, setGenerateOutputPath] = useState('');
   const [generationOutputSubdir, setGenerationOutputSubdir] = useState('');
   const [generationForm, setGenerationForm] = useState({
@@ -606,6 +606,7 @@ function App() {
   const quizTimerDurationMs = Math.max(0, Number(quizTimerDurationSeconds || 0)) * 1000;
   const quizTimerRemainingMs = Math.max(0, quizTimerDurationMs - quizElapsedMs);
   const quizTimerExpired = quizClockMode === 'timer' && quizTimerDurationMs > 0 && quizElapsedMs >= quizTimerDurationMs;
+  const showingPerformanceHistory = quizSidebarMode === 'performance_history';
 
   const activeHistoryQuizPath = useMemo(() => {
     if (historyContextIndex < 0 || historyContextIndex >= historyContextPaths.length) {
@@ -623,7 +624,30 @@ function App() {
 
   const hasOlderHistoryContext = historyContextIndex >= 0 && historyContextIndex < historyContextPaths.length - 1;
   const hasNewerHistoryContext = historyContextIndex > 0;
-  const activeHistoryQuizLabel = activeHistoryQuizPath ? shortPathLabel(activeHistoryQuizPath) : '';
+  const activeHistoryQuizTitle = useMemo(() => {
+    if (!activeHistoryQuizPath) {
+      return '';
+    }
+    const historyRecord = historyRecords.find((record) => record.quiz_path === activeHistoryQuizPath && record.quiz_title);
+    if (historyRecord?.quiz_title) {
+      return String(historyRecord.quiz_title);
+    }
+    const quizNode = findQuizNodeByPath(quizTreeRoots, activeHistoryQuizPath);
+    if (quizNode?.name) {
+      return String(quizNode.name);
+    }
+    return shortPathLabel(activeHistoryQuizPath);
+  }, [activeHistoryQuizPath, historyRecords, quizTreeRoots]);
+  const hasQuizProgress = useMemo(
+    () => (
+      Boolean(quizSaved)
+      || quizIndex > 0
+      || quizScore > 0
+      || attemptQuestions.length > 0
+      || Object.keys(questionStates || {}).length > 0
+    ),
+    [attemptQuestions, questionStates, quizIndex, quizSaved, quizScore],
+  );
 
   const selectedAttempt = useMemo(() => {
     if (selectedAttemptIndex < 0 || selectedAttemptIndex >= historyFiltered.length) {
@@ -781,14 +805,12 @@ function App() {
       setQuestionLocked(true);
       setMcqAnswer(state.mcq_answer || '');
       setShortAnswer(state.short_answer || '');
-      setSelfScore(state.self_score || '');
       return;
     }
     setQuestionResult(null);
     setQuestionLocked(false);
     setMcqAnswer('');
     setShortAnswer('');
-    setSelfScore('');
   }, [quiz, quizIndex, questionStates]);
 
   useEffect(() => {
@@ -802,10 +824,6 @@ function App() {
   useEffect(() => {
     shortAnswerRef.current = shortAnswer;
   }, [shortAnswer]);
-
-  useEffect(() => {
-    selfScoreRef.current = selfScore;
-  }, [selfScore]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -866,7 +884,23 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (activeTab !== 'quiz' || !quiz || !currentQuestion || isEditableTarget(event.target)) {
+      if (activeTab !== 'quiz' || isEditableTarget(event.target)) {
+        return;
+      }
+      if (showingPerformanceHistory) {
+        if (event.key === 'ArrowLeft' && hasOlderHistoryContext) {
+          event.preventDefault();
+          goToOlderHistoryContext();
+          return;
+        }
+        if (event.key === 'ArrowRight' && hasNewerHistoryContext) {
+          event.preventDefault();
+          goToNewerHistoryContext();
+          return;
+        }
+        return;
+      }
+      if (!quiz || !currentQuestion) {
         return;
       }
       if (event.key === 'ArrowLeft' && canGoPrevQuestion && !autoAdvanceEnabled) {
@@ -906,6 +940,9 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     activeTab,
+    showingPerformanceHistory,
+    hasOlderHistoryContext,
+    hasNewerHistoryContext,
     quiz,
     currentQuestion,
     canGoPrevQuestion,
@@ -1125,11 +1162,11 @@ function App() {
     setQuizIndex(0);
     setQuizScore(0);
     setQuizStartedAt(0);
+    setQuizCompleted(false);
     setQuestionResult(null);
     setQuestionLocked(false);
     setMcqAnswer('');
     setShortAnswer('');
-    setSelfScore('');
     setQuizNotes([]);
     setAttemptQuestions([]);
     setQuestionStates({});
@@ -1251,7 +1288,7 @@ function App() {
     if (!targetPath) {
       return;
     }
-    if (quiz && !quizSaved) {
+    if (quiz && !quizSaved && hasQuizProgress) {
       const shouldExit = window.confirm('Are you sure you want to exit the quiz? Your progress will not be saved.');
       if (!shouldExit) {
         return;
@@ -1500,11 +1537,11 @@ function App() {
       setQuizIndex(0);
       setQuizScore(0);
       setQuizStartedAt(Date.now());
+      setQuizCompleted(false);
       setQuestionResult(null);
       setQuestionLocked(false);
       setMcqAnswer('');
       setShortAnswer('');
-      setSelfScore('');
       setQuizNotes([]);
       setAttemptQuestions([]);
       setQuestionStates({});
@@ -1543,7 +1580,6 @@ function App() {
         locked: true,
         mcq_answer: isShort ? '' : userAnswer,
         short_answer: isShort ? userAnswer : '',
-        self_score: isShort ? String(selfScoreRef.current || '') : '',
       },
     }));
 
@@ -1596,7 +1632,18 @@ function App() {
     };
 
     if (selected.provider === 'self') {
-      body.self_score = Number(selfScore || 0);
+      lockQuestionAfterResult(
+        {
+          correct: false,
+          points_awarded: 0,
+          max_points: Number(currentQuestion.points || 0),
+          feedback: 'No model selected. Response recorded as ungraded.',
+          ungraded: true,
+        },
+        shortAnswer,
+        currentQuestion.expected || '',
+      );
+      return;
     }
 
     try {
@@ -1638,6 +1685,20 @@ function App() {
     if (!quiz) {
       return;
     }
+    if (quizCompleted) {
+      const finalIndex = Math.max(0, quiz.questions.length - 1);
+      if (quizIndex !== finalIndex) {
+        setQuizIndex(finalIndex);
+      }
+      setQuestionResult({
+        correct: false,
+        points_awarded: quizScore,
+        max_points: maxScore,
+        feedback: showFeedbackOnCompletion ? 'Quiz finished.' : '',
+      });
+      setQuestionLocked(true);
+      return;
+    }
 
     const nextIndex = quizIndex + 1;
     if (nextIndex < quiz.questions.length) {
@@ -1676,6 +1737,7 @@ function App() {
       feedback: showFeedbackOnCompletion ? 'Quiz finished.' : '',
     });
     setQuestionLocked(true);
+    setQuizCompleted(true);
   }
 
   function goToPreviousQuestion() {
@@ -1753,9 +1815,13 @@ function App() {
   }
 
   async function runGeneration() {
+    if (isGeneratingQuiz) {
+      return;
+    }
     setGenerateErrors([]);
     setGenerateWarnings([]);
     setGenerateOutputPath('');
+    setIsGeneratingQuiz(true);
 
     try {
       let sources = collectedSources;
@@ -1790,14 +1856,15 @@ function App() {
       }
     } catch (err) {
       setGenerateErrors([err.message]);
+    } finally {
+      setIsGeneratingQuiz(false);
     }
   }
 
   const selectedProviderModel = providerAndModelFromKey(
     settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:',
   );
-  const showingPerformanceHistory = quizSidebarMode === 'performance_history';
-  const quizComplete = Boolean(quiz && quizIndex >= quiz.questions.length - 1 && questionLocked && questionResult);
+  const quizComplete = quizCompleted;
   const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
   const settingsFilterHasMatches = [
     settingsMatches('appearance', 'theme', 'dark mode', 'light mode'),
@@ -1819,29 +1886,21 @@ function App() {
   const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
 
   function renderPerformanceHistoryPanel() {
-    const contextOrderText = activeHistoryQuizPath
-      ? `${historyContextIndex + 1} of ${historyContextPaths.length} (most recent first)`
-      : '';
     return (
       <div className="performance-sidebar">
-        <div className="row between performance-sidebar-header">
-          <h4>Performance History</h4>
-          <button type="button" onClick={() => loadHistory()}>
-            Refresh
-          </button>
-        </div>
-
         {activeHistoryQuizPath ? (
           <div className="row performance-context-nav">
             <button type="button" onClick={() => goToOlderHistoryContext()} disabled={!hasOlderHistoryContext}>
               ←
             </button>
             <div className="performance-context-label">
-              <strong>{activeHistoryQuizLabel || activeHistoryQuizPath}</strong>
-              <span>{contextOrderText}</span>
+              <strong>{activeHistoryQuizTitle || activeHistoryQuizPath}</strong>
             </div>
             <button type="button" onClick={() => goToNewerHistoryContext()} disabled={!hasNewerHistoryContext}>
               →
+            </button>
+            <button type="button" onClick={() => loadHistory()}>
+              Refresh
             </button>
           </div>
         ) : null}
@@ -1849,65 +1908,64 @@ function App() {
         {!activeHistoryQuizPath ? (
           <p className="roots-empty">Right-click a quiz and choose Performance History to view attempts.</p>
         ) : historyFiltered.length ? (
-          <ul className="attempt-list performance-attempt-list">
-            {historyFiltered.map((record, index) => (
-              <li key={`${record.timestamp}-${index}`}>
-                <button
-                  type="button"
-                  className={selectedAttemptIndex === index ? 'selected' : ''}
-                  onClick={() => setSelectedAttemptIndex(index)}
-                >
-                  <strong>{record.quiz_title || record.quiz_path}</strong>
-                  <span>{record.timestamp.replace('T', ' ')}</span>
-                  <span>
-                    {record.score}/{record.max_score} ({Number(record.percent || 0).toFixed(1)}%)
-                  </span>
-                  <span>{record.model_key}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="performance-session-grid">
+            <ul className="attempt-list performance-attempt-list">
+              {historyFiltered.map((record, index) => (
+                <li key={`${record.timestamp}-${index}`}>
+                  <button
+                    type="button"
+                    className={selectedAttemptIndex === index ? 'selected' : ''}
+                    onClick={() => setSelectedAttemptIndex(index)}
+                  >
+                    <span className="performance-attempt-cell attempt">{`Attempt #${index + 1}`}</span>
+                    <span className="performance-attempt-cell percent">
+                      {`${Number(record.percent || 0).toFixed(1)}% correct`}
+                    </span>
+                    <span className="performance-attempt-cell grader">{record.model_key || 'No model'}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            <div className="attempt-detail performance-attempt-detail">
+              {selectedAttempt && activeHistoryQuizPath ? (
+                <>
+                  <h5>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h5>
+                  <p>
+                    {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
+                  </p>
+                  <p>Duration: {Number(selectedAttempt.duration_seconds || 0).toFixed(1)}s</p>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Question</th>
+                        <th>User</th>
+                        <th>Expected</th>
+                        <th>Score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(selectedAttempt.questions || []).map((question, idx) => (
+                        <tr key={`${question.question_id}-${idx}`}>
+                          <td>{question.question_id}</td>
+                          <td><MathText as="span" className="math-text" text={question.user_answer} /></td>
+                          <td><MathText as="span" className="math-text" text={question.correct_answer_or_expected} /></td>
+                          <td>
+                            {question.points_awarded}/{question.max_points}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              ) : (
+                <p>Select an attempt to inspect details.</p>
+              )}
+            </div>
+          </div>
         ) : (
           <p className="roots-empty">No attempts yet for this quiz.</p>
         )}
-
-        <div className="attempt-detail performance-attempt-detail">
-          {selectedAttempt && activeHistoryQuizPath ? (
-            <>
-              <h5>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h5>
-              <p>
-                {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
-              </p>
-              <p>Duration: {Number(selectedAttempt.duration_seconds || 0).toFixed(1)}s</p>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Question</th>
-                    <th>User</th>
-                    <th>Expected</th>
-                    <th>Score</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(selectedAttempt.questions || []).map((question, idx) => (
-                    <tr key={`${question.question_id}-${idx}`}>
-                      <td>{question.question_id}</td>
-                      <td><MathText as="span" className="math-text" text={question.user_answer} /></td>
-                      <td><MathText as="span" className="math-text" text={question.correct_answer_or_expected} /></td>
-                      <td>
-                        {question.points_awarded}/{question.max_points}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          ) : !activeHistoryQuizPath ? (
-            <p>Choose a quiz from the quiz tree to open its performance history.</p>
-          ) : (
-            <p>Select an attempt to inspect details.</p>
-          )}
-        </div>
       </div>
     );
   }
@@ -2108,8 +2166,8 @@ function App() {
 
             <section className="card quiz-card">
               <div className="row between">
-                <h2>{quiz ? quiz.title : 'Quiz'}</h2>
-                <div className="score">{quiz ? `Score: ${quizScore}/${maxScore}` : 'No quiz loaded'}</div>
+                <h2>{showingPerformanceHistory ? 'Performance History' : (quiz ? quiz.title : 'Quiz')}</h2>
+                {quiz ? <div className="score">{`Score: ${quizScore}/${maxScore}`}</div> : null}
               </div>
 
               {quizLoadError ? <div className="banner error">{quizLoadError}</div> : null}
@@ -2165,17 +2223,7 @@ function App() {
                         />
 
                         {selectedProviderModel.provider === 'self' ? (
-                          <label className="field">
-                            <span>Self-score (0 to {currentQuestion.points})</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={currentQuestion.points}
-                              value={selfScore}
-                              disabled={questionLocked}
-                              onChange={(event) => setSelfScore(event.target.value)}
-                            />
-                          </label>
+                          <div className="banner warn">No model selected: short answers are saved as ungraded.</div>
                         ) : null}
 
                         <button type="button" className="primary" disabled={questionLocked} onClick={() => submitShortAnswer()}>
@@ -2220,20 +2268,40 @@ function App() {
                       <h4>Question Nav</h4>
                       <div className="question-nav-list">
                         {quiz.questions.map((q, index) => {
-                          const answered = Boolean(questionStates[index]);
+                          const questionState = questionStates[index];
+                          const answered = Boolean(questionState);
                           const reachable = index <= furthestReachableIndex;
                           const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
                           const current = index === quizIndex;
+                          const result = questionState?.result;
+                          const hasGradedOutcome = typeof result?.correct === 'boolean' && !result?.ungraded;
+
+                          let navStatusLabel = reachable ? 'Open' : 'Locked';
+                          let navStatusClass = '';
+                          if (blockedByAutoAdvance) {
+                            navStatusLabel = 'Locked';
+                          } else if (answered) {
+                            navStatusLabel = 'Done';
+                            navStatusClass = ' done';
+                            if (showFeedbackOnAnswer && hasGradedOutcome) {
+                              navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
+                              navStatusClass = result.correct ? ' correct' : ' incorrect';
+                            } else if (showFeedbackOnCompletion && quizComplete && hasGradedOutcome) {
+                              navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
+                              navStatusClass = result.correct ? ' correct' : ' incorrect';
+                            }
+                          }
+
                           return (
                             <button
                               key={`qnav-${q.id || index}`}
                               type="button"
                               disabled={!reachable || blockedByAutoAdvance}
-                              className={`question-nav-button${current ? ' current' : ''}${answered ? ' answered' : ''}`}
+                              className={`question-nav-button${current ? ' current' : ''}${navStatusClass}`}
                               onClick={() => jumpToQuestion(index)}
                             >
                               <span>Q{index + 1}</span>
-                              <span>{blockedByAutoAdvance ? 'Locked' : answered ? 'Done' : reachable ? 'Open' : 'Locked'}</span>
+                              <span>{navStatusLabel}</span>
                             </button>
                           );
                         })}
@@ -2441,14 +2509,21 @@ function App() {
               </section>
 
               <div className="row">
-                <button type="button" className="primary" onClick={() => runGeneration()}>
-                  Generate Quiz
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={isGeneratingQuiz}
+                  onClick={() => runGeneration()}
+                >
+                  {isGeneratingQuiz ? (
+                    <span className="button-loading">
+                      <span className="loading-spinner" aria-hidden="true" />
+                      Generating...
+                    </span>
+                  ) : (
+                    'Generate Quiz'
+                  )}
                 </button>
-                {selectedGenerationOutputFolder?.absolute_path ? (
-                  <button type="button" onClick={() => openPath(selectedGenerationOutputFolder.absolute_path)}>
-                    Open Target Folder
-                  </button>
-                ) : null}
                 {generateOutputPath ? (
                   <button type="button" onClick={() => openPath(generateOutputPath)}>
                     Open Output
@@ -2720,6 +2795,7 @@ function App() {
                 <label className="field">
                   <span>Claude API key</span>
                   <input
+                    type="password"
                     value={settingsForm.claude_api_key || ''}
                     onChange={(event) => setSettingsForm((prev) => ({ ...prev, claude_api_key: event.target.value }))}
                   />
