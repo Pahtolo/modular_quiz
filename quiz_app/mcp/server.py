@@ -3,14 +3,25 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+try:
+    import jwt
+    from jwt import PyJWKClient
+except Exception:  # pragma: no cover - dependency validated when auth is enabled
+    jwt = None
+    PyJWKClient = None
+
 
 DEFAULT_TOOL_TIMEOUT_SECONDS = 60.0
+DEFAULT_JWT_ALGORITHMS = ("RS256", "RS384", "RS512", "ES256", "ES384", "ES512")
 
 
 @dataclass(frozen=True)
@@ -20,6 +31,17 @@ class BackendConfig:
     timeout_seconds: float = DEFAULT_TOOL_TIMEOUT_SECONDS
 
 
+@dataclass(frozen=True)
+class MCPAuthConfig:
+    issuer_url: str
+    resource_server_url: str
+    audience: str = ""
+    jwks_url: str = ""
+    required_scopes: tuple[str, ...] = ()
+    service_documentation_url: str = ""
+    algorithms: tuple[str, ...] = DEFAULT_JWT_ALGORITHMS
+
+
 def _normalize_base_url(value: str) -> str:
     base_url = str(value or "").strip().rstrip("/")
     if not base_url:
@@ -27,6 +49,74 @@ def _normalize_base_url(value: str) -> str:
     if not base_url.startswith(("http://", "https://")):
         raise ValueError("API base URL must start with http:// or https://")
     return base_url
+
+
+def _normalize_http_url(value: str, *, label: str, required: bool = True) -> str:
+    normalized = str(value or "").strip().rstrip("/")
+    if not normalized:
+        if required:
+            raise ValueError(f"{label} is required.")
+        return ""
+    if not normalized.startswith(("http://", "https://")):
+        raise ValueError(f"{label} must start with http:// or https://")
+    return normalized
+
+
+def _split_scopes(value: str | list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        parts = value.replace(",", " ").split()
+    elif isinstance(value, (list, tuple)):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+    else:
+        parts = [str(value).strip()]
+    return tuple(dict.fromkeys(part for part in parts if part))
+
+
+def _extract_scopes_from_claims(claims: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ("scope", "scp", "scopes"):
+        raw = claims.get(key)
+        if isinstance(raw, str):
+            values.extend([chunk for chunk in raw.split(" ") if chunk])
+            continue
+        if isinstance(raw, list):
+            values.extend([str(chunk).strip() for chunk in raw if str(chunk).strip()])
+    return list(dict.fromkeys(values))
+
+
+def _normalize_auth_config(config: MCPAuthConfig) -> MCPAuthConfig:
+    issuer_url = _normalize_http_url(config.issuer_url, label="OAuth issuer URL")
+    resource_server_url = _normalize_http_url(
+        config.resource_server_url,
+        label="OAuth resource server URL",
+    )
+    jwks_url = _normalize_http_url(
+        config.jwks_url,
+        label="OAuth JWKS URL",
+        required=False,
+    ) or f"{issuer_url}/.well-known/jwks.json"
+    service_documentation_url = _normalize_http_url(
+        config.service_documentation_url,
+        label="OAuth service documentation URL",
+        required=False,
+    )
+    audience = str(config.audience or "").strip() or resource_server_url
+    required_scopes = _split_scopes(config.required_scopes)
+    algorithms = tuple(dict.fromkeys([str(item).strip() for item in config.algorithms if str(item).strip()]))
+    if not algorithms:
+        raise ValueError("At least one JWT signing algorithm is required.")
+
+    return MCPAuthConfig(
+        issuer_url=issuer_url,
+        resource_server_url=resource_server_url,
+        audience=audience,
+        jwks_url=jwks_url,
+        required_scopes=required_scopes,
+        service_documentation_url=service_documentation_url,
+        algorithms=algorithms,
+    )
 
 
 def _error_message_from_payload(status_code: int, payload: Any) -> str:
@@ -103,6 +193,60 @@ class BackendBridge:
         return decoded
 
 
+class JWTAccessTokenVerifier(TokenVerifier):
+    def __init__(self, config: MCPAuthConfig):
+        if jwt is None or PyJWKClient is None:  # pragma: no cover
+            raise RuntimeError("PyJWT is required for MCP OAuth verification. Install with: pip install 'PyJWT[crypto]'")
+
+        self._config = _normalize_auth_config(config)
+        self._jwk_client = PyJWKClient(self._config.jwks_url)
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        raw_token = str(token or "").strip()
+        if not raw_token:
+            return None
+
+        try:
+            signing_key = self._jwk_client.get_signing_key_from_jwt(raw_token)
+            claims = jwt.decode(
+                raw_token,
+                key=signing_key.key,
+                algorithms=list(self._config.algorithms),
+                audience=self._config.audience,
+                issuer=self._config.issuer_url,
+                options={"verify_signature": True, "verify_exp": True, "verify_aud": True, "verify_iss": True},
+            )
+        except Exception:
+            return None
+
+        client_id = (
+            str(claims.get("azp", "")).strip()
+            or str(claims.get("client_id", "")).strip()
+            or str(claims.get("sub", "")).strip()
+        )
+        if not client_id:
+            return None
+
+        scopes = _extract_scopes_from_claims(claims)
+        exp_value = claims.get("exp")
+        expires_at = int(exp_value) if isinstance(exp_value, (int, float)) else None
+        aud_claim = claims.get("aud")
+        if isinstance(aud_claim, str):
+            resource = aud_claim
+        elif isinstance(aud_claim, list) and aud_claim:
+            resource = str(aud_claim[0]).strip() or None
+        else:
+            resource = None
+
+        return AccessToken(
+            token=raw_token,
+            client_id=client_id,
+            scopes=scopes,
+            expires_at=expires_at,
+            resource=resource,
+        )
+
+
 READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True)
 MUTATING = ToolAnnotations(readOnlyHint=False, idempotentHint=False)
 
@@ -114,6 +258,7 @@ def create_mcp_server(
     host: str = "127.0.0.1",
     port: int = 8768,
     name: str = "modular-quiz",
+    auth_config: MCPAuthConfig | None = None,
 ) -> FastMCP:
     bridge = BackendBridge(
         BackendConfig(
@@ -121,15 +266,39 @@ def create_mcp_server(
             bearer_token=api_token,
         )
     )
+    normalized_auth = _normalize_auth_config(auth_config) if auth_config else None
+    auth_settings = None
+    token_verifier = None
+    if normalized_auth:
+        token_verifier = JWTAccessTokenVerifier(normalized_auth)
+        auth_settings = AuthSettings(
+            issuer_url=normalized_auth.issuer_url,
+            service_documentation_url=normalized_auth.service_documentation_url or None,
+            required_scopes=list(normalized_auth.required_scopes) or None,
+            resource_server_url=normalized_auth.resource_server_url,
+        )
+
+    instructions = (
+        "Tools for reading and updating Modular Quiz settings, loading quizzes, "
+        "grading answers, running generation, and managing history through the app backend."
+    )
+    if normalized_auth:
+        parsed = urlparse(normalized_auth.resource_server_url)
+        resource_path = parsed.path if parsed.path != "/" else ""
+        instructions += (
+            f" This server uses OAuth bearer tokens issued by {normalized_auth.issuer_url}. "
+            f"Protected resource metadata is available at "
+            f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-protected-resource{resource_path}."
+        )
+
     mcp = FastMCP(
         name=name,
-        instructions=(
-            "Tools for reading and updating Modular Quiz settings, loading quizzes, "
-            "grading answers, running generation, and managing history through the app backend."
-        ),
+        instructions=instructions,
         host=host,
         port=port,
         streamable_http_path="/mcp",
+        auth=auth_settings,
+        token_verifier=token_verifier,
     )
 
     @mcp.tool(name="quiz_health", description="Check Modular Quiz backend health.", annotations=READ_ONLY)
@@ -269,8 +438,12 @@ def create_mcp_server(
 __all__ = [
     "BackendBridge",
     "BackendConfig",
+    "JWTAccessTokenVerifier",
+    "MCPAuthConfig",
     "create_mcp_server",
+    "_extract_scopes_from_claims",
     "_decode_response_payload",
     "_error_message_from_payload",
+    "_normalize_auth_config",
     "_normalize_base_url",
 ]

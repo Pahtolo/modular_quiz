@@ -48,6 +48,24 @@ Typical local workflow:
 3. Expose `http://127.0.0.1:8768/mcp` through an HTTPS tunnel when connecting from ChatGPT.
 4. Add the HTTPS MCP URL in ChatGPT connector settings.
 
+### OAuth-Protected MCP Mode (ChatGPT account linking)
+Enable OAuth verification on the MCP server by providing issuer/resource settings:
+```bash
+python3 run_mcp.py \
+  --api-base-url http://127.0.0.1:8766 \
+  --api-token dev-token \
+  --auth-issuer-url https://YOUR_AUTH_ISSUER \
+  --auth-resource-server-url https://YOUR_PUBLIC_HOST/mcp \
+  --auth-audience https://YOUR_PUBLIC_HOST/mcp \
+  --auth-required-scopes "quiz.read quiz.write"
+```
+
+Notes:
+- `--auth-issuer-url` enables OAuth mode.
+- `--auth-resource-server-url` must be the publicly reachable MCP URL used by ChatGPT.
+- `--auth-jwks-url` is optional; default is `<issuer>/.well-known/jwks.json`.
+- The server exposes RFC protected resource metadata at `/.well-known/oauth-protected-resource/...` automatically when OAuth mode is enabled.
+
 ## Build and Package (Electron)
 Build renderer:
 ```bash

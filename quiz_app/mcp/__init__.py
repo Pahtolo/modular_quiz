@@ -1,5 +1,5 @@
 """MCP server surface for ChatGPT Apps / remote tool integration."""
 
-from .server import create_mcp_server
+from .server import MCPAuthConfig, create_mcp_server
 
-__all__ = ["create_mcp_server"]
+__all__ = ["MCPAuthConfig", "create_mcp_server"]
