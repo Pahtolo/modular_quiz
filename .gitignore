@@ -33,3 +33,5 @@ venv/
 # Local workflow files
 /AGENTS.md
 /FEATURE_TRACKER.md
+/CODEX_IDEAS.md
+/BUGS_FOUND.md
