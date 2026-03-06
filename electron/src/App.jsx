@@ -212,6 +212,10 @@ function normalizeQuestionId(value, fallbackIndex = 1) {
   return `q${Math.max(1, Number(fallbackIndex) || 1)}`;
 }
 
+function feedbackThreadKey(question, fallbackIndex = 0) {
+  return normalizeQuestionId(question?.id, Number(fallbackIndex) + 1);
+}
+
 function isUngradedAttemptQuestion(question) {
   const explicit = Boolean(question?.ungraded);
   if (explicit) {
@@ -219,6 +223,17 @@ function isUngradedAttemptQuestion(question) {
   }
   const feedback = String(question?.feedback || '').toLowerCase();
   return feedback.includes('ungraded');
+}
+
+function isSidebarVerdictOnlyFeedback(entry) {
+  if (String(entry?.role || '').trim().toLowerCase() !== 'assistant') {
+    return false;
+  }
+  if (String(entry?.kind || '').trim().toLowerCase() !== 'result') {
+    return false;
+  }
+  const text = String(entry?.text || '').trim().toLowerCase();
+  return text.startsWith('you are correct') || text.startsWith('you are incorrect');
 }
 
 function historyAttemptMatchesSignature(record, signature) {
@@ -465,7 +480,7 @@ function ancestorPathsForTarget(nodes, targetPath, trail = []) {
   return null;
 }
 
-function QuizTree({ nodes, selectedPath, onSelect, onOpenContextMenu }) {
+function QuizTree({ nodes, selectedPath, onSelect, onActivate, onOpenContextMenu }) {
   const [collapsedPaths, setCollapsedPaths] = useState({});
 
   useEffect(() => {
@@ -550,6 +565,11 @@ function QuizTree({ nodes, selectedPath, onSelect, onOpenContextMenu }) {
               }
               if (isCollapsible) {
                 toggleCollapsed(node.path);
+              }
+            }}
+            onDoubleClick={() => {
+              if (isQuiz && typeof onActivate === 'function') {
+                onActivate(node.path);
               }
             }}
             onContextMenu={(event) => {
@@ -650,11 +670,9 @@ function App() {
   const [questionLocked, setQuestionLocked] = useState(false);
   const [mcqAnswer, setMcqAnswer] = useState('');
   const [shortAnswer, setShortAnswer] = useState('');
-  const [quizNotes, setQuizNotes] = useState([]);
-  const [feedbackChatMessages, setFeedbackChatMessages] = useState([]);
-  const [feedbackChatDraft, setFeedbackChatDraft] = useState('');
-  const [feedbackChatSending, setFeedbackChatSending] = useState(false);
-  const [feedbackChatContextKey, setFeedbackChatContextKey] = useState('');
+  const [feedbackThreadsByQuestion, setFeedbackThreadsByQuestion] = useState({});
+  const [feedbackDraftsByQuestion, setFeedbackDraftsByQuestion] = useState({});
+  const [feedbackPendingByQuestion, setFeedbackPendingByQuestion] = useState({});
   const [attemptQuestions, setAttemptQuestions] = useState([]);
   const [injectedContextText, setInjectedContextText] = useState('');
   const [injectedContextPaths, setInjectedContextPaths] = useState([]);
@@ -667,9 +685,9 @@ function App() {
   const questionStatesRef = useRef({});
   const mcqAnswerRef = useRef('');
   const shortAnswerRef = useRef('');
-  const quizNotesCountRef = useRef(0);
   const feedbackChatEndRef = useRef(null);
   const modelLoadRequestIdRef = useRef(0);
+  const quizSelectorPanelTabRef = useRef('quizzes');
 
   const [sourceInputs, setSourceInputs] = useState([]);
   const [collectedSources, setCollectedSources] = useState([]);
@@ -749,6 +767,38 @@ function App() {
     }
     return quiz.questions[quizIndex];
   }, [quiz, quizIndex]);
+
+  const currentFeedbackQuestionKey = useMemo(
+    () => (currentQuestion ? feedbackThreadKey(currentQuestion, quizIndex) : ''),
+    [currentQuestion, quizIndex],
+  );
+  const currentQuestionState = currentQuestion ? questionStates[quizIndex] : null;
+
+  const currentFeedbackThread = useMemo(() => {
+    if (!currentFeedbackQuestionKey) {
+      return [];
+    }
+    return Array.isArray(feedbackThreadsByQuestion[currentFeedbackQuestionKey])
+      ? feedbackThreadsByQuestion[currentFeedbackQuestionKey]
+      : [];
+  }, [currentFeedbackQuestionKey, feedbackThreadsByQuestion]);
+
+  const visibleFeedbackThread = useMemo(
+    () => currentFeedbackThread.filter((entry) => !isSidebarVerdictOnlyFeedback(entry)),
+    [currentFeedbackThread],
+  );
+
+  const feedbackChatSeedText = useMemo(() => {
+    const seedEntry = currentFeedbackThread.find(
+      (entry) => String(entry?.role || '').trim().toLowerCase() === 'assistant' && String(entry?.text || '').trim(),
+    );
+    return String(seedEntry?.text || '').trim();
+  }, [currentFeedbackThread]);
+
+  const feedbackChatDraft = currentFeedbackQuestionKey
+    ? String(feedbackDraftsByQuestion[currentFeedbackQuestionKey] || '')
+    : '';
+  const feedbackChatSending = Boolean(currentFeedbackQuestionKey && feedbackPendingByQuestion[currentFeedbackQuestionKey]);
 
   const selectedQuizNode = useMemo(
     () => findQuizNodeByPath(quizTreeRoots, selectedQuizPath),
@@ -1071,19 +1121,6 @@ function App() {
     };
   }, [sourceInputs]);
 
-  const latestQuizNote = quizNotes.length ? quizNotes[quizNotes.length - 1] : '';
-  const feedbackChatSeedText = String(latestQuizNote || '').trim();
-  const feedbackChatSeedKey = `${String(currentQuestion?.id || `q${quizIndex + 1}`)}:${feedbackChatSeedText}`;
-
-  useEffect(() => {
-    const previousCount = Number(quizNotesCountRef.current || 0);
-    const nextCount = Number(quizNotes.length || 0);
-    if (nextCount > previousCount && quizSelectorPanelTab !== 'feedback') {
-      setFeedbackTabNeedsAttention(true);
-    }
-    quizNotesCountRef.current = nextCount;
-  }, [quizNotes.length, quizSelectorPanelTab]);
-
   useEffect(() => {
     if (quizSelectorPanelTab !== 'feedback') {
       return;
@@ -1093,6 +1130,10 @@ function App() {
     }
     setFeedbackTabNeedsAttention(false);
   }, [feedbackTabNeedsAttention, quizSelectorPanelTab]);
+
+  useEffect(() => {
+    quizSelectorPanelTabRef.current = quizSelectorPanelTab;
+  }, [quizSelectorPanelTab]);
 
   useEffect(() => {
     if (!historyContextPaths.length) {
@@ -1132,34 +1173,11 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!feedbackChatSeedText) {
-      if (feedbackChatMessages.length || feedbackChatDraft || feedbackChatContextKey) {
-        setFeedbackChatMessages([]);
-        setFeedbackChatDraft('');
-        setFeedbackChatContextKey('');
-      }
-      return;
-    }
-    if (feedbackChatContextKey === feedbackChatSeedKey) {
-      return;
-    }
-    setFeedbackChatMessages([{ role: 'assistant', text: feedbackChatSeedText }]);
-    setFeedbackChatDraft('');
-    setFeedbackChatContextKey(feedbackChatSeedKey);
-  }, [
-    feedbackChatContextKey,
-    feedbackChatDraft,
-    feedbackChatMessages.length,
-    feedbackChatSeedKey,
-    feedbackChatSeedText,
-  ]);
-
-  useEffect(() => {
     if (!feedbackChatEndRef.current) {
       return;
     }
     feedbackChatEndRef.current.scrollIntoView({ block: 'end' });
-  }, [feedbackChatMessages, feedbackChatSending]);
+  }, [currentFeedbackQuestionKey, feedbackChatSending, visibleFeedbackThread.length]);
 
   useEffect(() => {
     if (injectedContextPaths.length) {
@@ -1579,6 +1597,66 @@ function App() {
     setSelectedAttemptIndex(-1);
   }
 
+  function appendFeedbackEntries(questionKey, entries, { flagAttention = true } = {}) {
+    const targetKey = String(questionKey || '').trim();
+    const normalizedEntries = (entries || [])
+      .map((entry) => ({
+        role: String(entry?.role || '').trim().toLowerCase(),
+        text: String(entry?.text || '').trim(),
+        kind: String(entry?.kind || '').trim().toLowerCase(),
+      }))
+      .filter((entry) => (entry.role === 'assistant' || entry.role === 'user') && entry.text);
+    if (!targetKey || !normalizedEntries.length) {
+      return;
+    }
+    setFeedbackThreadsByQuestion((prev) => {
+      const existing = Array.isArray(prev[targetKey]) ? prev[targetKey] : [];
+      return {
+        ...prev,
+        [targetKey]: [...existing, ...normalizedEntries],
+      };
+    });
+    if (
+      flagAttention
+      && normalizedEntries.some((entry) => entry.role === 'assistant' && !isSidebarVerdictOnlyFeedback(entry))
+      && quizSelectorPanelTabRef.current !== 'feedback'
+    ) {
+      setFeedbackTabNeedsAttention(true);
+    }
+  }
+
+  function setFeedbackDraftForQuestion(questionKey, value) {
+    const targetKey = String(questionKey || '').trim();
+    if (!targetKey) {
+      return;
+    }
+    setFeedbackDraftsByQuestion((prev) => ({
+      ...prev,
+      [targetKey]: value,
+    }));
+  }
+
+  function setFeedbackPendingForQuestion(questionKey, pending) {
+    const targetKey = String(questionKey || '').trim();
+    if (!targetKey) {
+      return;
+    }
+    setFeedbackPendingByQuestion((prev) => {
+      if (!pending) {
+        if (!prev[targetKey]) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[targetKey];
+        return next;
+      }
+      return {
+        ...prev,
+        [targetKey]: true,
+      };
+    });
+  }
+
   function resetQuizSessionState(nextSidebarMode = 'question_nav') {
     if (autoAdvanceTimeoutRef.current) {
       window.clearTimeout(autoAdvanceTimeoutRef.current);
@@ -1597,11 +1675,9 @@ function App() {
     setQuestionLocked(false);
     setMcqAnswer('');
     setShortAnswer('');
-    setQuizNotes([]);
-    setFeedbackChatMessages([]);
-    setFeedbackChatDraft('');
-    setFeedbackChatSending(false);
-    setFeedbackChatContextKey('');
+    setFeedbackThreadsByQuestion({});
+    setFeedbackDraftsByQuestion({});
+    setFeedbackPendingByQuestion({});
     setAttemptQuestions([]);
     setInjectedContextText('');
     setInjectedContextPaths([]);
@@ -1611,6 +1687,7 @@ function App() {
     setQuizSaved(false);
     setActiveQuizPath('');
     setQuizSidebarMode(nextSidebarMode);
+    setFeedbackTabNeedsAttention(false);
   }
 
   function pushHistoryContext(targetPath) {
@@ -2037,11 +2114,9 @@ function App() {
       setQuestionLocked(false);
       setMcqAnswer('');
       setShortAnswer('');
-      setQuizNotes([]);
-      setFeedbackChatMessages([]);
-      setFeedbackChatDraft('');
-      setFeedbackChatSending(false);
-      setFeedbackChatContextKey('');
+      setFeedbackThreadsByQuestion({});
+      setFeedbackDraftsByQuestion({});
+      setFeedbackPendingByQuestion({});
       setAttemptQuestions([]);
       setInjectedContextText(cachedContext?.text || '');
       setInjectedContextPaths(cachedContext?.paths || []);
@@ -2050,6 +2125,7 @@ function App() {
       setQuizSaved(false);
       setActiveQuizPath(targetPath);
       setQuizSidebarMode('question_nav');
+      setFeedbackTabNeedsAttention(false);
       setQuizClockTickMs(Date.now());
       closeQuizClockMenu();
       setActiveTab('quiz');
@@ -2058,8 +2134,8 @@ function App() {
     }
   }
 
-  async function startSelectedQuiz() {
-    const targetPath = String(selectedQuizPath || '').trim();
+  async function startSelectedQuiz(pathValue = selectedQuizPath) {
+    const targetPath = String(pathValue || '').trim();
     if (!targetPath) {
       return;
     }
@@ -2088,6 +2164,7 @@ function App() {
       ungraded: Boolean(result.ungraded),
     };
     const isShort = currentQuestion.type === 'short';
+    const questionKey = feedbackThreadKey(currentQuestion, quizIndex);
 
     setQuestionStates((prev) => ({
       ...prev,
@@ -2103,7 +2180,11 @@ function App() {
     setQuestionLocked(true);
     setQuizScore((prev) => prev + Number(result.points_awarded || 0));
     if (showFeedbackOnAnswer && result.feedback) {
-      setQuizNotes((prev) => [...prev, result.feedback]);
+      appendFeedbackEntries(questionKey, [{
+        role: 'assistant',
+        text: result.feedback,
+        kind: 'result',
+      }]);
     }
     setAttemptQuestions((prev) => {
       const next = [...prev];
@@ -2178,6 +2259,7 @@ function App() {
     if (!currentQuestion || currentQuestion.type !== 'mcq' || !questionResult) {
       return;
     }
+    const questionKey = feedbackThreadKey(currentQuestion, quizIndex);
 
     const modelKeyValue = (settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:').trim();
     const selected = providerAndModelFromKey(modelKeyValue);
@@ -2185,6 +2267,11 @@ function App() {
       setQuizLoadError('No model mode does not support MCQ explanation.');
       return;
     }
+
+    setQuizLoadError('');
+    setQuizSelectorPanelTab('feedback');
+    setFeedbackTabNeedsAttention(false);
+    setFeedbackPendingForQuestion(questionKey, true);
 
     try {
       const response = await apiRequest('/v1/explain/mcq', 'POST', {
@@ -2196,9 +2283,15 @@ function App() {
         correct_answer: currentQuestion.answer,
         extra_context: String(injectedContextText || '').trim(),
       });
-      setQuizNotes((prev) => [...prev, response.text || 'No explanation returned.']);
+      appendFeedbackEntries(questionKey, [{
+        role: 'assistant',
+        text: response.text || 'No explanation returned.',
+        kind: 'explain',
+      }], { flagAttention: false });
     } catch (err) {
       setQuizLoadError(err.message);
+    } finally {
+      setFeedbackPendingForQuestion(questionKey, false);
     }
   }
 
@@ -2350,6 +2443,7 @@ function App() {
   }
 
   async function sendFeedbackFollowup() {
+    const questionKey = currentFeedbackQuestionKey;
     const userMessage = String(feedbackChatDraft || '').trim();
     if (!userMessage || feedbackChatSending) {
       return;
@@ -2374,7 +2468,7 @@ function App() {
     const expectedAnswer = questionType === 'short'
       ? String(currentQuestion?.expected || '')
       : String(currentQuestion?.answer || '');
-    const historySnapshot = (feedbackChatMessages || [])
+    const historySnapshot = (currentFeedbackThread || [])
       .map((entry) => ({
         role: String(entry?.role || '').trim().toLowerCase(),
         text: String(entry?.text || '').trim(),
@@ -2382,9 +2476,13 @@ function App() {
       .filter((entry) => (entry.role === 'assistant' || entry.role === 'user') && entry.text);
 
     setQuizLoadError('');
-    setFeedbackChatDraft('');
-    setFeedbackChatSending(true);
-    setFeedbackChatMessages((prev) => [...prev, { role: 'user', text: userMessage }]);
+    setFeedbackDraftForQuestion(questionKey, '');
+    setFeedbackPendingForQuestion(questionKey, true);
+    appendFeedbackEntries(questionKey, [{
+      role: 'user',
+      text: userMessage,
+      kind: 'followup',
+    }], { flagAttention: false });
 
     try {
       const payload = {
@@ -2408,12 +2506,16 @@ function App() {
       }
       const response = await apiRequest('/v1/feedback/chat', 'POST', payload);
       const assistantText = String(response?.text || '').trim() || 'No response returned.';
-      setFeedbackChatMessages((prev) => [...prev, { role: 'assistant', text: assistantText }]);
+      appendFeedbackEntries(questionKey, [{
+        role: 'assistant',
+        text: assistantText,
+        kind: 'followup',
+      }]);
     } catch (err) {
       setQuizLoadError(err.message || 'Failed to send follow-up feedback question.');
-      setFeedbackChatDraft(userMessage);
+      setFeedbackDraftForQuestion(questionKey, userMessage);
     } finally {
-      setFeedbackChatSending(false);
+      setFeedbackPendingForQuestion(questionKey, false);
     }
   }
 
@@ -2818,13 +2920,17 @@ function App() {
   }
 
   function renderFeedbackChatPanel() {
-    if (!latestQuizNote) {
+    if (!currentQuestionState && !currentFeedbackThread.length && !feedbackChatSending) {
       return <p className="roots-empty">Answer a question to start feedback chat.</p>;
     }
-
-    const entries = feedbackChatMessages.length
-      ? feedbackChatMessages
-      : [{ role: 'assistant', text: latestQuizNote }];
+    const entries = visibleFeedbackThread;
+    const composerDisabled = feedbackChatSending || selectedProviderModel.provider === 'self' || !feedbackChatSeedText;
+    let composePlaceholder = 'Ask a follow-up question about this feedback';
+    if (!feedbackChatSeedText && currentQuestionState) {
+      composePlaceholder = 'This question has no feedback thread yet.';
+    } else if (!feedbackChatSeedText) {
+      composePlaceholder = 'Answer a question to start feedback chat';
+    }
 
     return (
       <section className="feedback-chat" aria-label="Feedback chat">
@@ -2833,15 +2939,21 @@ function App() {
           {feedbackChatSending ? <span className="feedback-chat-status">Thinking</span> : null}
         </div>
         <div className="feedback-chat-log">
-          {entries.map((entry, index) => (
+          {entries.length ? entries.map((entry, index) => (
             <div
-              key={`feedback-chat-${entry.role}-${index}`}
+              key={`feedback-chat-${entry.kind || 'message'}-${entry.role}-${index}`}
               className={`feedback-chat-message ${entry.role === 'assistant' ? 'assistant' : 'user'}`}
             >
               <span className="feedback-chat-role">{entry.role === 'assistant' ? 'Assistant' : 'You'}</span>
               <MarkdownMathText className="math-text markdown-math-content" text={entry.text} />
             </div>
-          ))}
+          )) : (
+            <p className="feedback-chat-hint">
+              {currentQuestionState
+                ? 'No detailed feedback is shown here yet for this question. Click Explain or ask a follow-up for more detail.'
+                : 'Answer a question to start feedback chat.'}
+            </p>
+          )}
           {feedbackChatSending ? (
             <div className="feedback-chat-message assistant typing" aria-live="polite" aria-label="Assistant is typing">
               <span className="feedback-chat-role">Assistant</span>
@@ -2857,20 +2969,20 @@ function App() {
         <div className="feedback-chat-compose">
           <textarea
             value={feedbackChatDraft}
-            onChange={(event) => setFeedbackChatDraft(event.target.value)}
+            onChange={(event) => setFeedbackDraftForQuestion(currentFeedbackQuestionKey, event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 void sendFeedbackFollowup();
               }
             }}
-            placeholder="Ask a follow-up question about this feedback"
-            disabled={feedbackChatSending || selectedProviderModel.provider === 'self'}
+            placeholder={composePlaceholder}
+            disabled={composerDisabled}
           />
           <button
             type="button"
             className="primary"
-            disabled={!String(feedbackChatDraft || '').trim() || feedbackChatSending || selectedProviderModel.provider === 'self'}
+            disabled={!String(feedbackChatDraft || '').trim() || composerDisabled}
             onClick={() => {
               void sendFeedbackFollowup();
             }}
@@ -2881,6 +2993,10 @@ function App() {
         {selectedProviderModel.provider === 'self' ? (
           <p className="feedback-chat-hint">
             Select a non-self Preferred model in Settings to ask follow-up feedback questions.
+          </p>
+        ) : !feedbackChatSeedText && currentQuestionState ? (
+          <p className="feedback-chat-hint">
+            This question does not have a feedback thread yet. Click Explain or generate feedback for this question first.
           </p>
         ) : null}
       </section>
@@ -3093,6 +3209,9 @@ function App() {
                       nodes={visibleQuizTreeNodes}
                       selectedPath={selectedQuizPath}
                       onSelect={setSelectedQuizPath}
+                      onActivate={(pathValue) => {
+                        void startSelectedQuiz(pathValue);
+                      }}
                       onOpenContextMenu={handleQuizTreeContextMenu}
                     />
                     {!visibleQuizTreeNodes.length ? (
@@ -3208,8 +3327,8 @@ function App() {
                       ) : null}
 
                       {currentQuestion.type === 'mcq' && questionResult && selectedProviderModel.provider !== 'self' ? (
-                        <button type="button" onClick={() => explainCurrentMcq()}>
-                          Explain
+                        <button type="button" disabled={feedbackChatSending} onClick={() => explainCurrentMcq()}>
+                          {feedbackChatSending ? 'Explaining...' : 'Explain'}
                         </button>
                       ) : null}
 
