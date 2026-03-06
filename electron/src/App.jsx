@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import renderMathInElement from 'katex/contrib/auto-render';
-import { apiRequest, backendInfo, openPath, pickFolder, pickSourceInputs } from './api';
+import remarkGfm from 'remark-gfm';
+import { apiRequest, backendInfo, openExternal, openPath, pickFolder, pickSourceInputs } from './api';
 
 const TABS = ['quiz', 'generate', 'settings'];
 const THEME_STORAGE_KEY = 'modular-quiz-theme';
@@ -28,6 +30,52 @@ function MathText({ as = 'span', className, text }) {
   }, [text]);
 
   return <Element ref={ref} className={className}>{text || ''}</Element>;
+}
+
+function MarkdownMathText({ className, text }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!ref.current) {
+      return;
+    }
+    renderMathInElement(ref.current, {
+      delimiters: KATEX_DELIMITERS,
+      throwOnError: false,
+      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option'],
+    });
+  }, [text]);
+
+  return (
+    <div ref={ref} className={className}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node, href, children, ...props }) => {
+            void node;
+            const targetHref = String(href || '').trim();
+            if (!targetHref) {
+              return <span>{children}</span>;
+            }
+            return (
+              <a
+                {...props}
+                href={targetHref}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void openExternal(targetHref);
+                }}
+              >
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {String(text || '')}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 function providerAndModelFromKey(modelKey) {
@@ -621,6 +669,7 @@ function App() {
   const shortAnswerRef = useRef('');
   const quizNotesCountRef = useRef(0);
   const feedbackChatEndRef = useRef(null);
+  const modelLoadRequestIdRef = useRef(0);
 
   const [sourceInputs, setSourceInputs] = useState([]);
   const [collectedSources, setCollectedSources] = useState([]);
@@ -1438,28 +1487,48 @@ function App() {
   }
 
   async function loadModels() {
+    const requestId = modelLoadRequestIdRef.current + 1;
+    modelLoadRequestIdRef.current = requestId;
     setModelLoadError('');
     const next = {
       self: [{ id: '', label: 'No model', provider: 'self', capability_tags: [] }],
       claude: [],
       openai: [],
     };
+    const errors = [];
 
     try {
       const claudeResponse = await apiRequest('/v1/models?provider=claude', 'GET');
+      if (requestId !== modelLoadRequestIdRef.current) {
+        return;
+      }
       next.claude = claudeResponse.models || [];
     } catch (err) {
-      setModelLoadError((prev) => `${prev}\nClaude models: ${err.message}`.trim());
+      if (requestId !== modelLoadRequestIdRef.current) {
+        return;
+      }
+      errors.push(`Claude models: ${err.message}`);
     }
 
     try {
       const openaiResponse = await apiRequest('/v1/models?provider=openai', 'GET');
+      if (requestId !== modelLoadRequestIdRef.current) {
+        return;
+      }
       next.openai = openaiResponse.models || [];
     } catch (err) {
-      setModelLoadError((prev) => `${prev}\nOpenAI models: ${err.message}`.trim());
+      if (requestId !== modelLoadRequestIdRef.current) {
+        return;
+      }
+      errors.push(`OpenAI models: ${err.message}`);
+    }
+
+    if (requestId !== modelLoadRequestIdRef.current) {
+      return;
     }
 
     setProviderModels(next);
+    setModelLoadError(errors.join('\n'));
   }
 
   async function loadQuizTree() {
@@ -1723,6 +1792,8 @@ function App() {
       await Promise.all([loadHistory(), loadModels()]);
       await loadQuizzesLibrary();
       await loadQuizTree();
+      setStartupError('');
+      setQuizLoadError('');
       return true;
     } catch (err) {
       setStartupError(`Failed to save settings: ${err.message}`);
@@ -2751,24 +2822,36 @@ function App() {
       return <p className="roots-empty">Answer a question to start feedback chat.</p>;
     }
 
+    const entries = feedbackChatMessages.length
+      ? feedbackChatMessages
+      : [{ role: 'assistant', text: latestQuizNote }];
+
     return (
-      <div className="feedback-chat">
+      <section className="feedback-chat" aria-label="Feedback chat">
         <div className="row between">
           <h4>Feedback Chat</h4>
-          {feedbackChatSending ? <span className="feedback-chat-status">Thinking...</span> : null}
+          {feedbackChatSending ? <span className="feedback-chat-status">Thinking</span> : null}
         </div>
         <div className="feedback-chat-log">
-          {(feedbackChatMessages.length
-            ? feedbackChatMessages
-            : [{ role: 'assistant', text: latestQuizNote }]).map((entry, index) => (
-              <div
-                key={`feedback-chat-${entry.role}-${index}`}
-                className={`feedback-chat-message ${entry.role === 'assistant' ? 'assistant' : 'user'}`}
-              >
-                <span className="feedback-chat-role">{entry.role === 'assistant' ? 'Assistant' : 'You'}</span>
-                <MathText as="div" className="math-text" text={entry.text} />
-              </div>
-            ))}
+          {entries.map((entry, index) => (
+            <div
+              key={`feedback-chat-${entry.role}-${index}`}
+              className={`feedback-chat-message ${entry.role === 'assistant' ? 'assistant' : 'user'}`}
+            >
+              <span className="feedback-chat-role">{entry.role === 'assistant' ? 'Assistant' : 'You'}</span>
+              <MarkdownMathText className="math-text markdown-math-content" text={entry.text} />
+            </div>
+          ))}
+          {feedbackChatSending ? (
+            <div className="feedback-chat-message assistant typing" aria-live="polite" aria-label="Assistant is typing">
+              <span className="feedback-chat-role">Assistant</span>
+              <span className="feedback-chat-typing" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          ) : null}
           <div ref={feedbackChatEndRef} />
         </div>
         <div className="feedback-chat-compose">
@@ -2800,7 +2883,7 @@ function App() {
             Select a non-self Preferred model in Settings to ask follow-up feedback questions.
           </p>
         ) : null}
-      </div>
+      </section>
     );
   }
 
@@ -2954,7 +3037,7 @@ function App() {
         {normalizedActiveTab === 'quiz' ? (
           <section className="quiz-layout">
             <aside className="quiz-selector-column">
-              <div className="card tree-card">
+              <div className={`card tree-card ${quizSelectorPanelTab === 'feedback' ? 'feedback-column-card' : ''}`.trim()}>
                 <div className="row between">
                   <div className="quiz-selector-tabs" role="tablist" aria-label="Quiz sidebar panels">
                     <button
@@ -3017,9 +3100,7 @@ function App() {
                     ) : null}
                   </>
                 ) : (
-                  <div className="quiz-selector-feedback">
-                    {renderFeedbackChatPanel()}
-                  </div>
+                  renderFeedbackChatPanel()
                 )}
               </div>
               {quizSelectorPanelTab === 'quizzes' ? (
