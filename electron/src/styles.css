@@ -803,6 +803,7 @@ textarea {
   gap: 0.6rem;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .feedback-chat h4 {
@@ -815,10 +816,10 @@ textarea {
 }
 
 .feedback-chat-log {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  padding: 0.55rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -860,6 +861,8 @@ textarea {
   display: flex;
   gap: 0.45rem;
   align-items: flex-end;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
 }
 
 .feedback-chat-compose textarea {
