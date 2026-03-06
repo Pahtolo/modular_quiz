@@ -5,7 +5,7 @@ import shutil
 import traceback
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -365,7 +365,11 @@ def _quiz_display_name(path: Path) -> str:
     return path.stem
 
 
-def _quiz_structure_tree(root_dir: Path) -> list[dict[str, Any]]:
+def _build_quiz_directory_nodes(
+    root_dir: Path,
+    folder_payload: Callable[[Path], dict[str, Any]],
+    quiz_payload: Callable[[Path], dict[str, Any]],
+) -> list[dict[str, Any]]:
     def _walk(current: Path) -> list[dict[str, Any]]:
         nodes: list[dict[str, Any]] = []
         try:
@@ -379,28 +383,34 @@ def _quiz_structure_tree(root_dir: Path) -> list[dict[str, Any]]:
             if entry.is_dir():
                 children = _walk(entry)
                 if children:
-                    nodes.append(
-                        {
-                            "name": entry.name,
-                            "path": str(entry),
-                            "kind": "folder",
-                            "children": children,
-                        }
-                    )
+                    folder = folder_payload(entry)
+                    folder["children"] = children
+                    nodes.append(folder)
                 continue
             if entry.is_file() and _quiz_file_allowed(entry):
-                nodes.append(
-                    {
-                        "name": _quiz_display_name(entry),
-                        "file_name": entry.name,
-                        "path": str(entry),
-                        "kind": "quiz",
-                        "children": [],
-                    }
-                )
+                quiz = quiz_payload(entry)
+                quiz["children"] = []
+                nodes.append(quiz)
         return nodes
 
     return _walk(root_dir)
+
+
+def _quiz_structure_tree(root_dir: Path) -> list[dict[str, Any]]:
+    return _build_quiz_directory_nodes(
+        root_dir=root_dir,
+        folder_payload=lambda entry: {
+            "name": entry.name,
+            "path": str(entry),
+            "kind": "folder",
+        },
+        quiz_payload=lambda entry: {
+            "name": _quiz_display_name(entry),
+            "file_name": entry.name,
+            "path": str(entry),
+            "kind": "quiz",
+        },
+    )
 
 
 def _unique_destination(path: Path) -> Path:
@@ -464,47 +474,21 @@ def _import_quiz_folder(source_dir: Path, quizzes_dir: Path) -> tuple[int, list[
 
 
 def _quiz_nodes_for_directory(root_path: Path) -> list[dict[str, Any]]:
-    def _walk(current: Path) -> list[dict[str, Any]]:
-        nodes: list[dict[str, Any]] = []
-        try:
-            entries = sorted(current.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-        except Exception:
-            return []
-
-        for entry in entries:
-            if entry.name.startswith("."):
-                continue
-
-            if entry.is_dir():
-                children = _walk(entry)
-                if children:
-                    nodes.append(
-                        {
-                            "name": entry.name,
-                            "path": str(entry),
-                            "relative_path": str(entry.relative_to(root_path)),
-                            "kind": "folder",
-                            "children": children,
-                        }
-                    )
-                continue
-
-            if not entry.is_file() or not _quiz_file_allowed(entry):
-                continue
-
-            nodes.append(
-                {
-                    "name": _quiz_display_name(entry),
-                    "path": str(entry),
-                    "relative_path": str(entry.relative_to(root_path)),
-                    "kind": "quiz",
-                    "children": [],
-                }
-            )
-
-        return nodes
-
-    return _walk(root_path)
+    return _build_quiz_directory_nodes(
+        root_dir=root_path,
+        folder_payload=lambda entry: {
+            "name": entry.name,
+            "path": str(entry),
+            "relative_path": str(entry.relative_to(root_path)),
+            "kind": "folder",
+        },
+        quiz_payload=lambda entry: {
+            "name": _quiz_display_name(entry),
+            "path": str(entry),
+            "relative_path": str(entry.relative_to(root_path)),
+            "kind": "quiz",
+        },
+    )
 
 
 def _build_quiz_tree(roots: list[Path]) -> list[dict[str, Any]]:
