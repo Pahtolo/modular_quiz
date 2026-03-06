@@ -150,6 +150,95 @@ def _provider_client(state: APIState, provider: str, settings: AppSettings):
     return None
 
 
+def _provider_client_for_preview(provider: str, settings: AppSettings):
+    key = (provider or "").strip().lower()
+    preferred_provider, preferred_model = _preferred_provider_model(settings)
+    if key == "claude":
+        default_model = (
+            preferred_model
+            if preferred_provider == "claude" and preferred_model
+            else (settings.claude_model_selected or settings.claude_model)
+        )
+        return ClaudeClient(
+            api_key=settings.claude_api_key,
+            default_model=default_model,
+            curated_models=settings.claude_models,
+        )
+    if key == "openai":
+        default_model = (
+            preferred_model
+            if preferred_provider == "openai" and preferred_model
+            else (settings.openai_model_selected or "gpt-5-mini")
+        )
+        return OpenAIClient(
+            auth=OpenAIAuthState(
+                api_key=settings.openai_api_key,
+                access_token=settings.openai_oauth_access_token,
+            ),
+            default_model=default_model,
+        )
+    return None
+
+
+def _preview_settings(state: APIState, preview_payload: Any) -> AppSettings:
+    settings = _settings(state)
+    if not isinstance(preview_payload, dict):
+        return settings
+
+    current = asdict(settings)
+    for key, value in preview_payload.items():
+        if key in current:
+            current[key] = value
+    return state.settings_store._coerce_from_mapping(current)
+
+
+def _list_models_payload(
+    state: APIState,
+    provider: str,
+    settings: AppSettings,
+    *,
+    preview: bool = False,
+) -> dict[str, Any]:
+    provider_key = provider.strip().lower()
+
+    if provider_key == "self":
+        models = [
+            ModelOption(
+                id="",
+                label="No model",
+                provider="self",
+                capability_tags=(),
+            )
+        ]
+        return {"models": [_model_payload(m) for m in models]}
+
+    client = _provider_client_for_preview(provider_key, settings) if preview else _provider_client(state, provider_key, settings)
+    if client is None:
+        raise APIError(status_code=404, code="NOT_FOUND", message=f"Unsupported provider: {provider_key}")
+
+    if provider_key == "openai":
+        warnings: list[str] = []
+        try:
+            if preview:
+                models = client.list_models()
+            else:
+                models = client.list_models_with_fallback(cached=settings.openai_models_cache)
+        except Exception as exc:
+            warnings.append(str(exc))
+            models = []
+
+        if not preview:
+            settings.openai_models_cache = OpenAIClient.serialize_model_cache(models)
+            _save_settings(state, settings)
+        return {
+            "models": [_model_payload(m) for m in models],
+            "warnings": warnings,
+        }
+
+    models = client.list_models()
+    return {"models": [_model_payload(m) for m in models]}
+
+
 def _require_auth(request: Request) -> None:
     state = _state(request)
     auth_header = request.headers.get("authorization", "")
@@ -378,15 +467,14 @@ def _quiz_structure_tree(root_dir: Path) -> list[dict[str, Any]]:
                 continue
             if entry.is_dir():
                 children = _walk(entry)
-                if children:
-                    nodes.append(
-                        {
-                            "name": entry.name,
-                            "path": str(entry),
-                            "kind": "folder",
-                            "children": children,
-                        }
-                    )
+                nodes.append(
+                    {
+                        "name": entry.name,
+                        "path": str(entry),
+                        "kind": "folder",
+                        "children": children,
+                    }
+                )
                 continue
             if entry.is_file() and _quiz_file_allowed(entry):
                 nodes.append(
@@ -401,6 +489,50 @@ def _quiz_structure_tree(root_dir: Path) -> list[dict[str, Any]]:
         return nodes
 
     return _walk(root_dir)
+
+
+def _quiz_library_path(value: Any, quizzes_dir: Path, *, allow_root: bool = True) -> Path:
+    raw = str(value or "").strip()
+    candidate = quizzes_dir if not raw else Path(raw).expanduser().resolve()
+    if not _path_within(candidate, quizzes_dir):
+        raise APIError(
+            status_code=403,
+            code="FORBIDDEN",
+            message="Quiz folder operations must stay inside the managed Quizzes directory.",
+        )
+    if not allow_root and candidate == quizzes_dir:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="The managed Quizzes directory itself cannot be modified by this action.",
+        )
+    return candidate
+
+
+def _quiz_library_folder_name(value: Any) -> str:
+    folder_name = str(value or "").strip()
+    if not folder_name:
+        raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'name' is required.")
+    if folder_name in {".", ".."} or Path(folder_name).name != folder_name or "/" in folder_name or "\\" in folder_name:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="Folder names must be a single path segment.",
+        )
+    return folder_name
+
+
+def _quiz_library_item_name(value: Any, *, field_name: str = "name") -> str:
+    item_name = str(value or "").strip()
+    if not item_name:
+        raise APIError(status_code=422, code="VALIDATION_ERROR", message=f"Field '{field_name}' is required.")
+    if item_name in {".", ".."} or Path(item_name).name != item_name or "/" in item_name or "\\" in item_name:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="Names must be a single path segment.",
+        )
+    return item_name
 
 
 def _unique_destination(path: Path) -> Path:
@@ -616,40 +748,15 @@ def create_app(
     @app.get("/v1/models", dependencies=[Depends(_require_auth)])
     def list_models(provider: str = Query(..., pattern="^(self|claude|openai)$")) -> dict[str, Any]:
         settings = _settings(state)
-        provider_key = provider.strip().lower()
+        return _list_models_payload(state, provider, settings)
 
-        if provider_key == "self":
-            models = [
-                ModelOption(
-                    id="",
-                    label="No model",
-                    provider="self",
-                    capability_tags=(),
-                )
-            ]
-            return {"models": [_model_payload(m) for m in models]}
-
-        client = _provider_client(state, provider_key, settings)
-        if client is None:
-            raise APIError(status_code=404, code="NOT_FOUND", message=f"Unsupported provider: {provider_key}")
-
-        if provider_key == "openai":
-            warnings: list[str] = []
-            try:
-                models = client.list_models_with_fallback(cached=settings.openai_models_cache)
-            except Exception as exc:
-                warnings.append(str(exc))
-                models = []
-
-            settings.openai_models_cache = OpenAIClient.serialize_model_cache(models)
-            _save_settings(state, settings)
-            return {
-                "models": [_model_payload(m) for m in models],
-                "warnings": warnings,
-            }
-
-        models = client.list_models()
-        return {"models": [_model_payload(m) for m in models]}
+    @app.post("/v1/models/preview", dependencies=[Depends(_require_auth)])
+    def preview_models(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        provider = str(payload.get("provider", "")).strip().lower()
+        if provider not in {"self", "claude", "openai"}:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'provider' is invalid.")
+        settings = _preview_settings(state, payload.get("settings"))
+        return _list_models_payload(state, provider, settings, preview=True)
 
     @app.get("/v1/settings", dependencies=[Depends(_require_auth)])
     def get_settings() -> dict[str, Any]:
@@ -853,6 +960,168 @@ def create_app(
         return {
             "path": str(quiz_path),
             "title": new_title,
+            "tree": _quiz_structure_tree(quizzes_dir),
+            "settings": asdict(current),
+        }
+
+    @app.post("/v1/quizzes/library/folder", dependencies=[Depends(_require_auth)])
+    def quizzes_library_create_folder(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        settings = _settings(state)
+        quizzes_dir = _ensure_quizzes_library(state, settings)
+        folder_name = _quiz_library_folder_name(payload.get("name"))
+        parent_path = _quiz_library_path(payload.get("parent_path"), quizzes_dir)
+
+        if not parent_path.exists():
+            raise APIError(status_code=404, code="NOT_FOUND", message=f"Parent folder not found: {parent_path}")
+        if parent_path.is_file():
+            parent_path = parent_path.parent
+        if not parent_path.is_dir():
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Parent path must be a folder.")
+
+        target_path = (parent_path / folder_name).resolve()
+        if not _path_within(target_path, quizzes_dir):
+            raise APIError(
+                status_code=403,
+                code="FORBIDDEN",
+                message="Created folders must stay inside the managed Quizzes directory.",
+            )
+        if target_path.exists():
+            raise APIError(status_code=409, code="CONFLICT", message=f"Folder already exists: {target_path}")
+
+        target_path.mkdir(parents=False, exist_ok=False)
+
+        current = _settings(state)
+        return {
+            "path": str(target_path),
+            "kind": "folder",
+            "tree": _quiz_structure_tree(quizzes_dir),
+            "settings": asdict(current),
+        }
+
+    @app.post("/v1/quizzes/library/folder/rename", dependencies=[Depends(_require_auth)])
+    def quizzes_library_rename_folder(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        settings = _settings(state)
+        quizzes_dir = _ensure_quizzes_library(state, settings)
+        source_path = _quiz_library_path(payload.get("path"), quizzes_dir, allow_root=False)
+        next_name = _quiz_library_item_name(payload.get("name"))
+
+        if not source_path.exists() or not source_path.is_dir():
+            raise APIError(status_code=404, code="NOT_FOUND", message=f"Folder not found: {source_path}")
+
+        target_path = (source_path.parent / next_name).resolve()
+        if not _path_within(target_path, quizzes_dir):
+            raise APIError(
+                status_code=403,
+                code="FORBIDDEN",
+                message="Renamed folders must stay inside the managed Quizzes directory.",
+            )
+        if target_path == source_path:
+            current = _settings(state)
+            return {
+                "path": str(source_path),
+                "kind": "folder",
+                "tree": _quiz_structure_tree(quizzes_dir),
+                "settings": asdict(current),
+            }
+        if target_path.exists():
+            raise APIError(status_code=409, code="CONFLICT", message=f"Target already exists: {target_path}")
+
+        source_path.rename(target_path)
+
+        current = _settings(state)
+        return {
+            "source_path": str(source_path),
+            "path": str(target_path),
+            "kind": "folder",
+            "tree": _quiz_structure_tree(quizzes_dir),
+            "settings": asdict(current),
+        }
+
+    @app.post("/v1/quizzes/library/move", dependencies=[Depends(_require_auth)])
+    def quizzes_library_move(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        settings = _settings(state)
+        quizzes_dir = _ensure_quizzes_library(state, settings)
+        source_path = _quiz_library_path(payload.get("path"), quizzes_dir, allow_root=False)
+        destination_parent = _quiz_library_path(payload.get("destination_parent_path"), quizzes_dir)
+
+        if not source_path.exists():
+            raise APIError(status_code=404, code="NOT_FOUND", message=f"Quiz library item not found: {source_path}")
+        if destination_parent.is_file():
+            destination_parent = destination_parent.parent
+        if not destination_parent.exists() or not destination_parent.is_dir():
+            raise APIError(status_code=404, code="NOT_FOUND", message=f"Destination folder not found: {destination_parent}")
+
+        if source_path.is_dir() and _path_within(destination_parent, source_path):
+            raise APIError(
+                status_code=422,
+                code="VALIDATION_ERROR",
+                message="Cannot move a folder into itself or one of its descendants.",
+            )
+
+        target_path = (destination_parent / source_path.name).resolve()
+        if target_path == source_path:
+            current = _settings(state)
+            return {
+                "source_path": str(source_path),
+                "path": str(target_path),
+                "kind": "folder" if source_path.is_dir() else "quiz",
+                "tree": _quiz_structure_tree(quizzes_dir),
+                "settings": asdict(current),
+            }
+        if target_path.exists():
+            raise APIError(status_code=409, code="CONFLICT", message=f"Target already exists: {target_path}")
+        if not _path_within(target_path, quizzes_dir):
+            raise APIError(
+                status_code=403,
+                code="FORBIDDEN",
+                message="Moved items must stay inside the managed Quizzes directory.",
+            )
+        if source_path.is_file() and not _quiz_file_allowed(source_path):
+            raise APIError(
+                status_code=422,
+                code="VALIDATION_ERROR",
+                message=f"Unsupported quiz file: {source_path}",
+            )
+
+        shutil.move(str(source_path), str(target_path))
+
+        current = _settings(state)
+        return {
+            "source_path": str(source_path),
+            "path": str(target_path),
+            "kind": "folder" if target_path.is_dir() else "quiz",
+            "tree": _quiz_structure_tree(quizzes_dir),
+            "settings": asdict(current),
+        }
+
+    @app.post("/v1/quizzes/library/delete", dependencies=[Depends(_require_auth)])
+    def quizzes_library_delete(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        settings = _settings(state)
+        quizzes_dir = _ensure_quizzes_library(state, settings)
+        target_path = _quiz_library_path(payload.get("path"), quizzes_dir, allow_root=False)
+
+        if not target_path.exists():
+            raise APIError(status_code=404, code="NOT_FOUND", message=f"Quiz library item not found: {target_path}")
+
+        if target_path.is_dir():
+            shutil.rmtree(target_path)
+            deleted_kind = "folder"
+        elif target_path.is_file():
+            if not _quiz_file_allowed(target_path):
+                raise APIError(
+                    status_code=422,
+                    code="VALIDATION_ERROR",
+                    message=f"Unsupported quiz file: {target_path}",
+                )
+            target_path.unlink()
+            deleted_kind = "quiz"
+        else:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Unsupported quiz library item.")
+
+        current = _settings(state)
+        return {
+            "deleted_path": str(target_path),
+            "deleted_kind": deleted_kind,
             "tree": _quiz_structure_tree(quizzes_dir),
             "settings": asdict(current),
         }

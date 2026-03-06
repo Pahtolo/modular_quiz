@@ -316,9 +316,15 @@ class ClaudeClient:
 
     @classmethod
     def _normalize_generated_payload(cls, payload: dict) -> dict:
-        raw_questions = payload.get("questions")
+        output = dict(payload)
+        if not str(output.get("title", "")).strip():
+            output["title"] = "Generated Quiz"
+        if not str(output.get("instructions", "")).strip():
+            output["instructions"] = "Answer all questions."
+
+        raw_questions = output.get("questions")
         if not isinstance(raw_questions, list):
-            return payload
+            return output
 
         normalized_questions: list[object] = []
         for idx, question in enumerate(raw_questions, start=1):
@@ -329,7 +335,6 @@ class ClaudeClient:
             updated["id"] = cls._normalized_question_id(updated.get("id"), idx)
             normalized_questions.append(updated)
 
-        output = dict(payload)
         output["questions"] = normalized_questions
         return output
 

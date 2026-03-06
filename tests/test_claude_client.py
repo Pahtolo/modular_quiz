@@ -77,6 +77,37 @@ class ClaudeClientTests(unittest.TestCase):
         self.assertEqual(quiz.title, "Generated Quiz")
         self.assertEqual(mocked_call.call_count, 2)
 
+    def test_generate_quiz_backfills_blank_title_and_instructions(self) -> None:
+        client = ClaudeClient(api_key="test-key")
+        generated_payload = {
+            "title": "   ",
+            "instructions": "",
+            "questions": [
+                {
+                    "id": "q1",
+                    "type": "mcq",
+                    "prompt": "Pick A",
+                    "options": ["A", "B", "C", "D"],
+                    "answer": "A",
+                    "points": 1,
+                },
+            ],
+        }
+
+        with patch.object(client, "_message_text", return_value=json.dumps(generated_payload)):
+            quiz = client.generate_quiz(
+                materials_text="source",
+                title_hint="",
+                instructions_hint="",
+                total_questions=1,
+                mcq_count=1,
+                short_count=0,
+                mcq_options=4,
+            )
+
+        self.assertEqual(quiz.title, "Generated Quiz")
+        self.assertEqual(quiz.instructions, "Answer all questions.")
+
 
 if __name__ == "__main__":
     unittest.main()

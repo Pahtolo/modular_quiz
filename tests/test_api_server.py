@@ -152,6 +152,8 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(initial.status_code, 200)
         settings = initial.json()["settings"]
         self.assertIn("quiz_roots", settings)
+        self.assertEqual(settings["quiz_clock_mode"], "stopwatch")
+        self.assertEqual(settings["quiz_timer_duration_seconds"], 900)
 
         updated = self.client.put(
             "/v1/settings",
@@ -160,7 +162,10 @@ class APIServerTests(unittest.TestCase):
                 "quiz_dir": str(self.root / "Algorithm Analysis"),
                 "quiz_roots": [str(self.root)],
                 "feedback_mode": "end_only",
+                "quiz_clock_mode": "timer",
+                "quiz_timer_duration_seconds": 1200,
                 "question_timer_seconds": 45,
+                "lock_questions_by_progression": False,
                 "generation_defaults": {
                     "total": 10,
                     "mcq_count": 7,
@@ -175,7 +180,10 @@ class APIServerTests(unittest.TestCase):
         self.assertFalse(payload["show_feedback_on_answer"])
         self.assertTrue(payload["show_feedback_on_completion"])
         self.assertFalse(payload["auto_advance_enabled"])
+        self.assertEqual(payload["quiz_clock_mode"], "timer")
+        self.assertEqual(payload["quiz_timer_duration_seconds"], 1200)
         self.assertEqual(payload["question_timer_seconds"], 45)
+        self.assertFalse(payload["lock_questions_by_progression"])
         self.assertEqual(payload["quiz_roots"], [str((self.root / "Quizzes").resolve())])
 
         flags_update = self.client.put(
@@ -209,6 +217,32 @@ class APIServerTests(unittest.TestCase):
         self.assertNotIn("claude-3-7-sonnet-latest", payload["claude_models"])
         self.assertNotEqual(payload["claude_model_selected"], "claude-3-7-sonnet-latest")
         self.assertNotEqual(payload["preferred_model_key"], "claude:claude-3-7-sonnet-latest")
+
+    def test_models_preview_lists_models_from_draft_settings(self) -> None:
+        preview_provider = MagicMock()
+        preview_provider.list_models.return_value = [
+            ModelOption(
+                id="claude-preview",
+                label="Claude Preview",
+                provider="claude",
+                capability_tags=("generation",),
+            )
+        ]
+        with patch("quiz_app.api.server._provider_client_for_preview", return_value=preview_provider):
+            response = self.client.post(
+                "/v1/models/preview",
+                headers=self.headers,
+                json={
+                    "provider": "claude",
+                    "settings": {
+                        "claude_api_key": "draft-key",
+                    },
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["models"][0]["id"], "claude-preview")
+        preview_provider.list_models.assert_called_once()
 
     def test_quiz_tree_and_load(self) -> None:
         quiz_dir = self.root / "Algorithm Analysis"
@@ -583,6 +617,197 @@ class APIServerTests(unittest.TestCase):
         root = tree["roots"][0]
         quiz_titles = [node["name"] for node in root["children"] if node.get("kind") == "quiz"]
         self.assertIn("New Title", quiz_titles)
+
+    def test_quizzes_library_can_create_and_delete_folders_and_files(self) -> None:
+        library = self.client.get("/v1/quizzes/library", headers=self.headers)
+        self.assertEqual(library.status_code, 200, library.text)
+        quizzes_dir = Path(library.json()["quizzes_dir"])
+
+        created = self._post(
+            "/v1/quizzes/library/folder",
+            {
+                "name": "Week 4",
+            },
+        )
+        week_folder = quizzes_dir / "Week 4"
+        self.assertEqual(created["path"], str(week_folder.resolve()))
+        self.assertTrue(week_folder.is_dir())
+        self.assertTrue(any(node.get("path") == str(week_folder.resolve()) for node in created["tree"]))
+
+        nested = self._post(
+            "/v1/quizzes/library/folder",
+            {
+                "name": "Practice",
+                "parent_path": str(week_folder),
+            },
+        )
+        practice_folder = week_folder / "Practice"
+        self.assertEqual(nested["path"], str(practice_folder.resolve()))
+        self.assertTrue(practice_folder.is_dir())
+
+        quiz_path = practice_folder / "sample.json"
+        quiz_path.write_text(
+            json.dumps(
+                {
+                    "title": "Sample Quiz",
+                    "instructions": "",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "A?",
+                            "options": ["A", "B"],
+                            "answer": "A",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertTrue(quiz_path.exists())
+
+        deleted_quiz = self._post(
+            "/v1/quizzes/library/delete",
+            {
+                "path": str(quiz_path),
+            },
+        )
+        self.assertEqual(deleted_quiz["deleted_kind"], "quiz")
+        self.assertFalse(quiz_path.exists())
+
+        (practice_folder / "sample.json").write_text(
+            json.dumps(
+                {
+                    "title": "Sample Quiz",
+                    "instructions": "",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "A?",
+                            "options": ["A", "B"],
+                            "answer": "A",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        deleted_folder = self._post(
+            "/v1/quizzes/library/delete",
+            {
+                "path": str(week_folder),
+            },
+        )
+        self.assertEqual(deleted_folder["deleted_kind"], "folder")
+        self.assertFalse(week_folder.exists())
+        self.assertEqual(deleted_folder["tree"], [])
+
+    def test_quizzes_library_can_rename_folder_and_move_quiz(self) -> None:
+        library = self.client.get("/v1/quizzes/library", headers=self.headers)
+        self.assertEqual(library.status_code, 200, library.text)
+        quizzes_dir = Path(library.json()["quizzes_dir"])
+
+        source_folder = quizzes_dir / "Week 4"
+        source_folder.mkdir(parents=True, exist_ok=True)
+        quiz_path = source_folder / "sample.json"
+        quiz_path.write_text(
+            json.dumps(
+                {
+                    "title": "Sample Quiz",
+                    "instructions": "Answer all questions.",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "A?",
+                            "options": ["A", "B"],
+                            "answer": "A",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        renamed = self._post(
+            "/v1/quizzes/library/folder/rename",
+            {
+                "path": str(source_folder),
+                "name": "Week Four",
+            },
+        )
+        renamed_folder = quizzes_dir / "Week Four"
+        self.assertEqual(renamed["path"], str(renamed_folder.resolve()))
+        self.assertTrue(renamed_folder.is_dir())
+        self.assertFalse(source_folder.exists())
+
+        destination_folder = quizzes_dir / "Archive"
+        destination_folder.mkdir(parents=True, exist_ok=True)
+        moved = self._post(
+            "/v1/quizzes/library/move",
+            {
+                "path": str((renamed_folder / "sample.json").resolve()),
+                "destination_parent_path": str(destination_folder.resolve()),
+            },
+        )
+        moved_path = destination_folder / "sample.json"
+        self.assertEqual(moved["path"], str(moved_path.resolve()))
+        self.assertTrue(moved_path.exists())
+
+    def test_quizzes_library_move_rejects_invalid_folder_move(self) -> None:
+        library = self.client.get("/v1/quizzes/library", headers=self.headers)
+        self.assertEqual(library.status_code, 200, library.text)
+        quizzes_dir = Path(library.json()["quizzes_dir"])
+        source_folder = quizzes_dir / "Parent"
+        child_folder = source_folder / "Child"
+        child_folder.mkdir(parents=True, exist_ok=True)
+
+        response = self.client.post(
+            "/v1/quizzes/library/move",
+            headers=self.headers,
+            json={
+                "path": str(source_folder.resolve()),
+                "destination_parent_path": str(child_folder.resolve()),
+            },
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+
+    def test_load_quiz_rejects_duplicate_question_ids(self) -> None:
+        quiz_path = self.root / "duplicates.json"
+        quiz_path.write_text(
+            json.dumps(
+                {
+                    "title": "Duplicate IDs",
+                    "instructions": "Answer all questions.",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "A?",
+                            "options": ["A", "B"],
+                            "answer": "A",
+                        },
+                        {
+                            "type": "short",
+                            "id": "q1",
+                            "prompt": "Explain A",
+                            "expected": "A",
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.post(
+            "/v1/quizzes/load",
+            headers=self.headers,
+            json={"path": str(quiz_path.resolve())},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertIn("Question IDs must be unique", response.json()["error"]["message"])
 
     def test_grading_endpoints(self) -> None:
         mcq = self._post(

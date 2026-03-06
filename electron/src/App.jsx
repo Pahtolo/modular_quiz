@@ -2,12 +2,22 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import renderMathInElement from 'katex/contrib/auto-render';
 import remarkGfm from 'remark-gfm';
-import { apiRequest, backendInfo, openExternal, openPath, pickFolder, pickSourceInputs } from './api';
+import {
+  apiRequest,
+  backendInfo,
+  deleteManagedQuizItem,
+  openExternal,
+  openPath,
+  pickFolder,
+  pickSourceInputs,
+} from './api';
 
 const TABS = ['quiz', 'generate', 'settings'];
 const THEME_STORAGE_KEY = 'modular-quiz-theme';
 const QUIZ_EXIT_CONFIRM_MESSAGE = 'Are you sure you want to exit the quiz? Your progress will not be saved.';
 const MAX_INJECTED_CONTEXT_CHARS = 12000;
+const DEFAULT_QUIZ_TIMER_DURATION_SECONDS = 15 * 60;
+const QUIZ_MANAGER_DRAG_MIME = 'text/plain';
 const KATEX_DELIMITERS = [
   { left: '$$', right: '$$', display: true },
   { left: '$', right: '$', display: false },
@@ -116,6 +126,20 @@ function parseNonNegativeInt(value, fallback = 0) {
   return parsed;
 }
 
+function normalizeQuizClockMode(value) {
+  return String(value || '').trim().toLowerCase() === 'timer' ? 'timer' : 'stopwatch';
+}
+
+function normalizeQuizTimerDurationSeconds(value, fallback = DEFAULT_QUIZ_TIMER_DURATION_SECONDS) {
+  const fallbackSeconds = Math.max(1, Number(fallback) || DEFAULT_QUIZ_TIMER_DURATION_SECONDS);
+  const parsed = parseNonNegativeInt(value, fallbackSeconds);
+  return Math.max(1, parsed || fallbackSeconds);
+}
+
+function formatQuizTimerDurationMinutes(value) {
+  return String(Math.max(1, Math.round(normalizeQuizTimerDurationSeconds(value) / 60)));
+}
+
 function toTitleWord(token) {
   const raw = String(token || '').trim();
   if (!raw) {
@@ -173,6 +197,64 @@ function formatModelName(provider, modelId) {
   return tokens.map((token) => toTitleWord(token)).join(' ');
 }
 
+function hasClaudeCredentials(source) {
+  return Boolean(String(source?.claude_api_key || '').trim());
+}
+
+function hasOpenAICredentials(source) {
+  return Boolean(
+    String(source?.openai_api_key || '').trim()
+    || String(source?.openai_oauth_access_token || '').trim()
+    || String(source?.openai_oauth_refresh_token || '').trim(),
+  );
+}
+
+function cachedModelsForProvider(provider, source) {
+  const providerKey = String(provider || '').trim().toLowerCase();
+  if (providerKey === 'claude') {
+    return (Array.isArray(source?.claude_models) ? source.claude_models : [])
+      .map((modelId) => String(modelId || '').trim())
+      .filter(Boolean)
+      .map((modelId) => ({
+        id: modelId,
+        label: formatModelName('claude', modelId),
+        provider: 'claude',
+        capability_tags: ['generation', 'grading', 'explain'],
+      }));
+  }
+  if (providerKey === 'openai') {
+    return (Array.isArray(source?.openai_models_cache) ? source.openai_models_cache : [])
+      .map((item) => ({
+        id: String(item?.id || '').trim(),
+        label: String(item?.label || '').trim(),
+      }))
+      .filter((item) => item.id)
+      .map((item) => ({
+        id: item.id,
+        label: item.label || formatModelName('openai', item.id),
+        provider: 'openai',
+        capability_tags: ['generation', 'grading', 'explain'],
+      }));
+  }
+  return [];
+}
+
+function sameProviderCredentials(provider, left, right) {
+  const providerKey = String(provider || '').trim().toLowerCase();
+  if (providerKey === 'claude') {
+    return String(left?.claude_api_key || '') === String(right?.claude_api_key || '');
+  }
+  if (providerKey === 'openai') {
+    return (
+      String(left?.openai_api_key || '') === String(right?.openai_api_key || '')
+      && String(left?.openai_auth_mode || '') === String(right?.openai_auth_mode || '')
+      && String(left?.openai_oauth_access_token || '') === String(right?.openai_oauth_access_token || '')
+      && String(left?.openai_oauth_refresh_token || '') === String(right?.openai_oauth_refresh_token || '')
+    );
+  }
+  return false;
+}
+
 function flattenQuizNodes(nodes, out = []) {
   for (const node of nodes || []) {
     if (node.kind === 'quiz') {
@@ -212,8 +294,61 @@ function normalizeQuestionId(value, fallbackIndex = 1) {
   return `q${Math.max(1, Number(fallbackIndex) || 1)}`;
 }
 
+function questionExpectedText(question) {
+  if (!question) {
+    return '';
+  }
+  return question.type === 'short'
+    ? String(question.expected || '')
+    : String(question.answer || '');
+}
+
+function timedOutQuestionResult(question) {
+  return {
+    correct: false,
+    points_awarded: 0,
+    max_points: Number(question?.points || 0),
+    feedback: 'Time expired.',
+  };
+}
+
+function buildLockedQuestionState(question, result, userAnswer) {
+  const isShort = String(question?.type || '') === 'short';
+  return {
+    result,
+    locked: true,
+    mcq_answer: isShort ? '' : userAnswer,
+    short_answer: isShort ? userAnswer : '',
+  };
+}
+
+function buildAttemptQuestionRecord(question, questionIndex, result, userAnswer, expectedText = questionExpectedText(question)) {
+  return {
+    question_id: String(question?.id || `q${Number(questionIndex) + 1}`),
+    question_type: String(question?.type || ''),
+    user_answer: userAnswer,
+    correct_answer_or_expected: expectedText,
+    points_awarded: Number(result?.points_awarded || 0),
+    max_points: Number(result?.max_points || question?.points || 0),
+    feedback: String(result?.feedback || ''),
+    ungraded: Boolean(result?.ungraded),
+  };
+}
+
+function upsertAttemptQuestionRecord(records, record) {
+  const next = [...(Array.isArray(records) ? records : [])];
+  const index = next.findIndex((item) => item?.question_id === record.question_id);
+  if (index >= 0) {
+    next[index] = record;
+    return next;
+  }
+  next.push(record);
+  return next;
+}
+
 function feedbackThreadKey(question, fallbackIndex = 0) {
-  return normalizeQuestionId(question?.id, Number(fallbackIndex) + 1);
+  const indexKey = Math.max(1, Number(fallbackIndex) + 1);
+  return `${indexKey}:${normalizeQuestionId(question?.id, indexKey)}`;
 }
 
 function isUngradedAttemptQuestion(question) {
@@ -290,6 +425,22 @@ function normalizePathText(value) {
     .replace(/\/+$/, '');
 }
 
+function remapPathPrefix(pathValue, sourcePrefix, targetPrefix) {
+  const normalizedPath = normalizePathText(pathValue);
+  const source = normalizePathText(sourcePrefix);
+  const target = normalizePathText(targetPrefix);
+  if (!normalizedPath || !source || !target) {
+    return normalizedPath;
+  }
+  if (normalizedPath === source) {
+    return target;
+  }
+  if (normalizedPath.startsWith(`${source}/`)) {
+    return `${target}${normalizedPath.slice(source.length)}`;
+  }
+  return normalizedPath;
+}
+
 function normalizeRelativePath(value) {
   const normalized = normalizePathText(value);
   if (!normalized || normalized === '.') {
@@ -324,6 +475,16 @@ function collectFolderNodePaths(nodes, out = []) {
   return out;
 }
 
+function collectQuizManagerPaths(nodes, out = []) {
+  for (const node of nodes || []) {
+    if (node?.path) {
+      out.push(String(node.path));
+    }
+    collectQuizManagerPaths(node?.children || [], out);
+  }
+  return out;
+}
+
 function omitManagedQuizzesRoot(nodes) {
   const output = [];
   for (const node of nodes || []) {
@@ -335,6 +496,36 @@ function omitManagedQuizzesRoot(nodes) {
     output.push(node);
   }
   return output;
+}
+
+function findQuizzesManagerNodeByPath(nodes, targetPath) {
+  const normalizedTarget = normalizePathText(targetPath);
+  if (!normalizedTarget) {
+    return null;
+  }
+  for (const node of nodes || []) {
+    const currentPath = normalizePathText(node?.path);
+    if (currentPath && currentPath === normalizedTarget) {
+      return node;
+    }
+    const childMatch = findQuizzesManagerNodeByPath(node?.children || [], normalizedTarget);
+    if (childMatch) {
+      return childMatch;
+    }
+  }
+  return null;
+}
+
+function parentDirectoryPath(pathValue) {
+  const normalized = normalizePathText(pathValue);
+  if (!normalized) {
+    return '';
+  }
+  const lastSlash = normalized.lastIndexOf('/');
+  if (lastSlash <= 0) {
+    return '';
+  }
+  return normalized.slice(0, lastSlash);
 }
 
 function findQuizNodeByPath(nodes, targetPath) {
@@ -592,25 +783,192 @@ function QuizTree({ nodes, selectedPath, onSelect, onActivate, onOpenContextMenu
   return <ul className="tree-list">{(nodes || []).map((node) => renderNode(node))}</ul>;
 }
 
-function QuizzesStructureTree({ nodes }) {
-  const renderNode = (node) => (
-    <li key={`${node.kind}-${node.path}`}>
-      <div className={`quizzes-node ${node.kind}`}>
-        {node.kind === 'folder' ? '[Folder]' : '[Quiz]'} {node.name}
-      </div>
-      {node.children && node.children.length > 0 ? (
-        <ul className="quizzes-structure-list">
-          {node.children.map((child) => renderNode(child))}
-        </ul>
-      ) : null}
-    </li>
-  );
+function QuizzesStructureTree({
+  nodes,
+  onSelect,
+  selectedPath,
+  onOpenContextMenu,
+  onMoveItem,
+  rootPath,
+}) {
+  const [collapsedPaths, setCollapsedPaths] = useState({});
+  const [draggedPath, setDraggedPath] = useState('');
+
+  useEffect(() => {
+    if (!selectedPath) {
+      return;
+    }
+    const ancestors = ancestorPathsForTarget(nodes, selectedPath);
+    if (!ancestors || !ancestors.length) {
+      return;
+    }
+    setCollapsedPaths((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const path of ancestors) {
+        if (next[path]) {
+          next[path] = false;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [nodes, selectedPath]);
+
+  const toggleCollapsed = (path) => {
+    setCollapsedPaths((prev) => ({
+      ...prev,
+      [path]: !prev[path],
+    }));
+  };
+
+  const resolveDraggedPath = (event) => {
+    const direct = normalizePathText(draggedPath);
+    if (direct) {
+      return direct;
+    }
+    const fromTransfer = normalizePathText(event?.dataTransfer?.getData(QUIZ_MANAGER_DRAG_MIME));
+    return fromTransfer;
+  };
+
+  const canDropInto = (sourcePath, destinationFolderPath) => {
+    const source = normalizePathText(sourcePath);
+    const destination = normalizePathText(destinationFolderPath);
+    if (!source || !destination || source === destination) {
+      return false;
+    }
+    if (destination.startsWith(`${source}/`)) {
+      return false;
+    }
+    const sourceParent = normalizePathText(parentDirectoryPath(source));
+    if (sourceParent && sourceParent === destination) {
+      return false;
+    }
+    return true;
+  };
+
+  const moveDraggedItem = (event, destinationFolderPath) => {
+    const sourcePath = resolveDraggedPath(event);
+    if (!canDropInto(sourcePath, destinationFolderPath)) {
+      return;
+    }
+    onMoveItem?.({
+      sourcePath,
+      destinationFolderPath: normalizePathText(destinationFolderPath),
+    });
+  };
+
+  const renderNode = (node) => {
+    const isFolder = node.kind === 'folder';
+    const hasChildren = Boolean(node.children && node.children.length > 0);
+    const isCollapsible = isFolder && hasChildren;
+    const isCollapsed = Boolean(collapsedPaths[node.path]);
+    return (
+      <li key={`${node.kind}-${node.path}`}>
+        <div className="tree-row">
+          {isCollapsible ? (
+            <button
+              type="button"
+              className="tree-toggle"
+              onClick={() => toggleCollapsed(node.path)}
+              aria-label={isCollapsed ? 'Expand folder' : 'Collapse folder'}
+              title={isCollapsed ? 'Expand folder' : 'Collapse folder'}
+            >
+              {isCollapsed ? '+' : '-'}
+            </button>
+          ) : (
+            <span className="tree-toggle-spacer" />
+          )}
+          <button
+            type="button"
+            className={`quizzes-node ${node.kind}${normalizePathText(selectedPath) === normalizePathText(node.path) ? ' selected' : ''}`}
+            draggable
+            onClick={() => {
+              onSelect?.(node.path);
+              if (isCollapsible) {
+                toggleCollapsed(node.path);
+              }
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onSelect?.(node.path);
+              onOpenContextMenu?.({
+                path: node.path,
+                name: node.name,
+                kind: node.kind,
+                x: event.clientX,
+                y: event.clientY,
+              });
+            }}
+            onDragStart={(event) => {
+              setDraggedPath(normalizePathText(node.path));
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData(QUIZ_MANAGER_DRAG_MIME, String(node.path || ''));
+            }}
+            onDragEnd={() => {
+              setDraggedPath('');
+            }}
+            onDragOver={(event) => {
+              if (!isFolder) {
+                return;
+              }
+              const sourcePath = resolveDraggedPath(event);
+              if (!canDropInto(sourcePath, node.path)) {
+                return;
+              }
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={(event) => {
+              if (!isFolder) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              moveDraggedItem(event, node.path);
+              setDraggedPath('');
+            }}
+          >
+            <span className="quizzes-node-kind">{isFolder ? 'Folder' : 'Quiz'}</span>
+            <span className="quizzes-node-name">{node.name}</span>
+          </button>
+        </div>
+        {hasChildren && !isCollapsed ? (
+          <ul className="quizzes-structure-list">
+            {node.children.map((child) => renderNode(child))}
+          </ul>
+        ) : null}
+      </li>
+    );
+  };
 
   if (!(nodes || []).length) {
     return <p className="roots-empty">No quizzes imported yet.</p>;
   }
 
-  return <ul className="quizzes-structure-list">{(nodes || []).map((node) => renderNode(node))}</ul>;
+  return (
+    <ul
+      className="quizzes-structure-list"
+      onDragOver={(event) => {
+        const destinationFolderPath = normalizePathText(rootPath);
+        const sourcePath = resolveDraggedPath(event);
+        if (!canDropInto(sourcePath, destinationFolderPath)) {
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+      }}
+      onDrop={(event) => {
+        const destinationFolderPath = normalizePathText(rootPath);
+        event.preventDefault();
+        moveDraggedItem(event, destinationFolderPath);
+        setDraggedPath('');
+      }}
+    >
+      {(nodes || []).map((node) => renderNode(node))}
+    </ul>
+  );
 }
 
 function App() {
@@ -635,10 +993,16 @@ function App() {
   const [settingsForm, setSettingsForm] = useState(null);
   const [settingsSearch, setSettingsSearch] = useState('');
   const [autoAdvanceDelayDraft, setAutoAdvanceDelayDraft] = useState('600');
+  const [quizTimerDurationMinutesDraft, setQuizTimerDurationMinutesDraft] = useState(
+    formatQuizTimerDurationMinutes(DEFAULT_QUIZ_TIMER_DURATION_SECONDS),
+  );
   const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSaveStatus, setSettingsSaveStatus] = useState({ tone: '', message: '' });
   const [quizzesDir, setQuizzesDir] = useState('');
   const [quizzesTree, setQuizzesTree] = useState([]);
   const [quizzesWarnings, setQuizzesWarnings] = useState([]);
+  const [selectedQuizzesManagerPath, setSelectedQuizzesManagerPath] = useState('');
+  const [quizzesManagerBusy, setQuizzesManagerBusy] = useState(false);
   const [showQuizzesBox, setShowQuizzesBox] = useState(true);
   const [quizzesDragOver, setQuizzesDragOver] = useState(false);
 
@@ -658,6 +1022,8 @@ function App() {
     path: '',
     currentTitle: '',
     nextTitle: '',
+    kind: 'quiz',
+    mode: 'quiz_title',
   });
   const [quizLoadError, setQuizLoadError] = useState('');
   const [quiz, setQuiz] = useState(null);
@@ -682,12 +1048,16 @@ function App() {
   const [questionTimeLeftMs, setQuestionTimeLeftMs] = useState(0);
   const autoAdvanceTimeoutRef = useRef(null);
   const questionTimerIntervalRef = useRef(null);
+  const questionTimerKeyRef = useRef('');
+  const questionTimerRemainingMsRef = useRef(0);
   const questionStatesRef = useRef({});
   const mcqAnswerRef = useRef('');
   const shortAnswerRef = useRef('');
   const feedbackChatEndRef = useRef(null);
   const modelLoadRequestIdRef = useRef(0);
   const quizSelectorPanelTabRef = useRef('quizzes');
+  const settingsAutoSaveTimeoutRef = useRef(null);
+  const quizTimerExpiryHandledRef = useRef(false);
 
   const [sourceInputs, setSourceInputs] = useState([]);
   const [collectedSources, setCollectedSources] = useState([]);
@@ -695,6 +1065,7 @@ function App() {
   const [generateErrors, setGenerateErrors] = useState([]);
   const [generateDragOver, setGenerateDragOver] = useState(false);
   const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+  const [creatingGenerationFolder, setCreatingGenerationFolder] = useState(false);
   const [generateOutputPath, setGenerateOutputPath] = useState('');
   const [generationOutputSubdir, setGenerationOutputSubdir] = useState('');
   const [generationForm, setGenerationForm] = useState({
@@ -720,30 +1091,46 @@ function App() {
     path: '',
     name: '',
   });
-  const [quizClockMode, setQuizClockMode] = useState('stopwatch');
-  const [quizTimerDurationSeconds, setQuizTimerDurationSeconds] = useState(15 * 60);
-  const [quizClockTickMs, setQuizClockTickMs] = useState(Date.now());
-  const [quizClockMenu, setQuizClockMenu] = useState({
+  const [quizzesManagerContextMenu, setQuizzesManagerContextMenu] = useState({
     open: false,
     x: 0,
     y: 0,
-    draftMinutes: '15',
+    path: '',
+    name: '',
+    kind: '',
   });
+  const [quizClockMode, setQuizClockMode] = useState('stopwatch');
+  const [quizTimerDurationSeconds, setQuizTimerDurationSeconds] = useState(DEFAULT_QUIZ_TIMER_DURATION_SECONDS);
+  const [quizClockTickMs, setQuizClockTickMs] = useState(Date.now());
+  const [quizClockPaused, setQuizClockPaused] = useState(false);
+  const [quizClockPausedAtMs, setQuizClockPausedAtMs] = useState(0);
+  const [quizClockAccumulatedPausedMs, setQuizClockAccumulatedPausedMs] = useState(0);
   const normalizedActiveTab = normalizeTabKey(activeTab);
+  const effectiveModelSettings = settingsForm || settings || null;
+  const cachedClaudeOptions = useMemo(
+    () => cachedModelsForProvider('claude', effectiveModelSettings),
+    [effectiveModelSettings],
+  );
+  const cachedOpenAIOptions = useMemo(
+    () => cachedModelsForProvider('openai', effectiveModelSettings),
+    [effectiveModelSettings],
+  );
 
   const combinedModelOptions = useMemo(() => {
     const options = [{ key: 'self:', label: 'No model', provider: 'self' }];
-    for (const model of providerModels.claude || []) {
+    const claudeModels = (providerModels.claude || []).length ? providerModels.claude : cachedClaudeOptions;
+    const openaiModels = (providerModels.openai || []).length ? providerModels.openai : cachedOpenAIOptions;
+    for (const model of claudeModels) {
       options.push({
         key: modelKey('claude', model.id),
-        label: formatModelName('claude', model.id),
+        label: model.label || formatModelName('claude', model.id),
         provider: 'claude',
       });
     }
-    for (const model of providerModels.openai || []) {
+    for (const model of openaiModels) {
       options.push({
         key: modelKey('openai', model.id),
-        label: formatModelName('openai', model.id),
+        label: model.label || formatModelName('openai', model.id),
         provider: 'openai',
       });
     }
@@ -759,7 +1146,36 @@ function App() {
       }
     }
     return options;
-  }, [providerModels, settingsForm?.preferred_model_key, settings?.preferred_model_key]);
+  }, [
+    cachedClaudeOptions,
+    cachedOpenAIOptions,
+    providerModels,
+    settingsForm?.preferred_model_key,
+    settings?.preferred_model_key,
+  ]);
+
+  const claudeModelProviderAvailable = hasClaudeCredentials(effectiveModelSettings);
+  const openaiModelProviderAvailable = hasOpenAICredentials(effectiveModelSettings);
+  const hasAvailableModelProvider = claudeModelProviderAvailable || openaiModelProviderAvailable;
+
+  const preferredAvailableModelOptions = useMemo(
+    () => combinedModelOptions.filter((option) => (
+      option.provider === 'self'
+      || (option.provider === 'claude' && claudeModelProviderAvailable)
+      || (option.provider === 'openai' && openaiModelProviderAvailable)
+    )),
+    [claudeModelProviderAvailable, combinedModelOptions, openaiModelProviderAvailable],
+  );
+  const requestedPreferredModelKey = settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:';
+  const effectivePreferredModelKey = useMemo(() => {
+    if (!hasAvailableModelProvider) {
+      return 'self:';
+    }
+    if (preferredAvailableModelOptions.some((option) => option.key === requestedPreferredModelKey)) {
+      return requestedPreferredModelKey;
+    }
+    return preferredAvailableModelOptions[0]?.key || 'self:';
+  }, [hasAvailableModelProvider, preferredAvailableModelOptions, requestedPreferredModelKey]);
 
   const currentQuestion = useMemo(() => {
     if (!quiz || !quiz.questions || quizIndex >= quiz.questions.length) {
@@ -804,6 +1220,25 @@ function App() {
     () => findQuizNodeByPath(quizTreeRoots, selectedQuizPath),
     [quizTreeRoots, selectedQuizPath],
   );
+  const selectedQuizzesManagerNode = useMemo(
+    () => findQuizzesManagerNodeByPath(quizzesTree, selectedQuizzesManagerPath),
+    [quizzesTree, selectedQuizzesManagerPath],
+  );
+  const selectedQuizzesManagerParentPath = useMemo(() => {
+    if (!selectedQuizzesManagerNode) {
+      return normalizePathText(quizzesDir);
+    }
+    if (selectedQuizzesManagerNode.kind === 'folder') {
+      return normalizePathText(selectedQuizzesManagerNode.path);
+    }
+    return parentDirectoryPath(selectedQuizzesManagerNode.path) || normalizePathText(quizzesDir);
+  }, [quizzesDir, selectedQuizzesManagerNode]);
+  const selectedQuizzesManagerParentLabel = useMemo(() => {
+    const rootPath = normalizePathText(quizzesDir);
+    const parentPath = normalizePathText(selectedQuizzesManagerParentPath);
+    const relative = normalizeRelativePath(relativePathFromRoot(parentPath, rootPath));
+    return relative ? `Quizzes/${relative}` : 'Quizzes';
+  }, [quizzesDir, selectedQuizzesManagerParentPath]);
 
   const visibleQuizTreeNodes = useMemo(() => {
     const baseNodes = omitManagedQuizzesRoot(quizTreeRoots);
@@ -835,20 +1270,33 @@ function App() {
     }
     return Math.min(lastAnsweredIndex + 1, quiz.questions.length - 1);
   }, [quiz, lastAnsweredIndex]);
+  const lockQuestionsByProgression = settingsForm?.lock_questions_by_progression ?? settings?.lock_questions_by_progression ?? true;
+  const maxNavigableQuestionIndex = useMemo(() => {
+    if (!quiz || !quiz.questions?.length) {
+      return 0;
+    }
+    if (!lockQuestionsByProgression) {
+      return quiz.questions.length - 1;
+    }
+    return furthestReachableIndex;
+  }, [furthestReachableIndex, lockQuestionsByProgression, quiz]);
 
   const canGoPrevQuestion = useMemo(() => {
     if (!quiz || !quiz.questions?.length || quizIndex <= 0) {
       return false;
     }
+    if (!lockQuestionsByProgression) {
+      return true;
+    }
     return Boolean(questionStates[quizIndex - 1]);
-  }, [quiz, quizIndex, questionStates]);
+  }, [lockQuestionsByProgression, quiz, quizIndex, questionStates]);
 
   const canGoForwardQuestion = useMemo(() => {
     if (!quiz || !quiz.questions?.length) {
       return false;
     }
-    return quizIndex < furthestReachableIndex;
-  }, [quiz, quizIndex, furthestReachableIndex]);
+    return quizIndex < maxNavigableQuestionIndex;
+  }, [maxNavigableQuestionIndex, quiz, quizIndex]);
 
   const feedbackMode = settingsForm?.feedback_mode || settings?.feedback_mode || 'show_then_next';
   const showFeedbackOnAnswer = settingsForm?.show_feedback_on_answer ?? settings?.show_feedback_on_answer ?? feedbackMode !== 'end_only';
@@ -861,10 +1309,19 @@ function App() {
     0,
     Number(settingsForm?.auto_advance_ms ?? settings?.auto_advance_ms ?? 0) || 0,
   );
+  const defaultQuizClockMode = normalizeQuizClockMode(
+    settingsForm?.quiz_clock_mode ?? settings?.quiz_clock_mode ?? 'stopwatch',
+  );
+  const defaultQuizTimerDurationSeconds = normalizeQuizTimerDurationSeconds(
+    settingsForm?.quiz_timer_duration_seconds ?? settings?.quiz_timer_duration_seconds ?? DEFAULT_QUIZ_TIMER_DURATION_SECONDS,
+  );
   const questionTimerSeconds = Math.max(
     0,
     Number(settingsForm?.question_timer_seconds ?? settings?.question_timer_seconds ?? 0) || 0,
   );
+  const quizClockDisplayMode = quiz ? quizClockMode : defaultQuizClockMode;
+  const quizClockDisplayTimerDurationSeconds = quiz ? quizTimerDurationSeconds : defaultQuizTimerDurationSeconds;
+  const quizIsPaused = Boolean(quiz && !quizCompleted && quizClockPaused);
   const showQuestionTimer = Boolean(
     normalizedActiveTab === 'quiz' && quiz && currentQuestion && !questionLocked && questionTimerSeconds > 0,
   );
@@ -872,11 +1329,12 @@ function App() {
     if (!quiz || quizStartedAt <= 0) {
       return 0;
     }
-    return Math.max(0, quizClockTickMs - quizStartedAt);
-  }, [quiz, quizStartedAt, quizClockTickMs]);
-  const quizTimerDurationMs = Math.max(0, Number(quizTimerDurationSeconds || 0)) * 1000;
+    const effectiveNow = quizClockPaused && quizClockPausedAtMs > 0 ? quizClockPausedAtMs : quizClockTickMs;
+    return Math.max(0, effectiveNow - quizStartedAt - quizClockAccumulatedPausedMs);
+  }, [quiz, quizClockAccumulatedPausedMs, quizClockPaused, quizClockPausedAtMs, quizClockTickMs, quizStartedAt]);
+  const quizTimerDurationMs = Math.max(0, Number(quizClockDisplayTimerDurationSeconds || 0)) * 1000;
   const quizTimerRemainingMs = Math.max(0, quizTimerDurationMs - quizElapsedMs);
-  const quizTimerExpired = quizClockMode === 'timer' && quizTimerDurationMs > 0 && quizElapsedMs >= quizTimerDurationMs;
+  const quizTimerExpired = quizClockDisplayMode === 'timer' && quizTimerDurationMs > 0 && quizElapsedMs >= quizTimerDurationMs;
   const showingPerformanceHistory = quizSidebarMode === 'performance_history';
 
   const activeHistoryQuizPath = useMemo(() => {
@@ -1055,6 +1513,20 @@ function App() {
     });
   }
 
+  function commitQuizTimerDurationMinutesDraft() {
+    const nextMinutes = Math.max(1, parseNonNegativeInt(quizTimerDurationMinutesDraft, 15) || 15);
+    setQuizTimerDurationMinutesDraft(String(nextMinutes));
+    setSettingsForm((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return {
+        ...prev,
+        quiz_timer_duration_seconds: nextMinutes * 60,
+      };
+    });
+  }
+
   function commitAutoAdvanceDelayDraft() {
     const normalized = String(parseNonNegativeInt(autoAdvanceDelayDraft, 0));
     setAutoAdvanceDelayDraft(normalized);
@@ -1067,6 +1539,10 @@ function App() {
   useEffect(() => {
     setAutoAdvanceDelayDraft(String(parseNonNegativeInt(settings?.auto_advance_ms, 0)));
   }, [settings?.auto_advance_ms]);
+
+  useEffect(() => {
+    setQuizTimerDurationMinutesDraft(formatQuizTimerDurationMinutes(settings?.quiz_timer_duration_seconds));
+  }, [settings?.quiz_timer_duration_seconds]);
 
   useEffect(() => {
     if (!generationOutputFolderOptions.length) {
@@ -1220,17 +1696,90 @@ function App() {
   }, [normalizedActiveTab, selectedQuizPath]);
 
   useEffect(() => {
-    if (!settingsForm || combinedModelOptions.length === 0) {
+    if (normalizedActiveTab !== 'settings') {
+      return undefined;
+    }
+
+    const refreshQuizzesManager = async () => {
+      try {
+        await loadQuizzesLibrary({ syncManagedSettings: false });
+      } catch (_err) {
+        // Polling should be best-effort and not interrupt settings edits.
+      }
+    };
+
+    void refreshQuizzesManager();
+
+    const timerId = window.setInterval(() => {
+      void refreshQuizzesManager();
+    }, 10000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [normalizedActiveTab]);
+
+  useEffect(() => {
+    const allManagerPaths = collectQuizManagerPaths(quizzesTree);
+    const normalizedSelectedPath = normalizePathText(selectedQuizzesManagerPath);
+    if (normalizedSelectedPath && allManagerPaths.some((pathValue) => normalizePathText(pathValue) === normalizedSelectedPath)) {
       return;
     }
-    const exists = combinedModelOptions.some((option) => option.key === settingsForm.preferred_model_key);
+    setSelectedQuizzesManagerPath(allManagerPaths[0] || '');
+  }, [quizzesTree, selectedQuizzesManagerPath]);
+
+  useEffect(() => {
+    if (!settingsForm) {
+      return;
+    }
+    if (!hasAvailableModelProvider) {
+      return;
+    }
+    if (preferredAvailableModelOptions.length === 0) {
+      return;
+    }
+    const exists = preferredAvailableModelOptions.some((option) => option.key === settingsForm.preferred_model_key);
     if (!exists) {
       setSettingsForm((prev) => ({
         ...prev,
-        preferred_model_key: combinedModelOptions[0].key,
+        preferred_model_key: preferredAvailableModelOptions[0].key,
       }));
     }
-  }, [combinedModelOptions, settingsForm]);
+  }, [hasAvailableModelProvider, preferredAvailableModelOptions, settingsForm]);
+
+  useEffect(() => {
+    if (!settingsForm || normalizedActiveTab !== 'settings') {
+      return undefined;
+    }
+    const credentialsChanged = (
+      String(settingsForm.claude_api_key || '') !== String(settings?.claude_api_key || '')
+      || String(settingsForm.openai_api_key || '') !== String(settings?.openai_api_key || '')
+      || String(settingsForm.openai_auth_mode || '') !== String(settings?.openai_auth_mode || '')
+      || String(settingsForm.openai_oauth_access_token || '') !== String(settings?.openai_oauth_access_token || '')
+      || String(settingsForm.openai_oauth_refresh_token || '') !== String(settings?.openai_oauth_refresh_token || '')
+    );
+    if (!credentialsChanged) {
+      return undefined;
+    }
+    const timerId = window.setTimeout(() => {
+      void loadModels(settingsForm, { surfaceErrors: false });
+    }, 350);
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [
+    settingsForm?.claude_api_key,
+    settingsForm?.openai_api_key,
+    settingsForm?.openai_auth_mode,
+    settingsForm?.openai_oauth_access_token,
+    settingsForm?.openai_oauth_refresh_token,
+    normalizedActiveTab,
+    settings?.claude_api_key,
+    settings?.openai_api_key,
+    settings?.openai_auth_mode,
+    settings?.openai_oauth_access_token,
+    settings?.openai_oauth_refresh_token,
+  ]);
 
   useEffect(() => {
     if (!quiz || !quiz.questions?.length) {
@@ -1273,7 +1822,7 @@ function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    if (!quiz || quizStartedAt <= 0) {
+    if (!quiz || quizStartedAt <= 0 || quizClockPaused || quizCompleted) {
       return undefined;
     }
     setQuizClockTickMs(Date.now());
@@ -1283,7 +1832,7 @@ function App() {
     return () => {
       window.clearInterval(timerId);
     };
-  }, [quiz, quizStartedAt]);
+  }, [quiz, quizClockPaused, quizCompleted, quizStartedAt]);
 
   useEffect(() => {
     if (!quizContextMenu.open) {
@@ -1303,7 +1852,7 @@ function App() {
   }, [quizContextMenu.open]);
 
   useEffect(() => {
-    if (!quizClockMenu.open) {
+    if (!quizzesManagerContextMenu.open) {
       return undefined;
     }
     const onKeyDown = (event) => {
@@ -1311,17 +1860,20 @@ function App() {
         return;
       }
       event.preventDefault();
-      closeQuizClockMenu();
+      closeQuizzesManagerContextMenu();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [quizClockMenu.open]);
+  }, [quizzesManagerContextMenu.open]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
       if (normalizedActiveTab !== 'quiz' || isEditableTarget(event.target)) {
+        return;
+      }
+      if (quizIsPaused) {
         return;
       }
       if (showingPerformanceHistory) {
@@ -1347,7 +1899,7 @@ function App() {
       }
       if (event.key === 'ArrowRight' && canGoForwardQuestion) {
         event.preventDefault();
-        setQuizIndex((prev) => Math.min(prev + 1, furthestReachableIndex));
+        setQuizIndex((prev) => Math.min(prev + 1, maxNavigableQuestionIndex));
         return;
       }
       const upperKey = String(event.key || '').toUpperCase();
@@ -1369,7 +1921,7 @@ function App() {
       }
       if (canGoForwardQuestion) {
         event.preventDefault();
-        setQuizIndex((prev) => Math.min(prev + 1, furthestReachableIndex));
+        setQuizIndex((prev) => Math.min(prev + 1, maxNavigableQuestionIndex));
       }
     };
 
@@ -1384,9 +1936,10 @@ function App() {
     currentQuestion,
     canGoPrevQuestion,
     canGoForwardQuestion,
-    furthestReachableIndex,
+    maxNavigableQuestionIndex,
     autoAdvanceEnabled,
     questionLocked,
+    quizIsPaused,
   ]);
 
   useEffect(() => {
@@ -1395,7 +1948,7 @@ function App() {
       autoAdvanceTimeoutRef.current = null;
     }
 
-    if (normalizedActiveTab !== 'quiz' || !quiz || !currentQuestion || !questionLocked || !questionResult) {
+    if (normalizedActiveTab !== 'quiz' || !quiz || !currentQuestion || !questionLocked || !questionResult || quizIsPaused) {
       return;
     }
     if (!autoAdvanceEnabled) {
@@ -1427,6 +1980,7 @@ function App() {
     autoAdvanceDelayMs,
     questionStates,
     quizIndex,
+    quizIsPaused,
   ]);
 
   useEffect(() => {
@@ -1435,17 +1989,32 @@ function App() {
       questionTimerIntervalRef.current = null;
     }
 
-    if (normalizedActiveTab !== 'quiz' || !quiz || !currentQuestion || questionLocked || questionTimerSeconds <= 0) {
+    if (!quiz || !currentQuestion || questionLocked || questionTimerSeconds <= 0 || quizCompleted) {
+      questionTimerKeyRef.current = '';
+      questionTimerRemainingMsRef.current = 0;
       setQuestionTimeLeftMs(0);
       return;
     }
 
+    const currentTimerKey = `${quizIndex}:${normalizeQuestionId(currentQuestion.id, quizIndex + 1)}`;
     const durationMs = questionTimerSeconds * 1000;
-    const deadline = Date.now() + durationMs;
-    setQuestionTimeLeftMs(durationMs);
+    if (questionTimerKeyRef.current !== currentTimerKey) {
+      questionTimerKeyRef.current = currentTimerKey;
+      questionTimerRemainingMsRef.current = durationMs;
+      setQuestionTimeLeftMs(durationMs);
+    }
+
+    const remainingAtStart = Math.max(0, questionTimerRemainingMsRef.current || durationMs);
+    setQuestionTimeLeftMs(remainingAtStart);
+    if (quizIsPaused) {
+      return;
+    }
+
+    const deadline = Date.now() + remainingAtStart;
 
     questionTimerIntervalRef.current = window.setInterval(() => {
       const remainingMs = Math.max(0, deadline - Date.now());
+      questionTimerRemainingMsRef.current = remainingMs;
       setQuestionTimeLeftMs(remainingMs);
       if (remainingMs > 0) {
         return;
@@ -1454,15 +2023,9 @@ function App() {
         window.clearInterval(questionTimerIntervalRef.current);
         questionTimerIntervalRef.current = null;
       }
-
-      const timeoutResult = {
-        correct: false,
-        points_awarded: 0,
-        max_points: Number(currentQuestion.points || 0),
-        feedback: 'Time expired.',
-      };
+      const timeoutResult = timedOutQuestionResult(currentQuestion);
       const timedAnswer = currentQuestion.type === 'short' ? shortAnswerRef.current : (mcqAnswerRef.current || '');
-      const expectedText = currentQuestion.type === 'short' ? (currentQuestion.expected || '') : (currentQuestion.answer || '');
+      const expectedText = questionExpectedText(currentQuestion);
       lockQuestionAfterResult(timeoutResult, timedAnswer, expectedText);
     }, 200);
 
@@ -1471,8 +2034,36 @@ function App() {
         window.clearInterval(questionTimerIntervalRef.current);
         questionTimerIntervalRef.current = null;
       }
+      if (questionTimerKeyRef.current === currentTimerKey) {
+        questionTimerRemainingMsRef.current = Math.max(0, deadline - Date.now());
+      }
     };
-  }, [normalizedActiveTab, quiz, currentQuestion, quizIndex, questionLocked, questionTimerSeconds]);
+  }, [quiz, currentQuestion, quizCompleted, quizIndex, questionLocked, questionTimerSeconds, quizIsPaused]);
+
+  useEffect(() => {
+    if (!quiz || !quizStartedAt || quizCompleted || quizClockPaused || quizClockMode !== 'timer') {
+      return;
+    }
+    if (!quizTimerExpired || quizTimerExpiryHandledRef.current) {
+      return;
+    }
+    quizTimerExpiryHandledRef.current = true;
+    void handleQuizTimerExpired();
+  }, [
+    quiz,
+    quizStartedAt,
+    quizCompleted,
+    quizClockPaused,
+    quizClockMode,
+    quizTimerExpired,
+    questionStates,
+    attemptQuestions,
+    quizScore,
+    quizIndex,
+    questionLocked,
+    mcqAnswer,
+    shortAnswer,
+  ]);
 
   async function boot() {
     setStartupError('');
@@ -1488,8 +2079,8 @@ function App() {
       setSettings(currentSettings);
       setSettingsForm({ ...currentSettings });
 
-      await Promise.all([loadModels(), loadHistory()]);
-      await loadQuizzesLibrary();
+      await Promise.all([loadModels(currentSettings), loadHistory()]);
+      await loadQuizzesLibrary({ syncManagedSettings: true });
       await loadQuizTree();
 
       setGenerationForm((prev) => ({
@@ -1504,41 +2095,98 @@ function App() {
     }
   }
 
-  async function loadModels() {
+  function syncManagedQuizSettings(nextSettings) {
+    if (!nextSettings) {
+      return;
+    }
+    const managedQuizFields = {
+      quiz_dir: nextSettings.quiz_dir,
+      quiz_roots: Array.isArray(nextSettings.quiz_roots) ? nextSettings.quiz_roots : [],
+    };
+    setSettings((prev) => (prev ? { ...prev, ...managedQuizFields } : { ...nextSettings }));
+    setSettingsForm((prev) => (prev ? { ...prev, ...managedQuizFields } : { ...nextSettings }));
+  }
+
+  function applyQuizzesLibraryResponse(response, { syncManagedSettings = false } = {}) {
+    setQuizzesDir(response.quizzes_dir || '');
+    setQuizzesTree(response.tree || []);
+    setQuizzesWarnings(response.warnings || []);
+    if (syncManagedSettings && response.settings) {
+      syncManagedQuizSettings(response.settings);
+    }
+  }
+
+  async function loadModels(settingsSnapshot = null, { surfaceErrors = true } = {}) {
     const requestId = modelLoadRequestIdRef.current + 1;
     modelLoadRequestIdRef.current = requestId;
     setModelLoadError('');
+    const mergedSettings = {
+      ...(settings || {}),
+      ...(settingsForm || {}),
+      ...(settingsSnapshot || {}),
+    };
+    const persistedSettings = settings || settingsSnapshot || {};
     const next = {
       self: [{ id: '', label: 'No model', provider: 'self', capability_tags: [] }],
       claude: [],
       openai: [],
     };
     const errors = [];
+    const loadProviderWithFallback = async (provider) => {
+      try {
+        const previewResponse = await apiRequest('/v1/models/preview', 'POST', {
+          provider,
+          settings: mergedSettings,
+        });
+        if (requestId !== modelLoadRequestIdRef.current) {
+          return [];
+        }
+        if (surfaceErrors && provider === 'openai' && (previewResponse.warnings || []).length) {
+          errors.push(...previewResponse.warnings.map((warning) => `OpenAI models: ${warning}`));
+        }
+        return previewResponse.models || [];
+      } catch (err) {
+        if (requestId !== modelLoadRequestIdRef.current) {
+          return [];
+        }
+        const canUseLegacyEndpoint = err?.status === 404 && sameProviderCredentials(provider, mergedSettings, persistedSettings);
+        if (canUseLegacyEndpoint) {
+          try {
+            const legacyResponse = await apiRequest(`/v1/models?provider=${encodeURIComponent(provider)}`, 'GET');
+            if (requestId !== modelLoadRequestIdRef.current) {
+              return [];
+            }
+            return legacyResponse.models || [];
+          } catch (legacyErr) {
+            if (requestId !== modelLoadRequestIdRef.current) {
+              return [];
+            }
+            if (surfaceErrors) {
+              errors.push(`${provider === 'openai' ? 'OpenAI' : 'Claude'} models: ${legacyErr.message}`);
+            }
+            return [];
+          }
+        }
+        if (surfaceErrors) {
+          errors.push(`${provider === 'openai' ? 'OpenAI' : 'Claude'} models: ${err.message}`);
+        }
+        return [];
+      }
+    };
 
-    try {
-      const claudeResponse = await apiRequest('/v1/models?provider=claude', 'GET');
-      if (requestId !== modelLoadRequestIdRef.current) {
-        return;
-      }
-      next.claude = claudeResponse.models || [];
-    } catch (err) {
-      if (requestId !== modelLoadRequestIdRef.current) {
-        return;
-      }
-      errors.push(`Claude models: ${err.message}`);
+    if (hasClaudeCredentials(mergedSettings)) {
+      next.claude = await loadProviderWithFallback('claude');
     }
 
-    try {
-      const openaiResponse = await apiRequest('/v1/models?provider=openai', 'GET');
-      if (requestId !== modelLoadRequestIdRef.current) {
-        return;
-      }
-      next.openai = openaiResponse.models || [];
-    } catch (err) {
-      if (requestId !== modelLoadRequestIdRef.current) {
-        return;
-      }
-      errors.push(`OpenAI models: ${err.message}`);
+    if (hasOpenAICredentials(mergedSettings)) {
+      next.openai = await loadProviderWithFallback('openai');
+    }
+
+    if (!next.claude.length && hasClaudeCredentials(mergedSettings)) {
+      next.claude = cachedModelsForProvider('claude', mergedSettings);
+    }
+    if (!next.openai.length && hasOpenAICredentials(mergedSettings)) {
+      next.openai = cachedModelsForProvider('openai', mergedSettings);
     }
 
     if (requestId !== modelLoadRequestIdRef.current) {
@@ -1546,7 +2194,7 @@ function App() {
     }
 
     setProviderModels(next);
-    setModelLoadError(errors.join('\n'));
+    setModelLoadError(surfaceErrors ? errors.join('\n') : '');
   }
 
   async function loadQuizTree() {
@@ -1560,15 +2208,9 @@ function App() {
     setSelectedQuizPath(allQuizPaths[0] || '');
   }
 
-  async function loadQuizzesLibrary() {
+  async function loadQuizzesLibrary({ syncManagedSettings = false } = {}) {
     const response = await apiRequest('/v1/quizzes/library', 'GET');
-    setQuizzesDir(response.quizzes_dir || '');
-    setQuizzesTree(response.tree || []);
-    setQuizzesWarnings([]);
-    if (response.settings) {
-      setSettings(response.settings);
-      setSettingsForm((prev) => (prev ? { ...prev, ...response.settings } : { ...response.settings }));
-    }
+    applyQuizzesLibraryResponse(response, { syncManagedSettings });
     return response;
   }
 
@@ -1581,13 +2223,7 @@ function App() {
     const response = await apiRequest('/v1/quizzes/library/import', 'POST', {
       source_paths: paths,
     });
-    setQuizzesDir(response.quizzes_dir || '');
-    setQuizzesTree(response.tree || []);
-    setQuizzesWarnings(response.warnings || []);
-    if (response.settings) {
-      setSettings(response.settings);
-      setSettingsForm((prev) => (prev ? { ...prev, ...response.settings } : { ...response.settings }));
-    }
+    applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
     await loadQuizTree();
   }
 
@@ -1666,6 +2302,9 @@ function App() {
       window.clearInterval(questionTimerIntervalRef.current);
       questionTimerIntervalRef.current = null;
     }
+    questionTimerKeyRef.current = '';
+    questionTimerRemainingMsRef.current = 0;
+    quizTimerExpiryHandledRef.current = false;
     setQuiz(null);
     setQuizIndex(0);
     setQuizScore(0);
@@ -1684,6 +2323,12 @@ function App() {
     setShowInjectedContextPanel(false);
     setQuestionStates({});
     setQuestionTimeLeftMs(0);
+    setQuizClockMode(defaultQuizClockMode);
+    setQuizTimerDurationSeconds(defaultQuizTimerDurationSeconds);
+    setQuizClockPaused(false);
+    setQuizClockPausedAtMs(0);
+    setQuizClockAccumulatedPausedMs(0);
+    setQuizClockTickMs(Date.now());
     setQuizSaved(false);
     setActiveQuizPath('');
     setQuizSidebarMode(nextSidebarMode);
@@ -1728,8 +2373,8 @@ function App() {
     });
   }
 
-  function closeQuizClockMenu() {
-    setQuizClockMenu((prev) => {
+  function closeQuizzesManagerContextMenu() {
+    setQuizzesManagerContextMenu((prev) => {
       if (!prev.open) {
         return prev;
       }
@@ -1740,36 +2385,52 @@ function App() {
     });
   }
 
-  function openQuizClockMenu(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    const MENU_WIDTH = 280;
-    const MENU_HEIGHT = 250;
+  function closeQuizClockMenu() {
+    // Quiz clock now uses visible controls instead of a context menu.
+  }
+
+  function openQuizzesManagerContextMenu(menuPayload) {
+    const targetPath = String(menuPayload?.path || '').trim();
+    if (!targetPath) {
+      return;
+    }
+
+    const MENU_WIDTH = 220;
+    const MENU_HEIGHT = 120;
     const EDGE_PADDING = 10;
-    const requestedX = Number(event.clientX || 0);
-    const requestedY = Number(event.clientY || 0);
+    const requestedX = Number(menuPayload?.x || 0);
+    const requestedY = Number(menuPayload?.y || 0);
     const maxX = Math.max(EDGE_PADDING, window.innerWidth - MENU_WIDTH - EDGE_PADDING);
     const maxY = Math.max(EDGE_PADDING, window.innerHeight - MENU_HEIGHT - EDGE_PADDING);
     const x = Math.min(Math.max(requestedX, EDGE_PADDING), maxX);
     const y = Math.min(Math.max(requestedY, EDGE_PADDING), maxY);
-    setQuizClockMenu({
+
+    setSelectedQuizzesManagerPath(targetPath);
+    setQuizzesManagerContextMenu({
       open: true,
       x,
       y,
-      draftMinutes: String(Math.max(1, Math.floor((quizTimerDurationSeconds || 60) / 60))),
+      path: targetPath,
+      name: String(menuPayload?.name || '').trim() || shortPathLabel(targetPath),
+      kind: String(menuPayload?.kind || '').trim() || 'quiz',
     });
   }
 
-  function applyQuizTimerFromMenu() {
-    const rawMinutes = Number.parseInt(String(quizClockMenu.draftMinutes || '').trim(), 10);
-    if (Number.isNaN(rawMinutes) || rawMinutes <= 0) {
-      setQuizClockMenu((prev) => ({ ...prev, draftMinutes: '15' }));
+  function toggleQuizClockPause() {
+    if (!quiz || quizCompleted) {
       return;
     }
-    const nextMinutes = Math.min(24 * 60, Math.max(1, rawMinutes));
-    setQuizTimerDurationSeconds(nextMinutes * 60);
-    setQuizClockMode('timer');
-    closeQuizClockMenu();
+    const now = Date.now();
+    if (quizClockPaused) {
+      setQuizClockAccumulatedPausedMs((prev) => prev + Math.max(0, now - quizClockPausedAtMs));
+      setQuizClockPaused(false);
+      setQuizClockPausedAtMs(0);
+      setQuizClockTickMs(now);
+      return;
+    }
+    setQuizClockTickMs(now);
+    setQuizClockPausedAtMs(now);
+    setQuizClockPaused(true);
   }
 
   function openQuizContextMenuForNode(menuPayload) {
@@ -1830,18 +2491,42 @@ function App() {
   }
 
   async function handleSaveSettings() {
-    if (!settingsForm) {
+    if (!settingsForm || savingSettings) {
       return false;
     }
+    if (settingsAutoSaveTimeoutRef.current) {
+      window.clearTimeout(settingsAutoSaveTimeoutRef.current);
+      settingsAutoSaveTimeoutRef.current = null;
+    }
     setSavingSettings(true);
+    setSettingsSaveStatus({ tone: 'info', message: 'Saving settings...' });
     try {
       const autoAdvanceMs = parseNonNegativeInt(
         autoAdvanceDelayDraft,
         settingsForm.auto_advance_ms ?? settings?.auto_advance_ms ?? 0,
       );
+      const quizTimerMinutes = Math.max(
+        1,
+        parseNonNegativeInt(
+          quizTimerDurationMinutesDraft,
+          Math.round(
+            normalizeQuizTimerDurationSeconds(
+              settingsForm.quiz_timer_duration_seconds,
+              settings?.quiz_timer_duration_seconds ?? DEFAULT_QUIZ_TIMER_DURATION_SECONDS,
+            ) / 60,
+          ),
+        ) || 15,
+      );
+      const quizTimerDurationSeconds = normalizeQuizTimerDurationSeconds(
+        quizTimerMinutes * 60,
+        settings?.quiz_timer_duration_seconds ?? DEFAULT_QUIZ_TIMER_DURATION_SECONDS,
+      );
       const payload = {
         ...settingsForm,
+        preferred_model_key: effectivePreferredModelKey,
         auto_advance_ms: autoAdvanceMs,
+        quiz_clock_mode: normalizeQuizClockMode(settingsForm.quiz_clock_mode),
+        quiz_timer_duration_seconds: quizTimerDurationSeconds,
         question_timer_seconds: parseNonNegativeInt(
           settingsForm.question_timer_seconds,
           settings?.question_timer_seconds ?? 0,
@@ -1866,14 +2551,17 @@ function App() {
       const response = await apiRequest('/v1/settings', 'PUT', payload);
       setSettings(response.settings);
       setSettingsForm({ ...response.settings });
-      await Promise.all([loadHistory(), loadModels()]);
-      await loadQuizzesLibrary();
+      setAutoAdvanceDelayDraft(String(parseNonNegativeInt(response.settings.auto_advance_ms, 0)));
+      setQuizTimerDurationMinutesDraft(formatQuizTimerDurationMinutes(response.settings.quiz_timer_duration_seconds));
+      await Promise.all([loadHistory(), loadModels(response.settings)]);
+      await loadQuizzesLibrary({ syncManagedSettings: true });
       await loadQuizTree();
       setStartupError('');
       setQuizLoadError('');
+      setSettingsSaveStatus({ tone: 'success', message: 'Settings saved.' });
       return true;
     } catch (err) {
-      setStartupError(`Failed to save settings: ${err.message}`);
+      setSettingsSaveStatus({ tone: 'error', message: `Could not save settings: ${err.message}` });
       return false;
     } finally {
       setSavingSettings(false);
@@ -1888,9 +2576,12 @@ function App() {
       const settingsResponse = await apiRequest('/v1/settings', 'GET');
       setSettings(settingsResponse.settings);
       setSettingsForm({ ...settingsResponse.settings });
-      await Promise.all([loadHistory(), loadModels()]);
-      await loadQuizzesLibrary();
+      setAutoAdvanceDelayDraft(String(parseNonNegativeInt(settingsResponse.settings.auto_advance_ms, 0)));
+      setQuizTimerDurationMinutesDraft(formatQuizTimerDurationMinutes(settingsResponse.settings.quiz_timer_duration_seconds));
+      await Promise.all([loadHistory(), loadModels(settingsResponse.settings)]);
+      await loadQuizzesLibrary({ syncManagedSettings: true });
       await loadQuizTree();
+      setSettingsSaveStatus({ tone: 'success', message: 'Legacy settings imported.' });
     } catch (err) {
       setStartupError(`Legacy import failed: ${err.message}`);
     }
@@ -1902,17 +2593,15 @@ function App() {
       return;
     }
 
-    if (normalizedActiveTab === 'settings' && normalizedNextTab !== 'settings' && settingsDirty) {
-      const shouldSave = window.confirm('You have unsaved Settings changes. Save before leaving this tab?');
-      if (shouldSave) {
-        const saved = await handleSaveSettings();
-        if (!saved) {
-          return;
-        }
+    if (normalizedActiveTab === 'settings' && normalizedNextTab !== 'settings' && settingsDirty && !savingSettings) {
+      const saved = await handleSaveSettings();
+      if (!saved) {
+        return;
       }
     }
 
     closeQuizContextMenu();
+    closeQuizzesManagerContextMenu();
     closeQuizClockMenu();
     setActiveTab(normalizedNextTab);
   }
@@ -2003,6 +2692,168 @@ function App() {
     }
   }
 
+  async function promptForQuizManagerFolder() {
+    const folderName = window.prompt(
+      `Create a new folder inside ${selectedQuizzesManagerParentLabel}.`,
+      '',
+    );
+    const trimmedFolderName = String(folderName || '').trim();
+    if (!trimmedFolderName) {
+      return;
+    }
+
+    setQuizzesManagerBusy(true);
+    setQuizzesWarnings([]);
+    try {
+      const response = await apiRequest('/v1/quizzes/library/folder', 'POST', {
+        name: trimmedFolderName,
+        parent_path: selectedQuizzesManagerParentPath || quizzesDir,
+      });
+      applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
+      setSelectedQuizzesManagerPath(response.path || '');
+      await loadQuizTree();
+    } catch (err) {
+      setQuizzesWarnings([err.message || 'Failed to create folder.']);
+    } finally {
+      setQuizzesManagerBusy(false);
+    }
+  }
+
+  async function promptForGenerationOutputFolder() {
+    const parentFolderLabel = selectedGenerationOutputFolder?.label || 'Quizzes';
+    const folderName = window.prompt(`Create a new output folder inside ${parentFolderLabel}.`, '');
+    const trimmedFolderName = String(folderName || '').trim();
+    if (!trimmedFolderName) {
+      return;
+    }
+    setCreatingGenerationFolder(true);
+    setGenerateErrors([]);
+    try {
+      const response = await apiRequest('/v1/quizzes/library/folder', 'POST', {
+        name: trimmedFolderName,
+        parent_path: selectedGenerationOutputFolder?.absolute_path || quizzesDir,
+      });
+      applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
+      const createdRelative = normalizeRelativePath(relativePathFromRoot(response.path, quizzesDir));
+      setGenerationOutputSubdir(createdRelative);
+      await loadQuizTree();
+    } catch (err) {
+      setGenerateErrors([err.message || 'Failed to create output folder.']);
+    } finally {
+      setCreatingGenerationFolder(false);
+    }
+  }
+
+  function remapManagedPathReferences(sourcePath, targetPath) {
+    const normalizedSource = normalizePathText(sourcePath);
+    const normalizedTarget = normalizePathText(targetPath);
+    if (!normalizedSource || !normalizedTarget || normalizedSource === normalizedTarget) {
+      return;
+    }
+    setSelectedQuizzesManagerPath((prev) => remapPathPrefix(prev, normalizedSource, normalizedTarget));
+    setSelectedQuizPath((prev) => remapPathPrefix(prev, normalizedSource, normalizedTarget));
+    setActiveQuizPath((prev) => remapPathPrefix(prev, normalizedSource, normalizedTarget));
+    setHistoryContextPaths((prev) => prev.map((pathValue) => remapPathPrefix(pathValue, normalizedSource, normalizedTarget)));
+    setGeneratedQuizContextsByPath((prev) => {
+      const entries = Object.entries(prev || {});
+      if (!entries.length) {
+        return prev;
+      }
+      let changed = false;
+      const next = {};
+      for (const [pathKey, value] of entries) {
+        const remapped = remapPathPrefix(pathKey, normalizedSource, normalizedTarget);
+        next[remapped || pathKey] = value;
+        if ((remapped || pathKey) !== pathKey) {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }
+
+  async function deleteQuizManagerItem(pathValue, kindValue, nameValue) {
+    const targetPath = String(pathValue || '').trim();
+    const targetKind = String(kindValue || '').trim() || 'quiz';
+    const targetName = String(nameValue || shortPathLabel(targetPath) || '').trim();
+    if (!targetPath) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      targetKind === 'folder'
+        ? `Delete the folder "${targetName}" and everything inside it?`
+        : `Delete the quiz "${targetName}"?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const fallbackSelection = targetKind === 'folder'
+      ? parentDirectoryPath(targetPath)
+      : parentDirectoryPath(targetPath) || normalizePathText(quizzesDir);
+
+    setQuizzesManagerBusy(true);
+    setQuizzesWarnings([]);
+    try {
+      try {
+        const response = await apiRequest('/v1/quizzes/library/delete', 'POST', {
+          path: targetPath,
+        });
+        applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
+      } catch (err) {
+        if (err?.status !== 404) {
+          throw err;
+        }
+        await deleteManagedQuizItem(targetPath);
+        const refreshedLibrary = await apiRequest('/v1/quizzes/library', 'GET');
+        applyQuizzesLibraryResponse(refreshedLibrary, { syncManagedSettings: true });
+      }
+      setSelectedQuizzesManagerPath(fallbackSelection || '');
+      await loadQuizTree();
+    } catch (err) {
+      setQuizzesWarnings([err.message || `Failed to delete ${targetKind}.`]);
+    } finally {
+      setQuizzesManagerBusy(false);
+    }
+  }
+
+  async function deleteQuizManagerContextTarget() {
+    const targetPath = String(quizzesManagerContextMenu.path || '').trim();
+    const targetName = String(quizzesManagerContextMenu.name || '').trim();
+    const targetKind = String(quizzesManagerContextMenu.kind || '').trim();
+    closeQuizzesManagerContextMenu();
+    await deleteQuizManagerItem(targetPath, targetKind, targetName);
+  }
+
+  async function moveQuizManagerItem(pathValue, destinationFolderPath) {
+    const sourcePath = normalizePathText(pathValue);
+    const destinationPath = normalizePathText(destinationFolderPath || quizzesDir);
+    if (!sourcePath || !destinationPath) {
+      return;
+    }
+    const sourceParent = normalizePathText(parentDirectoryPath(sourcePath));
+    if (sourceParent && sourceParent === destinationPath) {
+      return;
+    }
+    setQuizzesManagerBusy(true);
+    setQuizzesWarnings([]);
+    try {
+      const response = await apiRequest('/v1/quizzes/library/move', 'POST', {
+        path: sourcePath,
+        destination_parent_path: destinationPath,
+      });
+      applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
+      remapManagedPathReferences(response.source_path || sourcePath, response.path || sourcePath);
+      setSelectedQuizzesManagerPath(response.path || destinationPath);
+      await loadQuizTree();
+    } catch (err) {
+      setQuizzesWarnings([err.message || 'Failed to move quiz library item.']);
+    } finally {
+      setQuizzesManagerBusy(false);
+    }
+  }
+
   async function renameQuizAtPath(pathValue, titleValue) {
     const targetPath = String(pathValue || '').trim();
     const nextTitle = String(titleValue || '').trim();
@@ -2027,9 +2878,44 @@ function App() {
         path: '',
         currentTitle: '',
         nextTitle: '',
+        kind: 'quiz',
+        mode: 'quiz_title',
       }));
     } catch (err) {
       setQuizLoadError(err.message || 'Failed to rename quiz.');
+    } finally {
+      setRenamingQuiz(false);
+    }
+  }
+
+  async function renameFolderAtPath(pathValue, folderName) {
+    const targetPath = String(pathValue || '').trim();
+    const nextName = String(folderName || '').trim();
+    if (!targetPath || !nextName) {
+      return;
+    }
+
+    setRenamingQuiz(true);
+    setQuizzesWarnings([]);
+    try {
+      const response = await apiRequest('/v1/quizzes/library/folder/rename', 'POST', {
+        path: targetPath,
+        name: nextName,
+      });
+      applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
+      remapManagedPathReferences(response.source_path || targetPath, response.path || targetPath);
+      setSelectedQuizzesManagerPath(response.path || '');
+      await loadQuizTree();
+      setRenameDialog({
+        open: false,
+        path: '',
+        currentTitle: '',
+        nextTitle: '',
+        kind: 'quiz',
+        mode: 'quiz_title',
+      });
+    } catch (err) {
+      setQuizzesWarnings([err.message || 'Failed to rename folder.']);
     } finally {
       setRenamingQuiz(false);
     }
@@ -2050,6 +2936,29 @@ function App() {
       path: targetPath,
       currentTitle: baseTitle,
       nextTitle: baseTitle,
+      kind: 'quiz',
+      mode: 'quiz_title',
+    });
+  }
+
+  async function handleQuizzesManagerContextRename(pathValue, currentName, kindValue) {
+    closeQuizzesManagerContextMenu();
+    if (renamingQuiz) {
+      return;
+    }
+    const targetPath = String(pathValue || '').trim();
+    if (!targetPath) {
+      return;
+    }
+    const targetKind = String(kindValue || '').trim() || 'quiz';
+    const baseName = String(currentName || '').trim() || shortPathLabel(targetPath);
+    setRenameDialog({
+      open: true,
+      path: targetPath,
+      currentTitle: baseName,
+      nextTitle: baseName,
+      kind: targetKind,
+      mode: targetKind === 'folder' ? 'folder_name' : 'quiz_title',
     });
   }
 
@@ -2076,6 +2985,8 @@ function App() {
       path: '',
       currentTitle: '',
       nextTitle: '',
+      kind: 'quiz',
+      mode: 'quiz_title',
     });
   }
 
@@ -2087,7 +2998,15 @@ function App() {
       return;
     }
     if (!trimmed) {
-      setQuizLoadError('Quiz title cannot be empty.');
+      if (renameDialog.mode === 'folder_name') {
+        setQuizzesWarnings(['Folder name cannot be empty.']);
+      } else {
+        setQuizLoadError('Quiz title cannot be empty.');
+      }
+      return;
+    }
+    if (renameDialog.mode === 'folder_name') {
+      await renameFolderAtPath(targetPath, trimmed);
       return;
     }
     await renameQuizAtPath(targetPath, trimmed);
@@ -2105,10 +3024,20 @@ function App() {
       const loadedQuiz = response.quiz;
       const normalizedTargetPath = normalizePathText(targetPath);
       const cachedContext = autoInjectContextEnabled ? generatedQuizContextsByPath[normalizedTargetPath] : null;
+      const nextClockMode = normalizeQuizClockMode(
+        settingsForm?.quiz_clock_mode ?? settings?.quiz_clock_mode ?? 'stopwatch',
+      );
+      const nextTimerDurationSeconds = normalizeQuizTimerDurationSeconds(
+        settingsForm?.quiz_timer_duration_seconds ?? settings?.quiz_timer_duration_seconds ?? DEFAULT_QUIZ_TIMER_DURATION_SECONDS,
+      );
+      const now = Date.now();
+      questionTimerKeyRef.current = '';
+      questionTimerRemainingMsRef.current = 0;
+      quizTimerExpiryHandledRef.current = false;
       setQuiz(loadedQuiz);
       setQuizIndex(0);
       setQuizScore(0);
-      setQuizStartedAt(Date.now());
+      setQuizStartedAt(now);
       setQuizCompleted(false);
       setQuestionResult(null);
       setQuestionLocked(false);
@@ -2126,7 +3055,12 @@ function App() {
       setActiveQuizPath(targetPath);
       setQuizSidebarMode('question_nav');
       setFeedbackTabNeedsAttention(false);
-      setQuizClockTickMs(Date.now());
+      setQuizClockMode(nextClockMode);
+      setQuizTimerDurationSeconds(nextTimerDurationSeconds);
+      setQuizClockPaused(false);
+      setQuizClockPausedAtMs(0);
+      setQuizClockAccumulatedPausedMs(0);
+      setQuizClockTickMs(now);
       closeQuizClockMenu();
       setActiveTab('quiz');
     } catch (err) {
@@ -2146,6 +3080,115 @@ function App() {
     await startQuizFromPath(targetPath);
   }
 
+  function currentQuizElapsedMs(referenceNow = Date.now()) {
+    if (!quiz || quizStartedAt <= 0) {
+      return 0;
+    }
+    const effectiveNow = quizClockPaused && quizClockPausedAtMs > 0 ? quizClockPausedAtMs : referenceNow;
+    return Math.max(0, effectiveNow - quizStartedAt - quizClockAccumulatedPausedMs);
+  }
+
+  async function saveQuizAttemptHistory(nextAttemptQuestions, nextScore) {
+    if (!quiz || quizSaved) {
+      return true;
+    }
+
+    const durationSeconds = Math.max(0, currentQuizElapsedMs() / 1000);
+    const percent = maxScore ? (nextScore / maxScore) * 100 : 0;
+    const modelKeyValue = effectivePreferredModelKey;
+
+    try {
+      await apiRequest('/v1/history/append', 'POST', {
+        timestamp: new Date().toISOString(),
+        quiz_path: String(activeQuizPath || selectedQuizPath || '').trim(),
+        quiz_title: quiz.title,
+        score: nextScore,
+        max_score: maxScore,
+        percent,
+        duration_seconds: durationSeconds,
+        model_key: modelKeyValue,
+        questions: nextAttemptQuestions,
+      });
+      setQuizSaved(true);
+      await loadHistory();
+      return true;
+    } catch (err) {
+      setQuizLoadError(`Failed to save history: ${err.message}`);
+      return false;
+    }
+  }
+
+  async function finalizeQuizAttempt(nextQuestionStates, nextAttemptQuestions, nextScore, completionFeedback = 'Quiz finished.') {
+    if (!quiz) {
+      return;
+    }
+
+    if (autoAdvanceTimeoutRef.current) {
+      window.clearTimeout(autoAdvanceTimeoutRef.current);
+      autoAdvanceTimeoutRef.current = null;
+    }
+    if (questionTimerIntervalRef.current) {
+      window.clearInterval(questionTimerIntervalRef.current);
+      questionTimerIntervalRef.current = null;
+    }
+    questionTimerRemainingMsRef.current = 0;
+    questionStatesRef.current = nextQuestionStates;
+    setQuestionStates(nextQuestionStates);
+    setAttemptQuestions(nextAttemptQuestions);
+    setQuizScore(nextScore);
+    setQuestionTimeLeftMs(0);
+    const finalIndex = Math.max(0, quiz.questions.length - 1);
+    setQuizIndex(finalIndex);
+    setQuestionResult({
+      correct: false,
+      points_awarded: nextScore,
+      max_points: maxScore,
+      feedback: showFeedbackOnCompletion ? completionFeedback : '',
+    });
+    setQuestionLocked(true);
+    setQuizCompleted(true);
+    setQuizClockPaused(false);
+    setQuizClockPausedAtMs(0);
+    setQuizClockTickMs(Date.now());
+    await saveQuizAttemptHistory(nextAttemptQuestions, nextScore);
+  }
+
+  async function handleQuizTimerExpired() {
+    if (!quiz || !quiz.questions?.length) {
+      return;
+    }
+
+    const nextQuestionStates = { ...(questionStatesRef.current || {}) };
+    let nextAttemptQuestions = [...(Array.isArray(attemptQuestions) ? attemptQuestions : [])];
+    const currentQuestionKey = currentQuestion ? feedbackThreadKey(currentQuestion, quizIndex) : '';
+
+    for (let index = 0; index < quiz.questions.length; index += 1) {
+      if (nextQuestionStates[index]) {
+        continue;
+      }
+      const question = quiz.questions[index];
+      const timeoutResult = timedOutQuestionResult(question);
+      const userAnswer = index === quizIndex
+        ? (question.type === 'short' ? String(shortAnswerRef.current || '') : String(mcqAnswerRef.current || ''))
+        : '';
+      nextQuestionStates[index] = buildLockedQuestionState(question, timeoutResult, userAnswer);
+      nextAttemptQuestions = upsertAttemptQuestionRecord(
+        nextAttemptQuestions,
+        buildAttemptQuestionRecord(question, index, timeoutResult, userAnswer),
+      );
+
+      if (index === quizIndex && currentQuestionKey && showFeedbackOnAnswer && timeoutResult.feedback) {
+        appendFeedbackEntries(currentQuestionKey, [{
+          role: 'assistant',
+          text: timeoutResult.feedback,
+          kind: 'result',
+        }], { flagAttention: false });
+      }
+    }
+
+    await finalizeQuizAttempt(nextQuestionStates, nextAttemptQuestions, quizScore, 'Time expired. Quiz finished.');
+  }
+
   function lockQuestionAfterResult(result, userAnswer, expectedText) {
     if (!currentQuestion) {
       return;
@@ -2153,28 +3196,18 @@ function App() {
     if (questionStatesRef.current[quizIndex]) {
       return;
     }
-    const record = {
-      question_id: String(currentQuestion.id || `q${quizIndex + 1}`),
-      question_type: currentQuestion.type,
-      user_answer: userAnswer,
-      correct_answer_or_expected: expectedText,
-      points_awarded: Number(result.points_awarded || 0),
-      max_points: Number(result.max_points || 0),
-      feedback: result.feedback || '',
-      ungraded: Boolean(result.ungraded),
-    };
-    const isShort = currentQuestion.type === 'short';
+    const nextStateEntry = buildLockedQuestionState(currentQuestion, result, userAnswer);
+    const record = buildAttemptQuestionRecord(currentQuestion, quizIndex, result, userAnswer, expectedText);
     const questionKey = feedbackThreadKey(currentQuestion, quizIndex);
 
     setQuestionStates((prev) => ({
       ...prev,
-      [quizIndex]: {
-        result,
-        locked: true,
-        mcq_answer: isShort ? '' : userAnswer,
-        short_answer: isShort ? userAnswer : '',
-      },
+      [quizIndex]: nextStateEntry,
     }));
+    questionStatesRef.current = {
+      ...(questionStatesRef.current || {}),
+      [quizIndex]: nextStateEntry,
+    };
 
     setQuestionResult(result);
     setQuestionLocked(true);
@@ -2186,19 +3219,11 @@ function App() {
         kind: 'result',
       }]);
     }
-    setAttemptQuestions((prev) => {
-      const next = [...prev];
-      const index = next.findIndex((item) => item.question_id === record.question_id);
-      if (index >= 0) {
-        next[index] = record;
-        return next;
-      }
-      return [...next, record];
-    });
+    setAttemptQuestions((prev) => upsertAttemptQuestionRecord(prev, record));
   }
 
   async function submitMcqAnswer(letter) {
-    if (!currentQuestion || questionLocked) {
+    if (!currentQuestion || questionLocked || quizIsPaused) {
       return;
     }
 
@@ -2215,11 +3240,11 @@ function App() {
   }
 
   async function submitShortAnswer() {
-    if (!currentQuestion || questionLocked) {
+    if (!currentQuestion || questionLocked || quizIsPaused) {
       return;
     }
 
-    const modelKeyValue = (settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:').trim();
+    const modelKeyValue = effectivePreferredModelKey.trim();
     const selected = providerAndModelFromKey(modelKeyValue);
     const body = {
       provider: selected.provider,
@@ -2256,12 +3281,12 @@ function App() {
   }
 
   async function explainCurrentMcq() {
-    if (!currentQuestion || currentQuestion.type !== 'mcq' || !questionResult) {
+    if (!currentQuestion || currentQuestion.type !== 'mcq' || !questionResult || quizIsPaused) {
       return;
     }
     const questionKey = feedbackThreadKey(currentQuestion, quizIndex);
 
-    const modelKeyValue = (settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:').trim();
+    const modelKeyValue = effectivePreferredModelKey.trim();
     const selected = providerAndModelFromKey(modelKeyValue);
     if (selected.provider === 'self') {
       setQuizLoadError('No model mode does not support MCQ explanation.');
@@ -2296,21 +3321,11 @@ function App() {
   }
 
   async function goToNextQuestion() {
-    if (!quiz) {
+    if (!quiz || quizIsPaused) {
       return;
     }
     if (quizCompleted) {
-      const finalIndex = Math.max(0, quiz.questions.length - 1);
-      if (quizIndex !== finalIndex) {
-        setQuizIndex(finalIndex);
-      }
-      setQuestionResult({
-        correct: false,
-        points_awarded: quizScore,
-        max_points: maxScore,
-        feedback: showFeedbackOnCompletion ? 'Quiz finished.' : '',
-      });
-      setQuestionLocked(true);
+      resetQuizSessionState('question_nav');
       return;
     }
 
@@ -2320,59 +3335,28 @@ function App() {
       return;
     }
 
-    if (!quizSaved) {
-      const durationSeconds = Math.max(0, (Date.now() - quizStartedAt) / 1000);
-      const percent = maxScore ? (quizScore / maxScore) * 100 : 0;
-      const modelKeyValue = settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:';
-
-      try {
-        await apiRequest('/v1/history/append', 'POST', {
-          timestamp: new Date().toISOString(),
-          quiz_path: String(activeQuizPath || selectedQuizPath || '').trim(),
-          quiz_title: quiz.title,
-          score: quizScore,
-          max_score: maxScore,
-          percent,
-          duration_seconds: durationSeconds,
-          model_key: modelKeyValue,
-          questions: attemptQuestions,
-        });
-        setQuizSaved(true);
-        await loadHistory();
-      } catch (err) {
-        setQuizLoadError(`Failed to save history: ${err.message}`);
-      }
-    }
-
-    setQuestionResult({
-      correct: false,
-      points_awarded: quizScore,
-      max_points: maxScore,
-      feedback: showFeedbackOnCompletion ? 'Quiz finished.' : '',
-    });
-    setQuestionLocked(true);
-    setQuizCompleted(true);
+    await finalizeQuizAttempt(questionStatesRef.current || {}, attemptQuestions, quizScore);
   }
 
   function goToPreviousQuestion() {
-    if (!canGoPrevQuestion || autoAdvanceEnabled) {
+    if (!canGoPrevQuestion || autoAdvanceEnabled || quizIsPaused) {
       return;
     }
     setQuizIndex((prev) => Math.max(prev - 1, 0));
   }
 
   function goToForwardQuestion() {
-    if (!canGoForwardQuestion) {
+    if (!canGoForwardQuestion || quizIsPaused) {
       return;
     }
-    setQuizIndex((prev) => Math.min(prev + 1, furthestReachableIndex));
+    setQuizIndex((prev) => Math.min(prev + 1, maxNavigableQuestionIndex));
   }
 
   function jumpToQuestion(targetIndex) {
-    if (!quiz || !quiz.questions?.length) {
+    if (!quiz || !quiz.questions?.length || quizIsPaused) {
       return;
     }
-    if (targetIndex < 0 || targetIndex > furthestReachableIndex) {
+    if (targetIndex < 0 || targetIndex > maxNavigableQuestionIndex) {
       return;
     }
     if (autoAdvanceEnabled && targetIndex < quizIndex) {
@@ -2401,6 +3385,9 @@ function App() {
   }
 
   async function injectQuizContext() {
+    if (quizIsPaused) {
+      return;
+    }
     const paths = await pickSourceInputs();
     if (!paths || !paths.length) {
       return;
@@ -2453,10 +3440,10 @@ function App() {
       return;
     }
 
-    const modelKeyValue = (settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:').trim();
+    const modelKeyValue = effectivePreferredModelKey.trim();
     const selectedModelValue = providerAndModelFromKey(modelKeyValue);
     if (selectedModelValue.provider === 'self' || !selectedModelValue.model) {
-      setQuizLoadError('Select a non-self Preferred model in Settings to ask follow-up feedback questions.');
+      setQuizLoadError('Select a non-self Preferred Available Model in Settings to ask follow-up feedback questions.');
       return;
     }
 
@@ -2527,10 +3514,10 @@ function App() {
       return;
     }
 
-    const modelKeyValue = (settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:').trim();
+    const modelKeyValue = effectivePreferredModelKey.trim();
     const selectedModelValue = providerAndModelFromKey(modelKeyValue);
     if (selectedModelValue.provider === 'self' || !selectedModelValue.model) {
-      setQuizLoadError('Select a non-self Preferred model in Settings to re-grade ungraded attempts.');
+      setQuizLoadError('Select a non-self Preferred Available Model in Settings to re-grade ungraded attempts.');
       return;
     }
 
@@ -2700,10 +3687,10 @@ function App() {
         return;
       }
 
-      const preferredModelKey = settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:';
+      const preferredModelKey = effectivePreferredModelKey;
       const selectedModel = providerAndModelFromKey(preferredModelKey);
       if (selectedModel.provider === 'self' || !selectedModel.model) {
-        setGenerateErrors(['Select a non-self Preferred model in Settings before generating a quiz.']);
+        setGenerateErrors(['Select a non-self Preferred Available Model in Settings before generating a quiz.']);
         return;
       }
 
@@ -2749,25 +3736,28 @@ function App() {
     }
   }
 
-  const selectedProviderModel = providerAndModelFromKey(
-    settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:',
-  );
+  const selectedProviderModel = providerAndModelFromKey(effectivePreferredModelKey);
   const preferredModelLabel = useMemo(() => {
-    const currentKey = settingsForm?.preferred_model_key || settings?.preferred_model_key || 'self:';
-    const matched = combinedModelOptions.find((option) => option.key === currentKey);
+    const matched = preferredAvailableModelOptions.find((option) => option.key === effectivePreferredModelKey)
+      || combinedModelOptions.find((option) => option.key === effectivePreferredModelKey);
     if (matched?.label) {
       return matched.label;
     }
-    if (selectedProviderModel.provider === 'self') {
+    const providerModel = providerAndModelFromKey(effectivePreferredModelKey);
+    if (providerModel.provider === 'self') {
       return 'No model';
     }
-    return formatModelName(selectedProviderModel.provider, selectedProviderModel.model || 'unknown model');
-  }, [combinedModelOptions, selectedProviderModel.model, selectedProviderModel.provider, settings?.preferred_model_key, settingsForm?.preferred_model_key]);
+    return formatModelName(providerModel.provider, providerModel.model || 'unknown model');
+  }, [
+    combinedModelOptions,
+    effectivePreferredModelKey,
+    preferredAvailableModelOptions,
+  ]);
   const quizComplete = quizCompleted;
   const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
   const settingsFilterHasMatches = [
     settingsMatches('appearance', 'theme', 'dark mode', 'light mode'),
-    settingsMatches('preferred model', 'model selection', 'grading model'),
+    settingsMatches('preferred available model', 'preferred model', 'model selection', 'grading model'),
     settingsMatches(
       'feedback',
       'show feedback on answer',
@@ -2776,9 +3766,22 @@ function App() {
       'inject context',
     ),
     settingsMatches('auto advance', 'auto-advance', 'auto advance delay', 'question delay'),
+    settingsMatches('quiz clock', 'stopwatch', 'quiz timer', 'timer duration', 'clock'),
     settingsMatches('question timer', 'timer', 'countdown'),
+    settingsMatches('question nav', 'quiz progression', 'lock questions', 'unlock questions', 'navigation'),
     settingsMatches('mcq explanations', 'explanations', 'explain'),
-    settingsMatches('quizzes', 'quiz folder', 'quiz library', 'import folder', 'open quizzes folder', 'drag and drop'),
+    settingsMatches(
+      'quiz folder manager',
+      'quizzes',
+      'quiz folder',
+      'quiz library',
+      'create folder',
+      'delete folder',
+      'delete quiz',
+      'import folder',
+      'open quiz folder',
+      'drag and drop',
+    ),
     settingsMatches('claude api key', 'claude'),
     settingsMatches('openai api key', 'openai'),
   ].some(Boolean);
@@ -2790,6 +3793,22 @@ function App() {
       autoAdvanceDelayDraft,
       settingsForm.auto_advance_ms ?? settings.auto_advance_ms ?? 0,
     );
+    const normalizedQuizTimerMinutes = Math.max(
+      1,
+      parseNonNegativeInt(
+        quizTimerDurationMinutesDraft,
+        Math.round(
+          normalizeQuizTimerDurationSeconds(
+            settingsForm.quiz_timer_duration_seconds,
+            settings.quiz_timer_duration_seconds ?? DEFAULT_QUIZ_TIMER_DURATION_SECONDS,
+          ) / 60,
+        ),
+      ) || 15,
+    );
+    const normalizedQuizTimerDurationSeconds = normalizeQuizTimerDurationSeconds(
+      normalizedQuizTimerMinutes * 60,
+      settings.quiz_timer_duration_seconds ?? DEFAULT_QUIZ_TIMER_DURATION_SECONDS,
+    );
     const normalizedQuestionTimerSeconds = parseNonNegativeInt(
       settingsForm.question_timer_seconds,
       settings.question_timer_seconds ?? 0,
@@ -2797,10 +3816,42 @@ function App() {
     const nextForm = {
       ...settingsForm,
       auto_advance_ms: normalizedAutoAdvanceMs,
+      quiz_clock_mode: normalizeQuizClockMode(settingsForm.quiz_clock_mode),
+      quiz_timer_duration_seconds: normalizedQuizTimerDurationSeconds,
       question_timer_seconds: normalizedQuestionTimerSeconds,
     };
     return JSON.stringify(nextForm) !== JSON.stringify(settings);
-  }, [autoAdvanceDelayDraft, settingsForm, settings]);
+  }, [autoAdvanceDelayDraft, quizTimerDurationMinutesDraft, settingsForm, settings]);
+
+  useEffect(() => {
+    if (settingsAutoSaveTimeoutRef.current) {
+      window.clearTimeout(settingsAutoSaveTimeoutRef.current);
+      settingsAutoSaveTimeoutRef.current = null;
+    }
+    if (normalizedActiveTab !== 'settings' || !settingsDirty || savingSettings) {
+      return undefined;
+    }
+    setSettingsSaveStatus({ tone: 'info', message: 'Saving changes...' });
+    settingsAutoSaveTimeoutRef.current = window.setTimeout(() => {
+      settingsAutoSaveTimeoutRef.current = null;
+      void handleSaveSettings();
+    }, 700);
+    return () => {
+      if (settingsAutoSaveTimeoutRef.current) {
+        window.clearTimeout(settingsAutoSaveTimeoutRef.current);
+        settingsAutoSaveTimeoutRef.current = null;
+      }
+    };
+  }, [
+    normalizedActiveTab,
+    savingSettings,
+    settingsDirty,
+    settingsForm,
+    autoAdvanceDelayDraft,
+    quizTimerDurationMinutesDraft,
+    effectivePreferredModelKey,
+  ]);
+
   function renderPerformanceHistoryPanel() {
     return (
       <div className="performance-sidebar">
@@ -2992,7 +4043,7 @@ function App() {
         </div>
         {selectedProviderModel.provider === 'self' ? (
           <p className="feedback-chat-hint">
-            Select a non-self Preferred model in Settings to ask follow-up feedback questions.
+            Select a non-self Preferred Available Model in Settings to ask follow-up feedback questions.
           </p>
         ) : !feedbackChatSeedText && currentQuestionState ? (
           <p className="feedback-chat-hint">
@@ -3016,10 +4067,10 @@ function App() {
             }}
             onClick={(event) => event.stopPropagation()}
           >
-            <h3>Rename Quiz</h3>
+            <h3>{renameDialog.mode === 'folder_name' ? 'Rename Folder' : 'Rename Quiz'}</h3>
             <div className="rename-dialog-path">{shortPathLabel(renameDialog.path)}</div>
             <label className="field">
-              <span>Title</span>
+              <span>{renameDialog.mode === 'folder_name' ? 'Folder Name' : 'Title'}</span>
               <input
                 autoFocus
                 type="text"
@@ -3031,7 +4082,7 @@ function App() {
                     nextTitle: event.target.value,
                   }))
                 }
-                placeholder="Quiz title"
+                placeholder={renameDialog.mode === 'folder_name' ? 'Folder name' : 'Quiz title'}
               />
             </label>
             <div className="row rename-dialog-actions">
@@ -3071,57 +4122,36 @@ function App() {
           </div>
         </div>
       ) : null}
-      {quizClockMenu.open ? (
-        <div className="quiz-clock-menu-overlay" onClick={() => closeQuizClockMenu()}>
+      {quizzesManagerContextMenu.open ? (
+        <div className="quiz-context-menu-overlay" onClick={() => closeQuizzesManagerContextMenu()}>
           <div
-            className="quiz-clock-menu"
-            style={{ top: `${quizClockMenu.y}px`, left: `${quizClockMenu.x}px` }}
+            className="quiz-context-menu"
+            style={{ top: `${quizzesManagerContextMenu.y}px`, left: `${quizzesManagerContextMenu.x}px` }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="quiz-clock-menu-title">Quiz Clock</div>
-            <div className="quiz-clock-menu-actions">
-              <button
-                type="button"
-                onClick={() => {
-                  setQuizClockMode('stopwatch');
-                  closeQuizClockMenu();
-                }}
-              >
-                Stopwatch
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setQuizClockMode('timer');
-                  closeQuizClockMenu();
-                }}
-              >
-                Timer
-              </button>
-            </div>
-            <label className="field quiz-clock-menu-field">
-              <span>Timer duration (minutes)</span>
-              <input
-                type="number"
-                min={1}
-                max={24 * 60}
-                step={1}
-                value={quizClockMenu.draftMinutes}
-                onChange={(event) =>
-                  setQuizClockMenu((prev) => ({
-                    ...prev,
-                    draftMinutes: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <button type="button" className="primary" onClick={() => applyQuizTimerFromMenu()}>
-              Save and use timer
+            <button
+              type="button"
+              onClick={() => {
+                void handleQuizzesManagerContextRename(
+                  quizzesManagerContextMenu.path,
+                  quizzesManagerContextMenu.name,
+                  quizzesManagerContextMenu.kind,
+                );
+              }}
+            >
+              Rename
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void deleteQuizManagerContextTarget();
+              }}
+            >
+              {quizzesManagerContextMenu.kind === 'folder' ? 'Delete Folder' : 'Delete Quiz'}
             </button>
           </div>
         </div>
       ) : null}
-
       <nav className="tabs">
         <div className="tabs-list">
           {TABS.map((tab) => (
@@ -3137,16 +4167,21 @@ function App() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className={`quiz-clock tabs-quiz-clock ${quizClockMode === 'timer' ? 'timer-mode' : ''}${quizTimerExpired ? ' expired' : ''}`}
-          onContextMenu={(event) => openQuizClockMenu(event)}
-          title="Right-click to switch between stopwatch and timer."
-        >
-          {quizClockMode === 'timer'
-            ? `Timer: ${formatCountdown(quizTimerRemainingMs)}`
-            : `Stopwatch: ${formatElapsedTime(quizElapsedMs)}`}
-        </button>
+        <div className="tabs-quiz-clock-wrap">
+          <div
+            className={`quiz-clock tabs-quiz-clock ${quizClockDisplayMode === 'timer' ? 'timer-mode' : ''}${quizTimerExpired ? ' expired' : ''}`}
+            aria-live="polite"
+          >
+            {quizClockDisplayMode === 'timer'
+              ? `Timer: ${formatCountdown(quizTimerRemainingMs)}`
+              : `Stopwatch: ${formatElapsedTime(quizElapsedMs)}`}
+          </div>
+          {quiz && !quizCompleted ? (
+            <button type="button" className="quiz-clock-toggle" onClick={() => toggleQuizClockPause()}>
+              {quizIsPaused ? 'Resume' : 'Pause'}
+            </button>
+          ) : null}
+        </div>
       </nav>
 
       <main className="tab-panel">
@@ -3245,11 +4280,14 @@ function App() {
               {quiz && currentQuestion ? (
                 <div className={`question-shell ${showingPerformanceHistory ? 'performance-history-open' : ''}`}>
                   <div className="question-block">
+                    {quizIsPaused ? (
+                      <div className="banner warn">Quiz paused. Resume the quiz clock to continue answering or navigating.</div>
+                    ) : null}
                     <div className="row question-step-controls">
-                      <button type="button" disabled={!canGoPrevQuestion || autoAdvanceEnabled} onClick={() => goToPreviousQuestion()}>
+                      <button type="button" disabled={!canGoPrevQuestion || autoAdvanceEnabled || quizIsPaused} onClick={() => goToPreviousQuestion()}>
                         ← Previous
                       </button>
-                      <button type="button" disabled={!canGoForwardQuestion} onClick={() => goToForwardQuestion()}>
+                      <button type="button" disabled={!canGoForwardQuestion || quizIsPaused} onClick={() => goToForwardQuestion()}>
                         Forward →
                       </button>
                       {showQuestionTimer ? (
@@ -3274,7 +4312,7 @@ function App() {
                             <button
                               key={letter}
                               type="button"
-                              disabled={questionLocked}
+                              disabled={questionLocked || quizIsPaused}
                               className={mcqAnswer === letter ? 'selected' : ''}
                               onClick={() => submitMcqAnswer(letter)}
                             >
@@ -3288,7 +4326,7 @@ function App() {
                         <textarea
                           value={shortAnswer}
                           onChange={(event) => setShortAnswer(event.target.value)}
-                          disabled={questionLocked}
+                          disabled={questionLocked || quizIsPaused}
                           placeholder="Write your answer"
                         />
 
@@ -3296,7 +4334,7 @@ function App() {
                           <div className="banner warn">No model selected: short answers are saved as ungraded.</div>
                         ) : null}
 
-                        <button type="button" className="primary" disabled={questionLocked} onClick={() => submitShortAnswer()}>
+                        <button type="button" className="primary" disabled={questionLocked || quizIsPaused} onClick={() => submitShortAnswer()}>
                           Submit Answer
                         </button>
                       </div>
@@ -3311,6 +4349,7 @@ function App() {
                     <div className="row">
                       <button
                         type="button"
+                        disabled={quizIsPaused}
                         onClick={() => {
                           void injectQuizContext();
                         }}
@@ -3327,13 +4366,13 @@ function App() {
                       ) : null}
 
                       {currentQuestion.type === 'mcq' && questionResult && selectedProviderModel.provider !== 'self' ? (
-                        <button type="button" disabled={feedbackChatSending} onClick={() => explainCurrentMcq()}>
+                        <button type="button" disabled={feedbackChatSending || quizIsPaused} onClick={() => explainCurrentMcq()}>
                           {feedbackChatSending ? 'Explaining...' : 'Explain'}
                         </button>
                       ) : null}
 
                       {questionLocked ? (
-                        <button type="button" className="primary" onClick={() => goToNextQuestion()}>
+                        <button type="button" className="primary" disabled={quizIsPaused} onClick={() => goToNextQuestion()}>
                           {quizComplete ? 'Finish Quiz' : 'Next'}
                         </button>
                       ) : null}
@@ -3388,7 +4427,7 @@ function App() {
                         {quiz.questions.map((q, index) => {
                           const questionState = questionStates[index];
                           const answered = Boolean(questionState);
-                          const reachable = index <= furthestReachableIndex;
+                          const reachable = !lockQuestionsByProgression || index <= furthestReachableIndex;
                           const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
                           const current = index === quizIndex;
                           const result = questionState?.result;
@@ -3416,7 +4455,7 @@ function App() {
                             <button
                               key={`qnav-${q.id || index}`}
                               type="button"
-                              disabled={!reachable || blockedByAutoAdvance}
+                              disabled={!reachable || blockedByAutoAdvance || quizIsPaused}
                               className={`question-nav-button${current ? ' current' : ''}${navStatusClass}`}
                               onClick={() => jumpToQuestion(index)}
                             >
@@ -3491,7 +4530,7 @@ function App() {
               <h2>Generation</h2>
               <div className="form-grid">
                 <div className="field">
-                  <span>Preferred model</span>
+                  <span>Preferred Available Model</span>
                   <div className="settings-warning-note">
                     Quiz generation and grading use: <strong>{preferredModelLabel}</strong>
                   </div>
@@ -3528,20 +4567,31 @@ function App() {
 
                 <label className="field">
                   <span>Output folder (inside Quizzes)</span>
-                  <select
-                    value={selectedGenerationOutputFolder?.value || ''}
-                    onChange={(event) => setGenerationOutputSubdir(event.target.value)}
-                  >
-                    {generationOutputFolderOptions.length ? (
-                      generationOutputFolderOptions.map((option) => (
-                        <option key={option.value || '__root__'} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">Quizzes</option>
-                    )}
-                  </select>
+                  <div className="row">
+                    <select
+                      value={selectedGenerationOutputFolder?.value || ''}
+                      onChange={(event) => setGenerationOutputSubdir(event.target.value)}
+                    >
+                      {generationOutputFolderOptions.length ? (
+                        generationOutputFolderOptions.map((option) => (
+                          <option key={option.value || '__root__'} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">Quizzes</option>
+                      )}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={creatingGenerationFolder || !quizzesDir}
+                      onClick={() => {
+                        void promptForGenerationOutputFolder();
+                      }}
+                    >
+                      {creatingGenerationFolder ? 'Creating...' : 'Create Folder'}
+                    </button>
+                  </div>
                 </label>
               </div>
 
@@ -3646,9 +4696,15 @@ function App() {
               <input
                 value={settingsSearch}
                 onChange={(event) => setSettingsSearch(event.target.value)}
-                placeholder="Try: theme, feedback, auto-advance, OpenAI, quiz library"
+                placeholder="Try: theme, feedback, question nav, OpenAI, quiz folder manager"
               />
             </label>
+
+            {settingsSaveStatus.message ? (
+              <div className={`settings-save-status ${settingsSaveStatus.tone}`}>
+                {settingsSaveStatus.message}
+              </div>
+            ) : null}
 
             {settingsMatches('appearance', 'theme', 'dark mode', 'light mode') ? (
               <section className="settings-group">
@@ -3668,20 +4724,25 @@ function App() {
             ) : null}
 
             <div className="form-grid two-col">
-              {settingsMatches('preferred model', 'model selection', 'grading model') ? (
+              {settingsMatches('preferred available model', 'preferred model', 'model selection', 'grading model') ? (
                 <label className="field">
-                  <span>Preferred model</span>
+                  <span>Preferred Available Model</span>
                   <select
-                    value={settingsForm.preferred_model_key || 'self:'}
+                    disabled={!hasAvailableModelProvider}
+                    value={hasAvailableModelProvider ? effectivePreferredModelKey : '__connect_api_key__'}
                     onChange={(event) =>
                       setSettingsForm((prev) => ({ ...prev, preferred_model_key: event.target.value }))
                     }
                   >
-                    {combinedModelOptions.map((option) => (
-                      <option key={option.key} value={option.key}>
-                        {option.label}
-                      </option>
-                    ))}
+                    {hasAvailableModelProvider ? (
+                      preferredAvailableModelOptions.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="__connect_api_key__">Connect an API key to see available models</option>
+                    )}
                   </select>
                 </label>
               ) : null}
@@ -3761,6 +4822,7 @@ function App() {
             ) : null}
 
             {(settingsMatches('auto advance', 'auto-advance', 'delay', 'next question')
+              || settingsMatches('quiz clock', 'stopwatch', 'quiz timer', 'timer duration', 'clock')
               || settingsMatches('question timer', 'timer', 'countdown')) ? (
                 <section className="settings-group">
                   <h3>Pacing</h3>
@@ -3823,9 +4885,60 @@ function App() {
                       </>
                     ) : null}
 
+                    {settingsMatches('quiz clock', 'stopwatch', 'quiz timer', 'timer duration', 'clock') ? (
+                      <>
+                        <label className="field">
+                          <span>Quiz clock mode</span>
+                          <select
+                            value={normalizeQuizClockMode(settingsForm.quiz_clock_mode)}
+                            onChange={(event) =>
+                              setSettingsForm((prev) => ({
+                                ...prev,
+                                quiz_clock_mode: normalizeQuizClockMode(event.target.value),
+                              }))
+                            }
+                          >
+                            <option value="stopwatch">Stopwatch</option>
+                            <option value="timer">Timer</option>
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span>Quiz timer duration (minutes)</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={quizTimerDurationMinutesDraft}
+                            onChange={(event) => {
+                              const next = event.target.value;
+                              if (!/^\d*$/.test(next)) {
+                                return;
+                              }
+                              setQuizTimerDurationMinutesDraft(next);
+                            }}
+                            onBlur={() => commitQuizTimerDurationMinutesDraft()}
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter' && event.key !== 'Return') {
+                                return;
+                              }
+                              event.preventDefault();
+                              commitQuizTimerDurationMinutesDraft();
+                              event.currentTarget.blur();
+                            }}
+                          />
+                        </label>
+
+                        <div className="settings-warning-note">
+                          Quiz clock settings apply when you start or restart a quiz. Timer mode auto-finishes the quiz at
+                          zero and marks unanswered questions incorrect.
+                        </div>
+                      </>
+                    ) : null}
+
                     {settingsMatches('question timer', 'timer', 'countdown') ? (
                       <label className="field">
-                        <span>Question timer (seconds, 0 = off)</span>
+                        <span>Per-question timer (seconds, 0 = off)</span>
                         <input
                           type="number"
                           min={0}
@@ -3857,26 +4970,56 @@ function App() {
                 </section>
               ) : null}
 
+            {settingsMatches('question nav', 'quiz progression', 'lock questions', 'unlock questions', 'navigation') ? (
+              <section className="settings-group">
+                <h3>Question Navigation</h3>
+                <div className="form-grid two-col">
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(lockQuestionsByProgression)}
+                      onChange={(event) =>
+                        setSettingsForm((prev) => ({ ...prev, lock_questions_by_progression: event.target.checked }))
+                      }
+                    />
+                    <span>Lock future questions until you reach them</span>
+                  </label>
+                </div>
+                <div className="settings-warning-note">
+                  Turning this off lets you jump to any question immediately. Auto-advance still blocks going backward
+                  during live quizzes.
+                </div>
+              </section>
+            ) : null}
+
             {!settingsFilterHasMatches ? (
               <div className="banner warn">No settings matched your search.</div>
             ) : null}
 
-            {settingsMatches('quizzes', 'quiz folder', 'quiz library', 'import folder', 'open quizzes folder', 'drag and drop') ? (
+            {settingsMatches(
+              'quiz folder manager',
+              'quizzes',
+              'quiz folder',
+              'quiz library',
+              'create folder',
+              'delete folder',
+              'delete quiz',
+              'import folder',
+              'open quiz folder',
+              'drag and drop',
+            ) ? (
               <section className="roots-card">
                 <div className="row between roots-header">
                   <div>
-                    <strong>Quizzes</strong>
-                    <div className="roots-count">{countQuizFiles(quizzesTree)} quiz file(s)</div>
+                    <strong>Quiz Folder Manager</strong>
+                    <div className="roots-count">{countQuizFiles(quizzesTree)} quiz file(s) managed</div>
                   </div>
                   <div className="row">
                     <button type="button" onClick={() => importQuizzesFromFinder()}>
                       Import Folder
                     </button>
                     <button type="button" onClick={() => openPath(quizzesDir)} disabled={!quizzesDir}>
-                      Open Quizzes Folder
-                    </button>
-                    <button type="button" onClick={() => loadQuizzesLibrary()}>
-                      Refresh
+                      Open Quiz Folder
                     </button>
                     <button type="button" onClick={() => setShowQuizzesBox((prev) => !prev)}>
                       {showQuizzesBox ? 'Minimize' : 'Expand'}
@@ -3899,10 +5042,39 @@ function App() {
                         void handleQuizzesDrop(event);
                       }}
                     >
-                      Drag and drop quiz folders or .json files here to import into Quizzes.
+                      Drag and drop quiz folders or .json files here to import into the managed quiz folder.
+                    </div>
+                    <div className="quizzes-manager-controls">
+                      <div className="row quizzes-manager-actions">
+                        <button
+                          type="button"
+                          disabled={quizzesManagerBusy || !quizzesDir}
+                          onClick={() => {
+                            void promptForQuizManagerFolder();
+                          }}
+                        >
+                          {quizzesManagerBusy ? 'Working...' : 'New Folder'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="quizzes-manager-selection">
+                      {selectedQuizzesManagerNode ? (
+                        `Selected ${selectedQuizzesManagerNode.kind === 'folder' ? 'folder' : 'quiz'}: ${selectedQuizzesManagerNode.name}. New folders will be created in ${selectedQuizzesManagerParentLabel}. Click folders to collapse/expand, drag items into folders to move them, and right-click items to rename or delete.`
+                      ) : (
+                        `No item selected. New folders will be created in ${selectedQuizzesManagerParentLabel}. Click folders to collapse/expand, drag items into folders to move them, and right-click items to rename or delete.`
+                      )}
                     </div>
                     <div className="roots-list-wrap">
-                      <QuizzesStructureTree nodes={quizzesTree} />
+                      <QuizzesStructureTree
+                        nodes={quizzesTree}
+                        onOpenContextMenu={openQuizzesManagerContextMenu}
+                        onMoveItem={({ sourcePath, destinationFolderPath }) => {
+                          void moveQuizManagerItem(sourcePath, destinationFolderPath);
+                        }}
+                        onSelect={setSelectedQuizzesManagerPath}
+                        rootPath={quizzesDir}
+                        selectedPath={selectedQuizzesManagerPath}
+                      />
                     </div>
                   </>
                 ) : null}
@@ -3940,24 +5112,6 @@ function App() {
                 </label>
               ) : null}
 
-            </div>
-
-            <div className="row">
-              <button type="button" className="primary" disabled={savingSettings} onClick={() => handleSaveSettings()}>
-                {savingSettings ? 'Saving...' : 'Save Settings'}
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  const response = await apiRequest('/v1/settings', 'GET');
-                  setSettings(response.settings);
-                  setSettingsForm({ ...response.settings });
-                  await loadQuizzesLibrary();
-                  await loadQuizTree();
-                }}
-              >
-                Reload Settings
-              </button>
             </div>
           </section>
         ) : null}

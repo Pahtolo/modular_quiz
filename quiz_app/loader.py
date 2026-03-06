@@ -64,17 +64,22 @@ def load_quiz(path: Path) -> Quiz:
         raise QuizValidationError("Field 'questions' must be a non-empty list.")
 
     questions: List[Question] = []
+    seen_question_ids: set[str] = set()
     for idx, q in enumerate(raw_questions, start=1):
         if not isinstance(q, dict):
             raise QuizValidationError(f"Question #{idx} must be an object.")
         qtype = _require_str(q.get("type"), "type").lower()
         if qtype == "mcq":
-            questions.append(_parse_mcq(q, idx))
+            parsed = _parse_mcq(q, idx)
         elif qtype == "short":
-            questions.append(_parse_short(q, idx))
+            parsed = _parse_short(q, idx)
         else:
             raise QuizValidationError(
                 f"Question #{idx}: unsupported type '{qtype}'. Use 'mcq' or 'short'."
             )
+        if parsed.id in seen_question_ids:
+            raise QuizValidationError(f"Question IDs must be unique. Duplicate ID found: '{parsed.id}'.")
+        seen_question_ids.add(parsed.id)
+        questions.append(parsed)
 
     return Quiz(title=title, instructions=instructions, questions=questions)
