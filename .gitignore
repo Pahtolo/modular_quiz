@@ -23,10 +23,13 @@ htmlcov/
 .venv/
 venv/
 
-# Local/runtime quiz artifacts
-/Quizzes/Generated/
-/Quizzes/**/generated_quiz*.json
+# Local quiz library
+/Quizzes/
 
 # Local scratch space
 /scratch/
 /tmp/
+
+# Local workflow files
+/AGENTS.md
+/FEATURE_TRACKER.md

@@ -1,8 +1,0 @@
-- Use `FEATURE_TRACKER.md` as the canonical tracker for feature work.
-- On every repo change, review the relevant feature section and its `Action Items`.
-- Before beginning work, ask for clarification where needed?
-- After completing work, move completed items from `Action Items` to `Completed Tasks`.
-- If work is completed but not yet listed, add it to `Completed Tasks`; otherwise add new pending work to `Action Items`.
-- If an item belongs in a feature `Notes` section, start a dialogue with me before finalizing.
-- Always use the OpenAI developer documentation MCP server if you need to work with the OpenAI API, ChatGPT Apps SDK, Codex,… without me having to explicitly ask.
-- User is unfamiliar with git best practices. Recommend to the user when to commit, push, pull, etc. according to best practices. 

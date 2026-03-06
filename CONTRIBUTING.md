@@ -27,7 +27,6 @@ python3 -m unittest tests.test_repo_hygiene
 ## Pull request guidelines
 1. Keep PRs focused and small where possible.
 2. Include a short summary of behavior changes and test evidence.
-3. Update `FEATURE_TRACKER.md` by moving completed `Action Items` to `Completed Tasks`.
 
 ## Commit guidance
 1. Make one commit per logical change set.
