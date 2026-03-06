@@ -2436,7 +2436,7 @@ function App() {
           .map((material) => String(material?.path || '').trim())
           .filter((item) => item),
       );
-      setShowInjectedContextPanel(true);
+      setShowInjectedContextPanel(false);
     } catch (err) {
       setQuizLoadError(err.message || 'Failed to inject quiz context.');
     }
