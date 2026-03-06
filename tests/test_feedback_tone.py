@@ -55,6 +55,7 @@ class FeedbackToneTests(unittest.TestCase):
 
         prompt_text = captured["prompt"]
         self.assertIn("Address the learner directly", prompt_text)
+        self.assertIn("KaTeX-compatible LaTeX", prompt_text)
         self.assertIn("Your answer:", prompt_text)
         self.assertNotIn("User answer:", prompt_text)
 
@@ -100,8 +101,63 @@ class FeedbackToneTests(unittest.TestCase):
             )
 
         self.assertIn("second person", captured["system"])
+        self.assertIn("KaTeX-compatible LaTeX", captured["system"])
         self.assertIn("Your answer:", captured["prompt"])
         self.assertNotIn("User answer:", captured["prompt"])
+
+    def test_openai_feedback_chat_prompt_requires_katex_for_math(self) -> None:
+        client = OpenAIClient(auth=OpenAIAuthState(api_key="test"))
+        captured: dict[str, str] = {}
+
+        def _fake(prompt: str, model: str | None = None, max_tokens: int = 500) -> str:
+            _ = model, max_tokens
+            captured["prompt"] = prompt
+            return "Use $x^2$ here."
+
+        with patch.object(client, "_responses_text", side_effect=_fake):
+            _ = client.feedback_chat(
+                question_prompt="What is x^2 when x=3?",
+                question_type="short",
+                options=[],
+                user_answer="6",
+                expected_answer="9",
+                feedback="You are incorrect.",
+                chat_history=[{"role": "assistant", "text": "You are incorrect."}],
+                user_message="Can you show the algebra?",
+            )
+
+        self.assertIn("KaTeX-compatible LaTeX", captured["prompt"])
+        self.assertIn("Use $...$ for inline math", captured["prompt"])
+
+    def test_claude_feedback_chat_prompt_requires_katex_for_math(self) -> None:
+        client = ClaudeClient(api_key="test")
+        captured: dict[str, str] = {}
+
+        def _fake(
+            prompt: str,
+            system: str,
+            model: str | None = None,
+            max_tokens: int = 500,
+        ) -> str:
+            _ = model, max_tokens
+            captured["prompt"] = prompt
+            captured["system"] = system
+            return "Use $x^2$ here."
+
+        with patch.object(client, "_message_text", side_effect=_fake):
+            _ = client.feedback_chat(
+                question_prompt="What is x^2 when x=3?",
+                question_type="short",
+                options=[],
+                user_answer="6",
+                expected_answer="9",
+                feedback="You are incorrect.",
+                chat_history=[{"role": "assistant", "text": "You are incorrect."}],
+                user_message="Can you show the algebra?",
+            )
+
+        self.assertIn("KaTeX-compatible LaTeX", captured["system"])
+        self.assertIn("Use $...$ for inline math", captured["system"])
 
     def test_claude_explain_output_is_normalized_to_second_person(self) -> None:
         client = ClaudeClient(api_key="test")

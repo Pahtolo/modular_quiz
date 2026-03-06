@@ -11,6 +11,11 @@ from .graders import GradeResult
 from .models import MCQQuestion, Quiz, ShortQuestion
 from .providers import ModelOption, friendly_model_label, recommended_first
 
+MATH_FORMAT_INSTRUCTION = (
+    "If you include math, write it in KaTeX-compatible LaTeX. "
+    "Use $...$ for inline math and $$...$$ for display math."
+)
+
 
 @dataclass
 class OpenAIAuthState:
@@ -195,7 +200,8 @@ class OpenAIClient:
             "Explain the correct answer briefly (max 5 sentences). "
             "Address the learner directly using 'you' and 'your'. "
             "Do not refer to the learner as 'the user' or 'the student'. "
-            "Mention why their chosen answer was right or wrong.\n\n"
+            "Mention why their chosen answer was right or wrong. "
+            f"{MATH_FORMAT_INSTRUCTION}\n\n"
             f"{context_block}"
             f"Question:\n{prompt}\n\n"
             f"Options:\n{rendered_options}\n\n"
@@ -238,7 +244,8 @@ class OpenAIClient:
         ask = (
             "You are a quiz tutor answering follow-up questions about feedback. "
             "Answer clearly, concisely, and in second person ('you'/'your'). "
-            "If the learner is confused, restate using simpler language.\n\n"
+            "If the learner is confused, restate using simpler language. "
+            f"{MATH_FORMAT_INSTRUCTION}\n\n"
             f"Question type: {question_type}\n"
             f"Question:\n{question_prompt}\n\n"
             f"Options:\n{rendered_options or '(none)'}\n\n"

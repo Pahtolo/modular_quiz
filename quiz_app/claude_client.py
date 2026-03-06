@@ -16,6 +16,10 @@ from .providers import ModelOption, friendly_model_label
 DEPRECATED_CLAUDE_MODELS = {
     "claude-3-7-sonnet-latest",
 }
+MATH_FORMAT_INSTRUCTION = (
+    "If you include math, write it in KaTeX-compatible LaTeX. "
+    "Use $...$ for inline math and $$...$$ for display math."
+)
 
 
 class ClaudeClient:
@@ -171,7 +175,8 @@ class ClaudeClient:
             "You explain quiz answers concisely in second person. "
             "Address the learner as 'you'/'your'. "
             "Never refer to the learner as 'the user' or 'the student'. "
-            "Keep explanations under 5 sentences."
+            "Keep explanations under 5 sentences. "
+            f"{MATH_FORMAT_INSTRUCTION}"
         )
         context_block = ""
         if extra_context and extra_context.strip():
@@ -219,7 +224,8 @@ class ClaudeClient:
         system = (
             "You are a quiz tutor helping with follow-up questions about feedback. "
             "Address the learner directly as 'you'/'your'. "
-            "Be concise, clear, and accurate."
+            "Be concise, clear, and accurate. "
+            f"{MATH_FORMAT_INSTRUCTION}"
         )
         prompt = (
             f"Question type: {question_type}\n"
