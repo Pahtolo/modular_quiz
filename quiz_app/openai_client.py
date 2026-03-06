@@ -1,5 +1,6 @@
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -15,12 +16,22 @@ MATH_FORMAT_INSTRUCTION = (
     "If you include math, write it in KaTeX-compatible LaTeX. "
     "Use $...$ for inline math and $$...$$ for display math."
 )
+RETRYABLE_OPENAI_HTTP_CODES = {408, 429, 500, 502, 503, 504, 520}
+OPENAI_REQUEST_MAX_ATTEMPTS = 3
+OPENAI_REQUEST_BACKOFF_SECONDS = 1.0
+OPENAI_GENERATION_SOURCE_CHAR_LIMITS = (120000, 80000, 50000)
 
 
 @dataclass
 class OpenAIAuthState:
     api_key: str = ""
     access_token: str = ""
+
+
+class OpenAIRequestError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class OpenAIClient:
@@ -48,7 +59,7 @@ class OpenAIClient:
     def _request_json(self, method: str, path: str, payload: dict | None = None) -> dict:
         token = self._token().strip()
         if not token:
-            raise RuntimeError("OpenAI credentials are missing.")
+            raise OpenAIRequestError("OpenAI credentials are missing.")
 
         body = None
         headers = {"Authorization": f"Bearer {token}"}
@@ -62,14 +73,104 @@ class OpenAIClient:
             headers=headers,
             method=method,
         )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"OpenAI HTTP {exc.code}: {detail}") from exc
-        except Exception as exc:
-            raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+        for attempt in range(1, OPENAI_REQUEST_MAX_ATTEMPTS + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="ignore")
+                error = OpenAIRequestError(f"OpenAI HTTP {exc.code}: {detail}", status_code=exc.code)
+                if attempt < OPENAI_REQUEST_MAX_ATTEMPTS and exc.code in RETRYABLE_OPENAI_HTTP_CODES:
+                    time.sleep(OPENAI_REQUEST_BACKOFF_SECONDS * attempt)
+                    continue
+                raise error from exc
+            except json.JSONDecodeError as exc:
+                raise OpenAIRequestError(f"OpenAI response was not valid JSON: {exc}") from exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                error = OpenAIRequestError(f"OpenAI request failed: {exc}")
+                if attempt < OPENAI_REQUEST_MAX_ATTEMPTS:
+                    time.sleep(OPENAI_REQUEST_BACKOFF_SECONDS * attempt)
+                    continue
+                raise error from exc
+            except Exception as exc:
+                raise OpenAIRequestError(f"OpenAI request failed: {exc}") from exc
+
+        raise OpenAIRequestError("OpenAI request failed after retries.")
+
+    @staticmethod
+    def _try_parse_json_object(text: str) -> dict | None:
+        candidate = (text or "").strip()
+        if not candidate:
+            return None
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(candidate):
+            if char != "{":
+                continue
+            try:
+                payload, _ = decoder.raw_decode(candidate[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+        return None
+
+    @classmethod
+    def _parse_generated_json_object(cls, raw_text: str) -> dict:
+        candidates: list[str] = []
+        extracted = cls._extract_json_block(raw_text).strip()
+        if extracted:
+            candidates.append(extracted)
+        raw = (raw_text or "").strip()
+        if raw and raw not in candidates:
+            candidates.append(raw)
+
+        for candidate in candidates:
+            parsed = cls._try_parse_json_object(candidate)
+            if parsed is not None:
+                return parsed
+
+        snippet = raw[:200].replace("\n", " ")
+        raise RuntimeError(f"OpenAI output was not valid JSON. Raw output starts with: {snippet!r}")
+
+    @staticmethod
+    def _normalized_question_id(value: object, index: int) -> str:
+        if isinstance(value, str):
+            text = value.strip()
+            return text or f"q{index}"
+        if value is None:
+            return f"q{index}"
+        text = str(value).strip()
+        return text or f"q{index}"
+
+    @classmethod
+    def _normalize_generated_payload(cls, payload: dict) -> dict:
+        output = dict(payload)
+        if not str(output.get("title", "")).strip():
+            output["title"] = "Generated Quiz"
+        if not str(output.get("instructions", "")).strip():
+            output["instructions"] = "Answer all questions."
+
+        raw_questions = output.get("questions")
+        if not isinstance(raw_questions, list):
+            return output
+
+        normalized_questions: list[object] = []
+        for idx, question in enumerate(raw_questions, start=1):
+            if not isinstance(question, dict):
+                normalized_questions.append(question)
+                continue
+            updated = dict(question)
+            updated["id"] = cls._normalized_question_id(updated.get("id"), idx)
+            normalized_questions.append(updated)
+
+        output["questions"] = normalized_questions
+        return output
+
+    @staticmethod
+    def _is_retryable_generation_error(exc: Exception) -> bool:
+        return isinstance(exc, OpenAIRequestError) and (
+            exc.status_code is None or exc.status_code in RETRYABLE_OPENAI_HTTP_CODES
+        )
 
     def _responses_text(self, prompt: str, model: str | None = None, max_tokens: int = 500) -> str:
         payload = {
@@ -325,22 +426,51 @@ class OpenAIClient:
         mcq_options: int,
         model: str | None = None,
     ) -> Quiz:
-        prompt_spec = build_quiz_generation_prompt(
-            materials_text=materials_text,
-            title_hint=title_hint,
-            instructions_hint=instructions_hint,
-            total_questions=total_questions,
-            mcq_count=mcq_count,
-            short_count=short_count,
-            mcq_options=mcq_options,
-        )
-        prompt = f"{prompt_spec.system}\n\n{prompt_spec.user}"
-        raw = self._responses_text(prompt, model=model, max_tokens=3200)
-        json_text = self._extract_json_block(raw)
-        try:
-            payload = json.loads(json_text)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Model output was not valid JSON: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise RuntimeError("Generated payload is not a JSON object.")
-        return self._parse_quiz_payload(payload)
+        last_error: Exception | None = None
+        char_limits = list(OPENAI_GENERATION_SOURCE_CHAR_LIMITS)
+
+        for index, source_char_limit in enumerate(char_limits):
+            prompt_spec = build_quiz_generation_prompt(
+                materials_text=materials_text,
+                title_hint=title_hint,
+                instructions_hint=instructions_hint,
+                total_questions=total_questions,
+                mcq_count=mcq_count,
+                short_count=short_count,
+                mcq_options=mcq_options,
+                source_char_limit=source_char_limit,
+            )
+            prompt = f"{prompt_spec.system}\n\n{prompt_spec.user}"
+
+            try:
+                raw = self._responses_text(prompt, model=model, max_tokens=3200)
+            except Exception as exc:
+                last_error = exc
+                if index < len(char_limits) - 1 and self._is_retryable_generation_error(exc):
+                    continue
+                raise
+
+            try:
+                payload = self._parse_generated_json_object(raw)
+            except RuntimeError:
+                repair_prompt = (
+                    f"{prompt}\n\n"
+                    "Your previous response was not valid JSON. "
+                    "Return only one valid JSON object. "
+                    "Do not include markdown, code fences, or commentary."
+                )
+                try:
+                    repaired_raw = self._responses_text(repair_prompt, model=model, max_tokens=3200)
+                    payload = self._parse_generated_json_object(repaired_raw)
+                except Exception as exc:
+                    last_error = exc
+                    if index < len(char_limits) - 1 and self._is_retryable_generation_error(exc):
+                        continue
+                    raise
+
+            payload = self._normalize_generated_payload(payload)
+            return self._parse_quiz_payload(payload)
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("OpenAI quiz generation failed.")

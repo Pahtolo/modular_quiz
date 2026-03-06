@@ -793,6 +793,7 @@ function QuizzesStructureTree({
 }) {
   const [collapsedPaths, setCollapsedPaths] = useState({});
   const [draggedPath, setDraggedPath] = useState('');
+  const [dropTargetPath, setDropTargetPath] = useState('');
 
   useEffect(() => {
     if (!selectedPath) {
@@ -858,13 +859,25 @@ function QuizzesStructureTree({
     });
   };
 
+  const destinationFolderForNode = (node) => {
+    if (node?.kind === 'folder') {
+      return normalizePathText(node.path);
+    }
+    return normalizePathText(parentDirectoryPath(node?.path) || rootPath);
+  };
+
   const renderNode = (node) => {
     const isFolder = node.kind === 'folder';
     const hasChildren = Boolean(node.children && node.children.length > 0);
     const isCollapsible = isFolder && hasChildren;
     const isCollapsed = Boolean(collapsedPaths[node.path]);
+    const destinationFolderPath = destinationFolderForNode(node);
+    const isDropTarget = Boolean(isFolder && destinationFolderPath && destinationFolderPath === dropTargetPath);
     return (
-      <li key={`${node.kind}-${node.path}`}>
+      <li
+        key={`${node.kind}-${node.path}`}
+        className={`quizzes-structure-item${isDropTarget ? ' drop-target' : ''}`}
+      >
         <div className="tree-row">
           {isCollapsible ? (
             <button
@@ -885,6 +898,8 @@ function QuizzesStructureTree({
             draggable
             onClick={() => {
               onSelect?.(node.path);
+            }}
+            onDoubleClick={() => {
               if (isCollapsible) {
                 toggleCollapsed(node.path);
               }
@@ -903,31 +918,40 @@ function QuizzesStructureTree({
             }}
             onDragStart={(event) => {
               setDraggedPath(normalizePathText(node.path));
+              setDropTargetPath('');
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData(QUIZ_MANAGER_DRAG_MIME, String(node.path || ''));
             }}
             onDragEnd={() => {
               setDraggedPath('');
+              setDropTargetPath('');
             }}
             onDragOver={(event) => {
-              if (!isFolder) {
-                return;
-              }
               const sourcePath = resolveDraggedPath(event);
-              if (!canDropInto(sourcePath, node.path)) {
-                return;
-              }
-              event.preventDefault();
-              event.dataTransfer.dropEffect = 'move';
-            }}
-            onDrop={(event) => {
-              if (!isFolder) {
+              if (!canDropInto(sourcePath, destinationFolderPath)) {
+                if (dropTargetPath) {
+                  setDropTargetPath('');
+                }
                 return;
               }
               event.preventDefault();
               event.stopPropagation();
-              moveDraggedItem(event, node.path);
+              if (dropTargetPath !== destinationFolderPath) {
+                setDropTargetPath(destinationFolderPath);
+              }
+              event.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={(event) => {
+              const sourcePath = resolveDraggedPath(event);
+              if (!canDropInto(sourcePath, destinationFolderPath)) {
+                setDropTargetPath('');
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              moveDraggedItem(event, destinationFolderPath);
               setDraggedPath('');
+              setDropTargetPath('');
             }}
           >
             <span className="quizzes-node-kind">{isFolder ? 'Folder' : 'Quiz'}</span>
@@ -954,16 +978,29 @@ function QuizzesStructureTree({
         const destinationFolderPath = normalizePathText(rootPath);
         const sourcePath = resolveDraggedPath(event);
         if (!canDropInto(sourcePath, destinationFolderPath)) {
+          if (dropTargetPath) {
+            setDropTargetPath('');
+          }
           return;
         }
         event.preventDefault();
+        if (dropTargetPath) {
+          setDropTargetPath('');
+        }
         event.dataTransfer.dropEffect = 'move';
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget)) {
+          return;
+        }
+        setDropTargetPath('');
       }}
       onDrop={(event) => {
         const destinationFolderPath = normalizePathText(rootPath);
         event.preventDefault();
         moveDraggedItem(event, destinationFolderPath);
         setDraggedPath('');
+        setDropTargetPath('');
       }}
     >
       {(nodes || []).map((node) => renderNode(node))}
@@ -991,6 +1028,7 @@ function App() {
 
   const [settings, setSettings] = useState(null);
   const [settingsForm, setSettingsForm] = useState(null);
+  const [settingsPage, setSettingsPage] = useState('preferences');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [autoAdvanceDelayDraft, setAutoAdvanceDelayDraft] = useState('600');
   const [quizTimerDurationMinutesDraft, setQuizTimerDurationMinutesDraft] = useState(
@@ -1870,7 +1908,14 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (normalizedActiveTab !== 'quiz' || isEditableTarget(event.target)) {
+      const editingTarget = isEditableTarget(event.target);
+      const isSpacebar = event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar';
+      if (normalizedActiveTab === 'quiz' && quiz && !quizCompleted && isSpacebar && !editingTarget) {
+        event.preventDefault();
+        toggleQuizClockPause();
+        return;
+      }
+      if (normalizedActiveTab !== 'quiz' || editingTarget) {
         return;
       }
       if (quizIsPaused) {
@@ -2693,6 +2738,11 @@ function App() {
   }
 
   async function promptForQuizManagerFolder() {
+    const parentPath = normalizePathText(selectedQuizzesManagerParentPath || quizzesDir);
+    if (!parentPath) {
+      setQuizzesWarnings(['Managed quiz folder is not ready yet.']);
+      return;
+    }
     const folderName = window.prompt(
       `Create a new folder inside ${selectedQuizzesManagerParentLabel}.`,
       '',
@@ -2707,7 +2757,7 @@ function App() {
     try {
       const response = await apiRequest('/v1/quizzes/library/folder', 'POST', {
         name: trimmedFolderName,
-        parent_path: selectedQuizzesManagerParentPath || quizzesDir,
+        parent_path: parentPath,
       });
       applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
       setSelectedQuizzesManagerPath(response.path || '');
@@ -2720,6 +2770,11 @@ function App() {
   }
 
   async function promptForGenerationOutputFolder() {
+    const parentPath = normalizePathText(selectedGenerationOutputFolder?.absolute_path || quizzesDir);
+    if (!parentPath) {
+      setGenerateErrors(['Quiz folder is not ready yet.']);
+      return;
+    }
     const parentFolderLabel = selectedGenerationOutputFolder?.label || 'Quizzes';
     const folderName = window.prompt(`Create a new output folder inside ${parentFolderLabel}.`, '');
     const trimmedFolderName = String(folderName || '').trim();
@@ -2731,7 +2786,7 @@ function App() {
     try {
       const response = await apiRequest('/v1/quizzes/library/folder', 'POST', {
         name: trimmedFolderName,
-        parent_path: selectedGenerationOutputFolder?.absolute_path || quizzesDir,
+        parent_path: parentPath,
       });
       applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
       const createdRelative = normalizeRelativePath(relativePathFromRoot(response.path, quizzesDir));
@@ -3770,18 +3825,6 @@ function App() {
     settingsMatches('question timer', 'timer', 'countdown'),
     settingsMatches('question nav', 'quiz progression', 'lock questions', 'unlock questions', 'navigation'),
     settingsMatches('mcq explanations', 'explanations', 'explain'),
-    settingsMatches(
-      'quiz folder manager',
-      'quizzes',
-      'quiz folder',
-      'quiz library',
-      'create folder',
-      'delete folder',
-      'delete quiz',
-      'import folder',
-      'open quiz folder',
-      'drag and drop',
-    ),
     settingsMatches('claude api key', 'claude'),
     settingsMatches('openai api key', 'openai'),
   ].some(Boolean);
@@ -4054,6 +4097,90 @@ function App() {
     );
   }
 
+  function renderQuizFolderManagerSection() {
+    return (
+      <section className="roots-card settings-manager-card">
+        <div className="row between roots-header">
+          <div>
+            <strong>Quiz Folder Manager</strong>
+            <div className="roots-count">{countQuizFiles(quizzesTree)} quiz file(s) managed</div>
+          </div>
+          <div className="row">
+            <button type="button" onClick={() => importQuizzesFromFinder()}>
+              Import Folder
+            </button>
+            <button type="button" onClick={() => openPath(quizzesDir)} disabled={!quizzesDir}>
+              Open Quiz Folder
+            </button>
+            <button type="button" onClick={() => setShowQuizzesBox((prev) => !prev)}>
+              {showQuizzesBox ? 'Minimize' : 'Expand'}
+            </button>
+          </div>
+        </div>
+
+        <div className="quizzes-dir-path">{quizzesDir || 'No quizzes directory available.'}</div>
+
+        {showQuizzesBox ? (
+          <>
+            <div
+              className={`quizzes-drop-zone ${quizzesDragOver ? 'drag-over' : ''}`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setQuizzesDragOver(true);
+              }}
+              onDragLeave={() => setQuizzesDragOver(false)}
+              onDrop={(event) => {
+                void handleQuizzesDrop(event);
+              }}
+            >
+              Drag and drop quiz folders or `.json` files here to import into the managed quiz folder.
+            </div>
+            <div className="quizzes-manager-controls">
+              <div className="row quizzes-manager-actions">
+                <button
+                  type="button"
+                  disabled={quizzesManagerBusy || !quizzesDir}
+                  onClick={() => {
+                    void promptForQuizManagerFolder();
+                  }}
+                >
+                  {quizzesManagerBusy ? 'Working...' : 'New Folder'}
+                </button>
+              </div>
+            </div>
+            <div className="quizzes-manager-selection">
+              {selectedQuizzesManagerNode ? (
+                `Selected ${selectedQuizzesManagerNode.kind === 'folder' ? 'folder' : 'quiz'}: ${selectedQuizzesManagerNode.name}. New folders will be created in ${selectedQuizzesManagerParentLabel}. Single-click folders to select them, double-click folders to collapse or expand them, drag items into folders to move them, and right-click items to rename or delete.`
+              ) : (
+                `No item selected. New folders will be created in ${selectedQuizzesManagerParentLabel}. Single-click folders to select them, double-click folders to collapse or expand them, drag items into folders to move them, and right-click items to rename or delete.`
+              )}
+            </div>
+            <div className="roots-list-wrap">
+              <QuizzesStructureTree
+                nodes={quizzesTree}
+                onOpenContextMenu={openQuizzesManagerContextMenu}
+                onMoveItem={({ sourcePath, destinationFolderPath }) => {
+                  void moveQuizManagerItem(sourcePath, destinationFolderPath);
+                }}
+                onSelect={setSelectedQuizzesManagerPath}
+                rootPath={quizzesDir}
+                selectedPath={selectedQuizzesManagerPath}
+              />
+            </div>
+          </>
+        ) : null}
+
+        {quizzesWarnings.length ? (
+          <div className="banner warn">
+            {quizzesWarnings.map((warning, index) => (
+              <div key={`quiz-warning-${index}`}>{warning}</div>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
   return (
     <div className="app-root">
       {startupError ? <div className="banner error">{startupError}</div> : null}
@@ -4278,11 +4405,17 @@ function App() {
               {quizLoadError ? <div className="banner error">{quizLoadError}</div> : null}
 
               {quiz && currentQuestion ? (
-                <div className={`question-shell ${showingPerformanceHistory ? 'performance-history-open' : ''}`}>
-                  <div className="question-block">
-                    {quizIsPaused ? (
-                      <div className="banner warn">Quiz paused. Resume the quiz clock to continue answering or navigating.</div>
-                    ) : null}
+                quizIsPaused ? (
+                  <div className="quiz-paused-shell">
+                    <div className="card quiz-paused-card">
+                      <h3>Quiz Paused</h3>
+                      <p>The current quiz is hidden until you resume the quiz clock.</p>
+                      <p>Press `Space` or use the top-bar `Resume` button to continue.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={`question-shell ${showingPerformanceHistory ? 'performance-history-open' : ''}`}>
+                    <div className="question-block">
                     <div className="row question-step-controls">
                       <button type="button" disabled={!canGoPrevQuestion || autoAdvanceEnabled || quizIsPaused} onClick={() => goToPreviousQuestion()}>
                         ← Previous
@@ -4416,58 +4549,59 @@ function App() {
                     ) : null}
                   </div>
 
-                  {showingPerformanceHistory ? (
-                    <aside className="question-nav-column performance-history-column">
-                      {renderPerformanceHistoryPanel()}
-                    </aside>
-                  ) : (
-                    <aside className="question-nav-column">
-                      <h4>Question Nav</h4>
-                      <div className="question-nav-list">
-                        {quiz.questions.map((q, index) => {
-                          const questionState = questionStates[index];
-                          const answered = Boolean(questionState);
-                          const reachable = !lockQuestionsByProgression || index <= furthestReachableIndex;
-                          const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
-                          const current = index === quizIndex;
-                          const result = questionState?.result;
-                          const hasGradedOutcome = typeof result?.correct === 'boolean' && !result?.ungraded;
+                    {showingPerformanceHistory ? (
+                      <aside className="question-nav-column performance-history-column">
+                        {renderPerformanceHistoryPanel()}
+                      </aside>
+                    ) : (
+                      <aside className="question-nav-column">
+                        <h4>Question Nav</h4>
+                        <div className="question-nav-list">
+                          {quiz.questions.map((q, index) => {
+                            const questionState = questionStates[index];
+                            const answered = Boolean(questionState);
+                            const reachable = !lockQuestionsByProgression || index <= furthestReachableIndex;
+                            const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
+                            const current = index === quizIndex;
+                            const result = questionState?.result;
+                            const hasGradedOutcome = typeof result?.correct === 'boolean' && !result?.ungraded;
 
-                          let navStatusLabel = reachable ? 'Open' : 'Locked';
-                          let navStatusClass = '';
-                          if (blockedByAutoAdvance) {
-                            navStatusLabel = 'Locked';
-                          } else if (answered) {
-                            if (showFeedbackOnAnswer && hasGradedOutcome) {
-                              navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
-                              navStatusClass = result.correct ? ' correct' : ' incorrect';
-                            } else if (showFeedbackOnCompletion) {
-                              navStatusLabel = 'Done';
-                              navStatusClass = ' done';
-                              if (quizComplete && hasGradedOutcome) {
+                            let navStatusLabel = reachable ? 'Open' : 'Locked';
+                            let navStatusClass = '';
+                            if (blockedByAutoAdvance) {
+                              navStatusLabel = 'Locked';
+                            } else if (answered) {
+                              if (showFeedbackOnAnswer && hasGradedOutcome) {
                                 navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
                                 navStatusClass = result.correct ? ' correct' : ' incorrect';
+                              } else if (showFeedbackOnCompletion) {
+                                navStatusLabel = 'Done';
+                                navStatusClass = ' done';
+                                if (quizComplete && hasGradedOutcome) {
+                                  navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
+                                  navStatusClass = result.correct ? ' correct' : ' incorrect';
+                                }
                               }
                             }
-                          }
 
-                          return (
-                            <button
-                              key={`qnav-${q.id || index}`}
-                              type="button"
-                              disabled={!reachable || blockedByAutoAdvance || quizIsPaused}
-                              className={`question-nav-button${current ? ' current' : ''}${navStatusClass}`}
-                              onClick={() => jumpToQuestion(index)}
-                            >
-                              <span>Q{index + 1}</span>
-                              <span>{navStatusLabel}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </aside>
-                  )}
-                </div>
+                            return (
+                              <button
+                                key={`qnav-${q.id || index}`}
+                                type="button"
+                                disabled={!reachable || blockedByAutoAdvance || quizIsPaused}
+                                className={`question-nav-button${current ? ' current' : ''}${navStatusClass}`}
+                                onClick={() => jumpToQuestion(index)}
+                              >
+                                <span>Q{index + 1}</span>
+                                <span>{navStatusLabel}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </aside>
+                    )}
+                  </div>
+                )
               ) : showingPerformanceHistory ? (
                 <section className="performance-standalone">
                   {renderPerformanceHistoryPanel()}
@@ -4691,14 +4825,26 @@ function App() {
               </button>
             </div>
 
-            <label className="field settings-search-field">
-              <span>Search settings</span>
-              <input
-                value={settingsSearch}
-                onChange={(event) => setSettingsSearch(event.target.value)}
-                placeholder="Try: theme, feedback, question nav, OpenAI, quiz folder manager"
-              />
-            </label>
+            <div className="settings-page-tabs" role="tablist" aria-label="Settings pages">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={settingsPage === 'preferences'}
+                className={`settings-page-tab ${settingsPage === 'preferences' ? 'active' : ''}`.trim()}
+                onClick={() => setSettingsPage('preferences')}
+              >
+                Preferences
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={settingsPage === 'manager'}
+                className={`settings-page-tab ${settingsPage === 'manager' ? 'active' : ''}`.trim()}
+                onClick={() => setSettingsPage('manager')}
+              >
+                Quiz Folder Manager
+              </button>
+            </div>
 
             {settingsSaveStatus.message ? (
               <div className={`settings-save-status ${settingsSaveStatus.tone}`}>
@@ -4706,7 +4852,18 @@ function App() {
               </div>
             ) : null}
 
-            {settingsMatches('appearance', 'theme', 'dark mode', 'light mode') ? (
+            {settingsPage === 'preferences' ? (
+              <>
+                <label className="field settings-search-field">
+                  <span>Search settings</span>
+                  <input
+                    value={settingsSearch}
+                    onChange={(event) => setSettingsSearch(event.target.value)}
+                    placeholder="Try: theme, feedback, question nav, OpenAI, quiz clock"
+                  />
+                </label>
+
+                {settingsMatches('appearance', 'theme', 'dark mode', 'light mode') ? (
               <section className="settings-group">
                 <h3>Appearance</h3>
                 <div className="form-grid two-col">
@@ -4721,10 +4878,10 @@ function App() {
                   </div>
                 </div>
               </section>
-            ) : null}
+                ) : null}
 
-            <div className="form-grid two-col">
-              {settingsMatches('preferred available model', 'preferred model', 'model selection', 'grading model') ? (
+                <div className="form-grid two-col">
+                  {settingsMatches('preferred available model', 'preferred model', 'model selection', 'grading model') ? (
                 <label className="field">
                   <span>Preferred Available Model</span>
                   <select
@@ -4755,13 +4912,13 @@ function App() {
                     onChange={(event) =>
                       setSettingsForm((prev) => ({ ...prev, mcq_explanations_enabled: event.target.checked }))
                     }
-                  />
+                    />
                   <span>Enable MCQ explanations</span>
                 </label>
-              ) : null}
-            </div>
+                  ) : null}
+                </div>
 
-            {settingsMatches(
+                {settingsMatches(
               'feedback',
               'show feedback on answer',
               'show feedback on quiz completion',
@@ -4819,9 +4976,9 @@ function App() {
                   Reuses source files from quiz generation as extra context for grading and explanations.
                 </div>
               </section>
-            ) : null}
+                ) : null}
 
-            {(settingsMatches('auto advance', 'auto-advance', 'delay', 'next question')
+                {(settingsMatches('auto advance', 'auto-advance', 'delay', 'next question')
               || settingsMatches('quiz clock', 'stopwatch', 'quiz timer', 'timer duration', 'clock')
               || settingsMatches('question timer', 'timer', 'countdown')) ? (
                 <section className="settings-group">
@@ -4968,9 +5125,9 @@ function App() {
                     ) : null}
                   </div>
                 </section>
-              ) : null}
+                ) : null}
 
-            {settingsMatches('question nav', 'quiz progression', 'lock questions', 'unlock questions', 'navigation') ? (
+                {settingsMatches('question nav', 'quiz progression', 'lock questions', 'unlock questions', 'navigation') ? (
               <section className="settings-group">
                 <h3>Question Navigation</h3>
                 <div className="form-grid two-col">
@@ -4990,107 +5147,14 @@ function App() {
                   during live quizzes.
                 </div>
               </section>
-            ) : null}
-
-            {!settingsFilterHasMatches ? (
-              <div className="banner warn">No settings matched your search.</div>
-            ) : null}
-
-            {settingsMatches(
-              'quiz folder manager',
-              'quizzes',
-              'quiz folder',
-              'quiz library',
-              'create folder',
-              'delete folder',
-              'delete quiz',
-              'import folder',
-              'open quiz folder',
-              'drag and drop',
-            ) ? (
-              <section className="roots-card">
-                <div className="row between roots-header">
-                  <div>
-                    <strong>Quiz Folder Manager</strong>
-                    <div className="roots-count">{countQuizFiles(quizzesTree)} quiz file(s) managed</div>
-                  </div>
-                  <div className="row">
-                    <button type="button" onClick={() => importQuizzesFromFinder()}>
-                      Import Folder
-                    </button>
-                    <button type="button" onClick={() => openPath(quizzesDir)} disabled={!quizzesDir}>
-                      Open Quiz Folder
-                    </button>
-                    <button type="button" onClick={() => setShowQuizzesBox((prev) => !prev)}>
-                      {showQuizzesBox ? 'Minimize' : 'Expand'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="quizzes-dir-path">{quizzesDir || 'No quizzes directory available.'}</div>
-
-                {showQuizzesBox ? (
-                  <>
-                    <div
-                      className={`quizzes-drop-zone ${quizzesDragOver ? 'drag-over' : ''}`}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        setQuizzesDragOver(true);
-                      }}
-                      onDragLeave={() => setQuizzesDragOver(false)}
-                      onDrop={(event) => {
-                        void handleQuizzesDrop(event);
-                      }}
-                    >
-                      Drag and drop quiz folders or .json files here to import into the managed quiz folder.
-                    </div>
-                    <div className="quizzes-manager-controls">
-                      <div className="row quizzes-manager-actions">
-                        <button
-                          type="button"
-                          disabled={quizzesManagerBusy || !quizzesDir}
-                          onClick={() => {
-                            void promptForQuizManagerFolder();
-                          }}
-                        >
-                          {quizzesManagerBusy ? 'Working...' : 'New Folder'}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="quizzes-manager-selection">
-                      {selectedQuizzesManagerNode ? (
-                        `Selected ${selectedQuizzesManagerNode.kind === 'folder' ? 'folder' : 'quiz'}: ${selectedQuizzesManagerNode.name}. New folders will be created in ${selectedQuizzesManagerParentLabel}. Click folders to collapse/expand, drag items into folders to move them, and right-click items to rename or delete.`
-                      ) : (
-                        `No item selected. New folders will be created in ${selectedQuizzesManagerParentLabel}. Click folders to collapse/expand, drag items into folders to move them, and right-click items to rename or delete.`
-                      )}
-                    </div>
-                    <div className="roots-list-wrap">
-                      <QuizzesStructureTree
-                        nodes={quizzesTree}
-                        onOpenContextMenu={openQuizzesManagerContextMenu}
-                        onMoveItem={({ sourcePath, destinationFolderPath }) => {
-                          void moveQuizManagerItem(sourcePath, destinationFolderPath);
-                        }}
-                        onSelect={setSelectedQuizzesManagerPath}
-                        rootPath={quizzesDir}
-                        selectedPath={selectedQuizzesManagerPath}
-                      />
-                    </div>
-                  </>
                 ) : null}
 
-                {quizzesWarnings.length ? (
-                  <div className="banner warn">
-                    {quizzesWarnings.map((warning, index) => (
-                      <div key={`quiz-warning-${index}`}>{warning}</div>
-                    ))}
-                  </div>
+                {!settingsFilterHasMatches ? (
+                  <div className="banner warn">No settings matched your search.</div>
                 ) : null}
-              </section>
-            ) : null}
 
-            <div className="form-grid two-col">
-              {settingsMatches('claude api key', 'claude') ? (
+                <div className="form-grid two-col">
+                  {settingsMatches('claude api key', 'claude') ? (
                 <label className="field">
                   <span>Claude API key</span>
                   <input
@@ -5099,9 +5163,9 @@ function App() {
                     onChange={(event) => setSettingsForm((prev) => ({ ...prev, claude_api_key: event.target.value }))}
                   />
                 </label>
-              ) : null}
+                  ) : null}
 
-              {settingsMatches('openai api key', 'openai') ? (
+                  {settingsMatches('openai api key', 'openai') ? (
                 <label className="field">
                   <span>OpenAI API key</span>
                   <input
@@ -5110,9 +5174,12 @@ function App() {
                     onChange={(event) => setSettingsForm((prev) => ({ ...prev, openai_api_key: event.target.value }))}
                   />
                 </label>
-              ) : null}
+                  ) : null}
+                </div>
+              </>
+            ) : null}
 
-            </div>
+            {settingsPage === 'manager' ? renderQuizFolderManagerSection() : null}
           </section>
         ) : null}
       </main>

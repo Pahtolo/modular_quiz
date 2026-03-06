@@ -254,6 +254,22 @@ function stopBackend() {
   backendInfo.ready = false;
 }
 
+function managedQuizzesRoot() {
+  return path.resolve(app.getPath('userData'), 'Quizzes');
+}
+
+function isPathWithin(rootPath, candidatePath) {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isAllowedQuizFile(targetPath) {
+  if (path.extname(targetPath).toLowerCase() !== '.json') {
+    return false;
+  }
+  return !(path.basename(targetPath) === 'settings.json' && path.basename(path.dirname(targetPath)) === 'settings');
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -304,6 +320,40 @@ function setupIpcHandlers() {
     }
 
     return apiRequest(pathname, method, body);
+  });
+
+  ipcMain.handle('quizzes:delete-item', async (_event, args) => {
+    const rawPath = String(args?.path || '').trim();
+    if (!rawPath) {
+      throw new Error('Quiz library path is required.');
+    }
+    const targetPath = path.resolve(rawPath);
+
+    const quizzesRoot = managedQuizzesRoot();
+    if (!isPathWithin(quizzesRoot, targetPath)) {
+      throw new Error('Quiz folder operations must stay inside the managed Quizzes directory.');
+    }
+    if (targetPath === quizzesRoot) {
+      throw new Error('The managed Quizzes directory itself cannot be modified by this action.');
+    }
+    if (!fs.existsSync(targetPath)) {
+      throw new Error(`Quiz library item not found: ${targetPath}`);
+    }
+
+    const stat = fs.lstatSync(targetPath);
+    if (stat.isDirectory()) {
+      fs.rmSync(targetPath, { recursive: true, force: false });
+      return { deletedPath: targetPath, deletedKind: 'folder' };
+    }
+    if (stat.isFile()) {
+      if (!isAllowedQuizFile(targetPath)) {
+        throw new Error(`Unsupported quiz file: ${targetPath}`);
+      }
+      fs.rmSync(targetPath, { force: false });
+      return { deletedPath: targetPath, deletedKind: 'quiz' };
+    }
+
+    throw new Error('Unsupported quiz library item.');
   });
 
   ipcMain.handle('dialog:pick-files', async () => {

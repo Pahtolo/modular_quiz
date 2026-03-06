@@ -15,4 +15,7 @@ contextBridge.exposeInMainWorld('modularQuiz', {
     openPath: (path) => ipcRenderer.invoke('shell:open-path', { path }),
     openExternal: (url) => ipcRenderer.invoke('shell:open-external', { url }),
   },
+  quizzes: {
+    deleteItem: (path) => ipcRenderer.invoke('quizzes:delete-item', { path }),
+  },
 });

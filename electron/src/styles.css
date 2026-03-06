@@ -215,8 +215,15 @@ button:disabled {
 }
 
 .tabs-quiz-clock {
+  flex-shrink: 0;
+}
+
+.tabs-quiz-clock-wrap {
   margin-left: auto;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .tab-panel {
@@ -274,6 +281,11 @@ button:disabled {
   flex-direction: column;
   gap: 0.75rem;
   overflow: hidden;
+  padding-right: 0;
+}
+
+.tree-card.feedback-column-card > .row.between {
+  padding-right: 0.5rem;
 }
 
 .quiz-selector-tabs {
@@ -401,42 +413,6 @@ button:disabled {
   background: var(--surface-2);
   transform: none;
   box-shadow: none;
-}
-
-.quiz-clock-menu-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1910;
-}
-
-.quiz-clock-menu {
-  position: fixed;
-  width: min(280px, calc(100vw - 20px));
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  padding: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.quiz-clock-menu-title {
-  font-size: 0.86rem;
-  letter-spacing: 0.02em;
-  color: var(--ink-soft);
-  font-weight: 700;
-}
-
-.quiz-clock-menu-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem;
-}
-
-.quiz-clock-menu-field {
-  margin-top: 0.1rem;
 }
 
 .start-quiz-column-btn {
@@ -615,6 +591,27 @@ textarea {
   flex: 1;
 }
 
+.quiz-paused-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quiz-paused-card {
+  width: min(420px, 100%);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.quiz-paused-card h3,
+.quiz-paused-card p {
+  margin: 0;
+}
+
 .question-step-controls {
   flex-wrap: wrap;
   justify-content: flex-start;
@@ -651,12 +648,19 @@ textarea {
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--ink-soft);
-  cursor: context-menu;
+  cursor: default;
 }
 
 .quiz-clock:hover {
   transform: none;
   box-shadow: none;
+}
+
+.quiz-clock-toggle {
+  border-radius: 999px;
+  padding: 0.22rem 0.72rem;
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .quiz-clock.timer-mode {
@@ -804,6 +808,8 @@ textarea {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  min-width: 0;
+  padding-right: 0.5rem;
 }
 
 .feedback-chat h4 {
@@ -820,12 +826,15 @@ textarea {
   border-radius: 0;
   background: transparent;
   padding: 0;
+  padding-right: 0.5rem;
+  margin-right: -0.5rem;
   overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
   flex: 1;
   min-height: 0;
+  scrollbar-gutter: stable;
 }
 
 .feedback-chat-message {
@@ -1195,6 +1204,36 @@ textarea {
   gap: 0.9rem;
 }
 
+.settings-page-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  width: fit-content;
+}
+
+.settings-page-tab {
+  border-color: transparent;
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.32rem 0.78rem;
+  font-size: 0.84rem;
+}
+
+.settings-page-tab:hover {
+  transform: none;
+  box-shadow: none;
+  background: var(--surface);
+}
+
+.settings-page-tab.active {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
 .settings-search-field {
   max-width: 540px;
 }
@@ -1217,12 +1256,26 @@ textarea {
 
 .settings-warning-note {
   grid-column: 1 / -1;
-  border: 1px solid var(--banner-warn-border);
-  border-radius: 10px;
-  background: var(--banner-warn-bg);
-  color: var(--warn);
-  padding: 0.5rem 0.6rem;
-  font-size: 0.9rem;
+  color: var(--ink-soft);
+  padding: 0;
+  font-size: 0.88rem;
+}
+
+.settings-save-status {
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.settings-save-status.info {
+  color: var(--ink-soft);
+}
+
+.settings-save-status.success {
+  color: var(--accent-2);
+}
+
+.settings-save-status.error {
+  color: var(--result-bad-text);
 }
 
 .roots-card {
@@ -1246,7 +1299,9 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--roots-list-bg);
-  max-height: 260px;
+  height: 320px;
+  min-height: 260px;
+  resize: vertical;
   overflow: auto;
 }
 
@@ -1270,6 +1325,25 @@ textarea {
   border-color: var(--drop-drag-border);
   background: var(--drop-drag-bg);
   color: var(--drop-drag-text);
+}
+
+.quizzes-manager-controls {
+  margin-top: 0.7rem;
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.quizzes-manager-actions {
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.quizzes-manager-selection {
+  margin-top: 0.5rem;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
 }
 
 .generate-source-drop {
@@ -1348,6 +1422,18 @@ textarea {
   gap: 0.25rem;
 }
 
+.quizzes-structure-item {
+  list-style: none;
+  border-radius: 10px;
+  padding: 0.18rem;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.quizzes-structure-item.drop-target {
+  background: var(--drop-drag-bg);
+  box-shadow: inset 0 0 0 1px var(--drop-drag-border);
+}
+
 .quizzes-structure-list .quizzes-structure-list {
   margin-left: 0.9rem;
   padding-left: 0.45rem;
@@ -1355,13 +1441,40 @@ textarea {
 }
 
 .quizzes-node {
+  appearance: none;
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  width: 100%;
   padding: 0.24rem 0.35rem;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: var(--node-bg);
+  color: inherit;
+  font: inherit;
   font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.quizzes-node.selected {
+  border-color: var(--tree-selected-border);
+  background: var(--tree-selected-bg);
+}
+
+.quizzes-node-kind {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.quizzes-node-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .quizzes-node.folder {
@@ -1372,6 +1485,11 @@ textarea {
 .quizzes-node.quiz {
   background: var(--node-quiz-bg);
   color: var(--node-quiz-text);
+}
+
+.quizzes-node.folder.selected,
+.quizzes-node.quiz.selected {
+  background: var(--tree-selected-bg);
 }
 
 .roots-empty {
@@ -1412,6 +1530,12 @@ textarea {
 
   .tabs-quiz-clock {
     margin-left: 0;
+  }
+
+  .tabs-quiz-clock-wrap {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-end;
   }
 
   .quiz-layout,
@@ -1458,5 +1582,9 @@ textarea {
 
   .question-nav-list {
     max-height: 320px;
+  }
+
+  .quizzes-manager-controls {
+    align-items: stretch;
   }
 }

@@ -31,6 +31,7 @@ ALLOWED_SHORT_GRADERS = {"self", "claude", "openai"}
 ALLOWED_FEEDBACK_MODES = {"show_then_next", "auto_advance", "end_only"}
 ALLOWED_OPENAI_AUTH_MODES = {"api_key", "oauth"}
 ALLOWED_MODEL_ALIAS_MODES = {"friendly_plus_id", "friendly_only", "id_only"}
+ALLOWED_QUIZ_CLOCK_MODES = {"stopwatch", "timer"}
 
 
 @dataclass
@@ -46,7 +47,10 @@ class AppSettings:
     auto_inject_context: bool = False
     auto_advance_enabled: bool = False
     auto_advance_ms: int = 600
+    quiz_clock_mode: str = "stopwatch"
+    quiz_timer_duration_seconds: int = 900
     question_timer_seconds: int = 0
+    lock_questions_by_progression: bool = True
 
     claude_api_key: str = ""
     claude_model: str = "claude-3-5-haiku-latest"
@@ -197,10 +201,24 @@ class SettingsStore:
             ),
             auto_advance_enabled=auto_advance_enabled,
             auto_advance_ms=self._coerce_int(data.get("auto_advance_ms"), defaults.auto_advance_ms, minimum=0),
+            quiz_clock_mode=self._coerce_choice(
+                data.get("quiz_clock_mode"),
+                ALLOWED_QUIZ_CLOCK_MODES,
+                defaults.quiz_clock_mode,
+            ),
+            quiz_timer_duration_seconds=self._coerce_int(
+                data.get("quiz_timer_duration_seconds"),
+                defaults.quiz_timer_duration_seconds,
+                minimum=1,
+            ),
             question_timer_seconds=self._coerce_int(
                 data.get("question_timer_seconds"),
                 defaults.question_timer_seconds,
                 minimum=0,
+            ),
+            lock_questions_by_progression=self._coerce_bool(
+                data.get("lock_questions_by_progression"),
+                defaults.lock_questions_by_progression,
             ),
             claude_api_key=self._coerce_str(data.get("claude_api_key"), defaults.claude_api_key),
             claude_model=claude_model,

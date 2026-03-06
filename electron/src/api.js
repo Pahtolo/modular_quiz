@@ -42,3 +42,10 @@ export async function openPath(path) {
 export async function openExternal(url) {
   return bridge.shell.openExternal(url);
 }
+
+export async function deleteManagedQuizItem(path) {
+  if (!bridge.quizzes || typeof bridge.quizzes.deleteItem !== 'function') {
+    throw new Error('Quiz deletion support is not available until the app restarts.');
+  }
+  return bridge.quizzes.deleteItem(path);
+}
