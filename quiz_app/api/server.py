@@ -708,10 +708,25 @@ def _mcq_question_from_payload(payload: dict[str, Any]) -> MCQQuestion:
             message=f"MCQ answer must be one of {', '.join(valid_answers)}.",
         )
 
+    try:
+        points = int(payload.get("points", 1))
+    except (TypeError, ValueError) as exc:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ question points must be a positive integer.",
+        ) from exc
+    if points <= 0:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ question points must be a positive integer.",
+        )
+
     return MCQQuestion(
         id=str(payload.get("id", "q")).strip() or "q",
         prompt=str(payload.get("prompt", "")).strip(),
-        points=int(payload.get("points", 1) or 1),
+        points=points,
         options=options,
         answer=answer,
     )
