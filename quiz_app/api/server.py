@@ -361,6 +361,17 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
             )
         )
 
+    quiz_clock_mode = str(payload.get("quiz_clock_mode", "stopwatch")).strip().lower()
+    if quiz_clock_mode != "timer":
+        quiz_clock_mode = "stopwatch"
+    try:
+        quiz_timer_duration_seconds = int(payload.get("quiz_timer_duration_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        quiz_timer_duration_seconds = 0
+    quiz_timer_duration_seconds = max(0, quiz_timer_duration_seconds)
+    if quiz_clock_mode != "timer":
+        quiz_timer_duration_seconds = 0
+
     return AttemptRecord(
         timestamp=str(payload.get("timestamp", "")).strip(),
         quiz_path=str(payload.get("quiz_path", "")).strip(),
@@ -370,6 +381,8 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
         percent=float(payload.get("percent", 0.0) or 0.0),
         duration_seconds=float(payload.get("duration_seconds", 0.0) or 0.0),
         model_key=str(payload.get("model_key", "")).strip(),
+        quiz_clock_mode=quiz_clock_mode,
+        quiz_timer_duration_seconds=quiz_timer_duration_seconds,
         questions=questions,
     )
 

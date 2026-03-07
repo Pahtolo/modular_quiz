@@ -1439,6 +1439,18 @@ function App() {
     }
     return historyFiltered[selectedAttemptIndex];
   }, [selectedAttemptIndex, historyFiltered]);
+  const selectedAttemptClockMode = normalizeQuizClockMode(selectedAttempt?.quiz_clock_mode || 'stopwatch');
+  const selectedAttemptDurationSeconds = Math.max(0, Number(selectedAttempt?.duration_seconds || 0) || 0);
+  const selectedAttemptTimerDurationSeconds = Math.max(0, Number(selectedAttempt?.quiz_timer_duration_seconds || 0) || 0);
+  const selectedAttemptTimerExpired = (
+    selectedAttemptClockMode === 'timer'
+    && selectedAttemptTimerDurationSeconds > 0
+    && selectedAttemptDurationSeconds >= selectedAttemptTimerDurationSeconds
+  );
+  const selectedAttemptTimerRemainingSeconds = Math.max(
+    0,
+    selectedAttemptTimerDurationSeconds - selectedAttemptDurationSeconds,
+  );
   const selectedAttemptUngradedIndexes = useMemo(() => {
     if (!selectedAttempt?.questions?.length) {
       return [];
@@ -3152,6 +3164,10 @@ function App() {
     const durationSeconds = Math.max(0, currentQuizElapsedMs() / 1000);
     const percent = maxScore ? (nextScore / maxScore) * 100 : 0;
     const modelKeyValue = effectivePreferredModelKey;
+    const clockModeValue = normalizeQuizClockMode(quizClockMode);
+    const timerDurationValue = clockModeValue === 'timer'
+      ? Math.max(0, Number(quizTimerDurationSeconds || 0) || 0)
+      : 0;
 
     try {
       await apiRequest('/v1/history/append', 'POST', {
@@ -3163,6 +3179,8 @@ function App() {
         percent,
         duration_seconds: durationSeconds,
         model_key: modelKeyValue,
+        quiz_clock_mode: clockModeValue,
+        quiz_timer_duration_seconds: timerDurationValue,
         questions: nextAttemptQuestions,
       });
       setQuizSaved(true);
@@ -3976,7 +3994,18 @@ function App() {
                   <p>
                     {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
                   </p>
-                  <p>Duration: {Number(selectedAttempt.duration_seconds || 0).toFixed(1)}s</p>
+                  <p>Clock: {selectedAttemptClockMode === 'timer' ? 'Timer' : 'Stopwatch'}</p>
+                  <p>Duration: {formatElapsedTime(selectedAttemptDurationSeconds * 1000)}</p>
+                  {selectedAttemptClockMode === 'timer' && selectedAttemptTimerDurationSeconds > 0 ? (
+                    <>
+                      <p>Timer limit: {formatElapsedTime(selectedAttemptTimerDurationSeconds * 1000)}</p>
+                      <p>
+                        {selectedAttemptTimerExpired
+                          ? 'Timer result: Expired'
+                          : `Time remaining: ${formatCountdown(selectedAttemptTimerRemainingSeconds * 1000)}`}
+                      </p>
+                    </>
+                  ) : null}
                   <table>
                     <thead>
                       <tr>

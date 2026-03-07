@@ -29,6 +29,8 @@ class AttemptRecord:
     percent: float
     duration_seconds: float
     model_key: str
+    quiz_clock_mode: str = "stopwatch"
+    quiz_timer_duration_seconds: int = 0
     questions: list[QuestionAttemptRecord] = field(default_factory=list)
 
 
@@ -39,6 +41,18 @@ def _coerce_bool(value: Any) -> bool:
         return value != 0
     normalized = str(value or "").strip().lower()
     return normalized in {"1", "true", "yes", "y"}
+
+
+def _normalize_quiz_clock_mode(value: Any) -> str:
+    return "timer" if str(value or "").strip().lower() == "timer" else "stopwatch"
+
+
+def _coerce_non_negative_int(value: Any, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return default
+    return max(0, parsed)
 
 
 def _question_from_mapping(raw: dict[str, Any]) -> QuestionAttemptRecord:
@@ -85,6 +99,8 @@ def _attempt_from_mapping(raw: dict[str, Any]) -> AttemptRecord:
         percent=percent,
         duration_seconds=duration,
         model_key=str(raw.get("model_key", "")).strip(),
+        quiz_clock_mode=_normalize_quiz_clock_mode(raw.get("quiz_clock_mode", "stopwatch")),
+        quiz_timer_duration_seconds=_coerce_non_negative_int(raw.get("quiz_timer_duration_seconds", 0)),
         questions=questions,
     )
 

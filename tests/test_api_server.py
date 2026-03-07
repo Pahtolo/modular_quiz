@@ -985,6 +985,8 @@ class APIServerTests(unittest.TestCase):
             "percent": 75.0,
             "duration_seconds": 12.0,
             "model_key": "self:",
+            "quiz_clock_mode": "timer",
+            "quiz_timer_duration_seconds": 900,
             "questions": [
                 {
                     "question_id": "q1",
@@ -1004,6 +1006,8 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200)
         records = history.json()["records"]
         self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["quiz_clock_mode"], "timer")
+        self.assertEqual(records[0]["quiz_timer_duration_seconds"], 900)
 
         filtered = self.client.get(
             "/v1/history",
@@ -1023,6 +1027,8 @@ class APIServerTests(unittest.TestCase):
             "percent": 0.0,
             "duration_seconds": 20.0,
             "model_key": "self:",
+            "quiz_clock_mode": "stopwatch",
+            "quiz_timer_duration_seconds": 0,
             "questions": [
                 {
                     "question_id": "q2",
@@ -1043,6 +1049,8 @@ class APIServerTests(unittest.TestCase):
             "score": 2,
             "percent": 50.0,
             "model_key": "openai:gpt-5-mini",
+            "quiz_clock_mode": "timer",
+            "quiz_timer_duration_seconds": 1200,
             "questions": [
                 {
                     "question_id": "q2",
@@ -1078,6 +1086,8 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["score"], 2)
         self.assertEqual(records[0]["model_key"], "openai:gpt-5-mini")
+        self.assertEqual(records[0]["quiz_clock_mode"], "timer")
+        self.assertEqual(records[0]["quiz_timer_duration_seconds"], 1200)
         self.assertEqual(records[0]["questions"][0]["points_awarded"], 2)
         self.assertFalse(records[0]["questions"][0]["ungraded"])
 
