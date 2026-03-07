@@ -692,7 +692,14 @@ def _mcq_question_from_payload(payload: dict[str, Any]) -> MCQQuestion:
             message="MCQ question options must be non-empty strings.",
         )
 
-    answer = str(payload.get("answer", "A")).strip().upper()[:1] or "A"
+    answer = str(payload.get("answer", "A")).strip().upper() or "A"
+    if len(answer) != 1:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ answer must be exactly one letter.",
+        )
+
     valid_answers = ascii_uppercase[: len(options)]
     if answer not in valid_answers:
         raise APIError(
