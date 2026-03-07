@@ -676,11 +676,19 @@ def _mcq_question_from_payload(payload: dict[str, Any]) -> MCQQuestion:
     if not isinstance(options_raw, list) or len(options_raw) < 2:
         raise APIError(status_code=422, code="VALIDATION_ERROR", message="MCQ question options must have 2+ items.")
 
+    options = [str(opt) for opt in options_raw]
+    if any(not option.strip() for option in options):
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ question options must be non-empty strings.",
+        )
+
     return MCQQuestion(
         id=str(payload.get("id", "q")).strip() or "q",
         prompt=str(payload.get("prompt", "")).strip(),
         points=int(payload.get("points", 1) or 1),
-        options=[str(opt) for opt in options_raw],
+        options=options,
         answer=str(payload.get("answer", "A")).strip().upper()[:1] or "A",
     )
 
