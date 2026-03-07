@@ -5,6 +5,7 @@ import shutil
 import traceback
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from string import ascii_uppercase
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
@@ -691,12 +692,21 @@ def _mcq_question_from_payload(payload: dict[str, Any]) -> MCQQuestion:
             message="MCQ question options must be non-empty strings.",
         )
 
+    answer = str(payload.get("answer", "A")).strip().upper()[:1] or "A"
+    valid_answers = ascii_uppercase[: len(options)]
+    if answer not in valid_answers:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message=f"MCQ answer must be one of {', '.join(valid_answers)}.",
+        )
+
     return MCQQuestion(
         id=str(payload.get("id", "q")).strip() or "q",
         prompt=str(payload.get("prompt", "")).strip(),
         points=int(payload.get("points", 1) or 1),
         options=options,
-        answer=str(payload.get("answer", "A")).strip().upper()[:1] or "A",
+        answer=answer,
     )
 
 

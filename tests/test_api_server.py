@@ -883,6 +883,27 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(payload["code"], "VALIDATION_ERROR")
         self.assertIn("strings", payload["message"])
 
+    def test_grade_mcq_rejects_out_of_range_answer(self) -> None:
+        response = self.client.post(
+            "/v1/grade/mcq",
+            headers=self.headers,
+            json={
+                "question": {
+                    "id": "q1",
+                    "prompt": "2+2?",
+                    "options": ["3", "4"],
+                    "answer": "Z",
+                    "points": 1,
+                },
+                "user_answer": "A",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("A, B", payload["message"])
+
     def test_feedback_chat_endpoint(self) -> None:
         provider = MagicMock()
         provider.feedback_chat.return_value = "You should compare your answer to the expected terms."
