@@ -362,7 +362,7 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
         )
 
     quiz_clock_mode = str(payload.get("quiz_clock_mode", "stopwatch")).strip().lower()
-    if quiz_clock_mode != "timer":
+    if quiz_clock_mode not in {"off", "timer"}:
         quiz_clock_mode = "stopwatch"
     try:
         quiz_timer_duration_seconds = int(payload.get("quiz_timer_duration_seconds", 0) or 0)

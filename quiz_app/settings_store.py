@@ -31,7 +31,7 @@ ALLOWED_SHORT_GRADERS = {"self", "claude", "openai"}
 ALLOWED_FEEDBACK_MODES = {"show_then_next", "auto_advance", "end_only"}
 ALLOWED_OPENAI_AUTH_MODES = {"api_key", "oauth"}
 ALLOWED_MODEL_ALIAS_MODES = {"friendly_plus_id", "friendly_only", "id_only"}
-ALLOWED_QUIZ_CLOCK_MODES = {"stopwatch", "timer"}
+ALLOWED_QUIZ_CLOCK_MODES = {"off", "stopwatch", "timer"}
 
 
 @dataclass

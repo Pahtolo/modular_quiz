@@ -44,7 +44,12 @@ def _coerce_bool(value: Any) -> bool:
 
 
 def _normalize_quiz_clock_mode(value: Any) -> str:
-    return "timer" if str(value or "").strip().lower() == "timer" else "stopwatch"
+    normalized = str(value or "").strip().lower()
+    if normalized == "timer":
+        return "timer"
+    if normalized == "off":
+        return "off"
+    return "stopwatch"
 
 
 def _coerce_non_negative_int(value: Any, default: int = 0) -> int:

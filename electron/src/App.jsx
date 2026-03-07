@@ -127,7 +127,25 @@ function parseNonNegativeInt(value, fallback = 0) {
 }
 
 function normalizeQuizClockMode(value) {
-  return String(value || '').trim().toLowerCase() === 'timer' ? 'timer' : 'stopwatch';
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'timer') {
+    return 'timer';
+  }
+  if (normalized === 'off') {
+    return 'off';
+  }
+  return 'stopwatch';
+}
+
+function quizClockModeLabel(value) {
+  const normalized = normalizeQuizClockMode(value);
+  if (normalized === 'timer') {
+    return 'Timer';
+  }
+  if (normalized === 'off') {
+    return 'Off';
+  }
+  return 'Stopwatch';
 }
 
 function normalizeQuizTimerDurationSeconds(value, fallback = DEFAULT_QUIZ_TIMER_DURATION_SECONDS) {
@@ -1359,7 +1377,7 @@ function App() {
   );
   const quizClockDisplayMode = quiz ? quizClockMode : defaultQuizClockMode;
   const quizClockDisplayTimerDurationSeconds = quiz ? quizTimerDurationSeconds : defaultQuizTimerDurationSeconds;
-  const quizIsPaused = Boolean(quiz && !quizCompleted && quizClockPaused);
+  const quizIsPaused = Boolean(quiz && !quizCompleted && quizClockDisplayMode !== 'off' && quizClockPaused);
   const showQuestionTimer = Boolean(
     normalizedActiveTab === 'quiz' && quiz && currentQuestion && !questionLocked && questionTimerSeconds > 0,
   );
@@ -1872,7 +1890,7 @@ function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    if (!quiz || quizStartedAt <= 0 || quizClockPaused || quizCompleted) {
+    if (!quiz || quizStartedAt <= 0 || quizClockPaused || quizCompleted || quizClockMode === 'off') {
       return undefined;
     }
     setQuizClockTickMs(Date.now());
@@ -1882,7 +1900,7 @@ function App() {
     return () => {
       window.clearInterval(timerId);
     };
-  }, [quiz, quizClockPaused, quizCompleted, quizStartedAt]);
+  }, [quiz, quizClockMode, quizClockPaused, quizCompleted, quizStartedAt]);
 
   useEffect(() => {
     if (!quizContextMenu.open) {
@@ -1922,7 +1940,7 @@ function App() {
     const onKeyDown = (event) => {
       const editingTarget = isEditableTarget(event.target);
       const isSpacebar = event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar';
-      if (normalizedActiveTab === 'quiz' && quiz && !quizCompleted && isSpacebar && !editingTarget) {
+      if (normalizedActiveTab === 'quiz' && quiz && !quizCompleted && quizClockDisplayMode !== 'off' && isSpacebar && !editingTarget) {
         event.preventDefault();
         toggleQuizClockPause();
         return;
@@ -1997,6 +2015,7 @@ function App() {
     maxNavigableQuestionIndex,
     autoAdvanceEnabled,
     questionLocked,
+    quizClockDisplayMode,
     quizIsPaused,
   ]);
 
@@ -2475,7 +2494,7 @@ function App() {
   }
 
   function toggleQuizClockPause() {
-    if (!quiz || quizCompleted) {
+    if (!quiz || quizCompleted || quizClockMode === 'off') {
       return;
     }
     const now = Date.now();
@@ -3994,7 +4013,7 @@ function App() {
                   <p>
                     {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
                   </p>
-                  <p>Clock: {selectedAttemptClockMode === 'timer' ? 'Timer' : 'Stopwatch'}</p>
+                  <p>Clock: {quizClockModeLabel(selectedAttemptClockMode)}</p>
                   <p>Duration: {formatElapsedTime(selectedAttemptDurationSeconds * 1000)}</p>
                   {selectedAttemptClockMode === 'timer' && selectedAttemptTimerDurationSeconds > 0 ? (
                     <>
@@ -4324,21 +4343,23 @@ function App() {
             </button>
           ))}
         </div>
-        <div className="tabs-quiz-clock-wrap">
-          <div
-            className={`quiz-clock tabs-quiz-clock ${quizClockDisplayMode === 'timer' ? 'timer-mode' : ''}${quizTimerExpired ? ' expired' : ''}`}
-            aria-live="polite"
-          >
-            {quizClockDisplayMode === 'timer'
-              ? `Timer: ${formatCountdown(quizTimerRemainingMs)}`
-              : `Stopwatch: ${formatElapsedTime(quizElapsedMs)}`}
+        {quizClockDisplayMode !== 'off' ? (
+          <div className="tabs-quiz-clock-wrap">
+            <div
+              className={`quiz-clock tabs-quiz-clock ${quizClockDisplayMode === 'timer' ? 'timer-mode' : ''}${quizTimerExpired ? ' expired' : ''}`}
+              aria-live="polite"
+            >
+              {quizClockDisplayMode === 'timer'
+                ? `Timer: ${formatCountdown(quizTimerRemainingMs)}`
+                : `Stopwatch: ${formatElapsedTime(quizElapsedMs)}`}
+            </div>
+            {quiz && !quizCompleted ? (
+              <button type="button" className="quiz-clock-toggle" onClick={() => toggleQuizClockPause()}>
+                {quizIsPaused ? 'Resume' : 'Pause'}
+              </button>
+            ) : null}
           </div>
-          {quiz && !quizCompleted ? (
-            <button type="button" className="quiz-clock-toggle" onClick={() => toggleQuizClockPause()}>
-              {quizIsPaused ? 'Resume' : 'Pause'}
-            </button>
-          ) : null}
-        </div>
+        ) : null}
       </nav>
 
       <main className="tab-panel">
@@ -5085,6 +5106,7 @@ function App() {
                               }))
                             }
                           >
+                            <option value="off">Off</option>
                             <option value="stopwatch">Stopwatch</option>
                             <option value="timer">Timer</option>
                           </select>
@@ -5117,8 +5139,8 @@ function App() {
                         </label>
 
                         <div className="settings-warning-note">
-                          Quiz clock settings apply when you start or restart a quiz. Timer mode auto-finishes the quiz at
-                          zero and marks unanswered questions incorrect.
+                          Quiz clock settings apply when you start or restart a quiz. Off hides the quiz clock and disables
+                          pause/resume. Timer mode auto-finishes the quiz at zero and marks unanswered questions incorrect.
                         </div>
                       </>
                     ) : null}

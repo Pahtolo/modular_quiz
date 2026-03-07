@@ -186,6 +186,18 @@ class APIServerTests(unittest.TestCase):
         self.assertFalse(payload["lock_questions_by_progression"])
         self.assertEqual(payload["quiz_roots"], [str((self.root / "Quizzes").resolve())])
 
+        clock_off = self.client.put(
+            "/v1/settings",
+            headers=self.headers,
+            json={
+                "quiz_clock_mode": "off",
+            },
+        )
+        self.assertEqual(clock_off.status_code, 200)
+        clock_off_payload = clock_off.json()["settings"]
+        self.assertEqual(clock_off_payload["quiz_clock_mode"], "off")
+        self.assertEqual(clock_off_payload["quiz_timer_duration_seconds"], 1200)
+
         flags_update = self.client.put(
             "/v1/settings",
             headers=self.headers,
