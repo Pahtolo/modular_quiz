@@ -12,6 +12,8 @@ let backendInfo = {
   token: '',
   ready: false,
 };
+const DROPPED_SOURCE_STAGING_ROOT = 'modular-quiz-drops';
+const DROPPED_SOURCE_STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function projectRoot() {
   return path.resolve(__dirname, '..');
@@ -258,6 +260,113 @@ function managedQuizzesRoot() {
   return path.resolve(app.getPath('userData'), 'Quizzes');
 }
 
+function droppedSourceStagingRoot() {
+  return path.join(app.getPath('temp'), DROPPED_SOURCE_STAGING_ROOT);
+}
+
+function sanitizePathSegment(value, fallback = 'item') {
+  const sanitized = String(value || '')
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+$/, '')
+    .replace(/\.+$/, '');
+  return sanitized || fallback;
+}
+
+function pruneDroppedSourceStaging() {
+  const root = droppedSourceStagingRoot();
+  if (!fs.existsSync(root)) {
+    return;
+  }
+
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const entryPath = path.join(root, entry.name);
+    try {
+      const stats = fs.statSync(entryPath);
+      if ((Date.now() - stats.mtimeMs) > DROPPED_SOURCE_STAGING_MAX_AGE_MS) {
+        fs.rmSync(entryPath, { recursive: true, force: true });
+      }
+    } catch (_err) {
+      // Best-effort cleanup only.
+    }
+  }
+}
+
+function uniqueTargetPath(rootPath, relativePath) {
+  const parsed = path.parse(path.join(rootPath, relativePath));
+  let attempt = path.join(parsed.dir, `${parsed.name}${parsed.ext}`);
+  let counter = 1;
+  while (fs.existsSync(attempt)) {
+    attempt = path.join(parsed.dir, `${parsed.name}-${counter}${parsed.ext}`);
+    counter += 1;
+  }
+  return attempt;
+}
+
+function normalizeDroppedRelativePath(entry, index) {
+  const rawRelativePath = String(entry?.relativePath || '').replace(/\\/g, '/');
+  const rawName = String(entry?.name || '').trim();
+  const segments = rawRelativePath
+    .split('/')
+    .map((segment, segmentIndex, allSegments) => sanitizePathSegment(
+      segment,
+      segmentIndex === allSegments.length - 1 ? sanitizePathSegment(rawName, `source-${index + 1}`) : 'folder',
+    ))
+    .filter((segment) => segment);
+
+  if (segments.length) {
+    return path.join(...segments);
+  }
+
+  return sanitizePathSegment(rawName, `source-${index + 1}`);
+}
+
+function stageDroppedFiles(files) {
+  pruneDroppedSourceStaging();
+
+  const root = droppedSourceStagingRoot();
+  fs.mkdirSync(root, { recursive: true });
+
+  const sessionDir = path.join(
+    root,
+    `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`,
+  );
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  const returnedPaths = [];
+  const seenReturnedPaths = new Set();
+
+  for (let index = 0; index < files.length; index += 1) {
+    const entry = files[index];
+    const base64 = String(entry?.data_base64 || '').trim();
+    if (!base64) {
+      continue;
+    }
+
+    const relativePath = normalizeDroppedRelativePath(entry, index);
+    const targetPath = uniqueTargetPath(sessionDir, relativePath);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, Buffer.from(base64, 'base64'));
+
+    const topLevelName = relativePath.split(path.sep)[0];
+    const returnedPath = relativePath.includes(path.sep)
+      ? path.join(sessionDir, topLevelName)
+      : targetPath;
+    if (!seenReturnedPaths.has(returnedPath)) {
+      seenReturnedPaths.add(returnedPath);
+      returnedPaths.push(returnedPath);
+    }
+  }
+
+  return returnedPaths;
+}
+
 function isPathWithin(rootPath, candidatePath) {
   const relative = path.relative(rootPath, candidatePath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -458,6 +567,16 @@ function setupIpcHandlers() {
     }
     await shell.openExternal(url);
     return { ok: true };
+  });
+
+  ipcMain.handle('sources:stage-dropped-files', async (_event, payload) => {
+    const files = Array.isArray(payload?.files) ? payload.files : [];
+    if (!files.length) {
+      throw new Error('Dropped files payload is required.');
+    }
+
+    const paths = stageDroppedFiles(files);
+    return { paths };
   });
 }
 

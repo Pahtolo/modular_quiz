@@ -43,6 +43,13 @@ export async function openExternal(url) {
   return bridge.shell.openExternal(url);
 }
 
+export async function stageDroppedFiles(files) {
+  if (!bridge.sources || typeof bridge.sources.stageDroppedFiles !== 'function') {
+    throw new Error('Dropped file staging support is not available until the app restarts.');
+  }
+  return bridge.sources.stageDroppedFiles(files);
+}
+
 export async function deleteManagedQuizItem(path) {
   if (!bridge.quizzes || typeof bridge.quizzes.deleteItem !== 'function') {
     throw new Error('Quiz deletion support is not available until the app restarts.');

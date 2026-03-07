@@ -10,6 +10,7 @@ import {
   openPath,
   pickFolder,
   pickSourceInputs,
+  stageDroppedFiles,
 } from './api';
 
 const TABS = ['quiz', 'generate', 'settings'];
@@ -2740,18 +2741,65 @@ function App() {
     return [...new Set(collapsed)];
   }
 
+  async function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const commaIndex = result.indexOf(',');
+        resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
+      };
+      reader.onerror = () => {
+        reject(reader.error || new Error(`Failed to read dropped file "${file?.name || 'unknown'}".`));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function generatorDroppedSourcePaths(event) {
+    const directPaths = droppedSourcePaths(event);
+    const files = Array.from(event?.dataTransfer?.files || []);
+    const missingPathFiles = files.filter(
+      (file) => !(typeof file?.path === 'string' && file.path.trim()),
+    );
+
+    if (!missingPathFiles.length) {
+      return directPaths;
+    }
+
+    const stagedFiles = [];
+    for (const file of missingPathFiles) {
+      const dataBase64 = await fileToBase64(file);
+      stagedFiles.push({
+        name: String(file?.name || '').trim(),
+        relativePath: String(file?.webkitRelativePath || '').trim(),
+        data_base64: dataBase64,
+      });
+    }
+
+    const stagedResponse = await stageDroppedFiles(stagedFiles);
+    const stagedPaths = Array.isArray(stagedResponse?.paths)
+      ? stagedResponse.paths.map((item) => normalizePathText(item)).filter((item) => item)
+      : [];
+    return [...new Set([...directPaths, ...stagedPaths])];
+  }
+
   async function handleGenerateSourcesDrop(event) {
     event.preventDefault();
     setGenerateDragOver(false);
-    const paths = droppedSourcePaths(event);
-    if (!paths.length) {
-      setGenerateErrors(['Dropped content did not include local file paths. Use "Import Sources" instead.']);
-      return;
+    try {
+      const paths = await generatorDroppedSourcePaths(event);
+      if (!paths.length) {
+        setGenerateErrors(['Dropped content did not include usable local paths or file data. Use "Import Sources" instead.']);
+        return;
+      }
+      setSourceInputs((prev) => [...new Set([...prev, ...paths])]);
+      setCollectedSources([]);
+      setGenerateWarnings([]);
+      setGenerateErrors([]);
+    } catch (err) {
+      setGenerateErrors([err?.message || 'Failed to stage dropped source files.']);
     }
-    setSourceInputs((prev) => [...new Set([...prev, ...paths])]);
-    setCollectedSources([]);
-    setGenerateWarnings([]);
-    setGenerateErrors([]);
   }
 
   async function handleQuizzesDrop(event) {
