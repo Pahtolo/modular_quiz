@@ -331,6 +331,50 @@ function timedOutQuestionResult(question) {
   };
 }
 
+function shuffleMcqQuestion(question) {
+  const options = Array.isArray(question?.options) ? [...question.options] : [];
+  const answer = String(question?.answer || '').trim().toUpperCase();
+  const correctIndex = answer ? answer.charCodeAt(0) - 65 : -1;
+  if (options.length < 2 || correctIndex < 0 || correctIndex >= options.length) {
+    return question;
+  }
+
+  const indexedOptions = options.map((option, index) => ({
+    option,
+    isCorrect: index === correctIndex,
+  }));
+  for (let index = indexedOptions.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [indexedOptions[index], indexedOptions[swapIndex]] = [indexedOptions[swapIndex], indexedOptions[index]];
+  }
+
+  const shuffledAnswerIndex = indexedOptions.findIndex((entry) => entry.isCorrect);
+  if (shuffledAnswerIndex < 0) {
+    return question;
+  }
+
+  return {
+    ...question,
+    options: indexedOptions.map((entry) => entry.option),
+    answer: String.fromCharCode(65 + shuffledAnswerIndex),
+  };
+}
+
+function shuffleQuizMcqAnswers(quiz) {
+  if (!quiz || !Array.isArray(quiz.questions)) {
+    return quiz;
+  }
+
+  return {
+    ...quiz,
+    questions: quiz.questions.map((question) => (
+      String(question?.type || '').toLowerCase() === 'mcq'
+        ? shuffleMcqQuestion(question)
+        : question
+    )),
+  };
+}
+
 function buildLockedQuestionState(question, result, userAnswer) {
   const isShort = String(question?.type || '') === 'short';
   return {
@@ -1328,6 +1372,9 @@ function App() {
     return Math.min(lastAnsweredIndex + 1, quiz.questions.length - 1);
   }, [quiz, lastAnsweredIndex]);
   const lockQuestionsByProgression = settingsForm?.lock_questions_by_progression ?? settings?.lock_questions_by_progression ?? true;
+  const shuffleMcqAnswersEnabled = Boolean(
+    settingsForm?.shuffle_mcq_answers ?? settings?.shuffle_mcq_answers ?? false,
+  );
   const maxNavigableQuestionIndex = useMemo(() => {
     if (!quiz || !quiz.questions?.length) {
       return 0;
@@ -3156,7 +3203,9 @@ function App() {
     setQuizLoadError('');
     try {
       const response = await apiRequest('/v1/quizzes/load', 'POST', { path: targetPath });
-      const loadedQuiz = response.quiz;
+      const loadedQuiz = shuffleMcqAnswersEnabled
+        ? shuffleQuizMcqAnswers(response.quiz)
+        : response.quiz;
       const normalizedTargetPath = normalizePathText(targetPath);
       const cachedContext = autoInjectContextEnabled ? generatedQuizContextsByPath[normalizedTargetPath] : null;
       const nextClockMode = normalizeQuizClockMode(
@@ -5227,7 +5276,16 @@ function App() {
                 </section>
                 ) : null}
 
-                {settingsMatches('question nav', 'quiz progression', 'lock questions', 'unlock questions', 'navigation') ? (
+                {settingsMatches(
+                  'question nav',
+                  'quiz progression',
+                  'lock questions',
+                  'unlock questions',
+                  'navigation',
+                  'shuffle answers',
+                  'shuffle mcq answers',
+                  'randomize answers',
+                ) ? (
               <section className="settings-group">
                 <h3>Question Navigation</h3>
                 <div className="form-grid two-col">
@@ -5241,10 +5299,21 @@ function App() {
                     />
                     <span>Lock future questions until you reach them</span>
                   </label>
+
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(shuffleMcqAnswersEnabled)}
+                      onChange={(event) =>
+                        setSettingsForm((prev) => ({ ...prev, shuffle_mcq_answers: event.target.checked }))
+                      }
+                    />
+                    <span>Shuffle MCQ answer order each attempt</span>
+                  </label>
                 </div>
                 <div className="settings-warning-note">
-                  Turning this off lets you jump to any question immediately. Auto-advance still blocks going backward
-                  during live quizzes.
+                  Turning off question locking lets you jump anywhere immediately. MCQ shuffling applies when you start
+                  or restart a quiz. Auto-advance still blocks going backward during live quizzes.
                 </div>
               </section>
                 ) : null}

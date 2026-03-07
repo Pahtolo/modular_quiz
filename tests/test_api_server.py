@@ -154,6 +154,7 @@ class APIServerTests(unittest.TestCase):
         self.assertIn("quiz_roots", settings)
         self.assertEqual(settings["quiz_clock_mode"], "stopwatch")
         self.assertEqual(settings["quiz_timer_duration_seconds"], 900)
+        self.assertFalse(settings["shuffle_mcq_answers"])
 
         updated = self.client.put(
             "/v1/settings",
@@ -166,6 +167,7 @@ class APIServerTests(unittest.TestCase):
                 "quiz_timer_duration_seconds": 1200,
                 "question_timer_seconds": 45,
                 "lock_questions_by_progression": False,
+                "shuffle_mcq_answers": True,
                 "generation_defaults": {
                     "total": 10,
                     "mcq_count": 7,
@@ -184,6 +186,7 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(payload["quiz_timer_duration_seconds"], 1200)
         self.assertEqual(payload["question_timer_seconds"], 45)
         self.assertFalse(payload["lock_questions_by_progression"])
+        self.assertTrue(payload["shuffle_mcq_answers"])
         self.assertEqual(payload["quiz_roots"], [str((self.root / "Quizzes").resolve())])
 
         clock_off = self.client.put(
