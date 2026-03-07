@@ -1948,9 +1948,10 @@ function App() {
         return;
       }
       const upperKey = String(event.key || '').toUpperCase();
-      if (currentQuestion.type === 'mcq' && !questionLocked && ['A', 'B', 'C', 'D'].includes(upperKey)) {
+      if (currentQuestion.type === 'mcq' && !questionLocked) {
         const optionIndex = upperKey.charCodeAt(0) - 65;
-        if (optionIndex >= 0 && optionIndex < (currentQuestion.options || []).length) {
+        const optionCount = Array.isArray(currentQuestion.options) ? currentQuestion.options.length : 0;
+        if (optionIndex >= 0 && optionIndex < optionCount) {
           event.preventDefault();
           void submitMcqAnswer(upperKey);
         }
