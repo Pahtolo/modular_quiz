@@ -5,6 +5,7 @@ import shutil
 import traceback
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from string import ascii_uppercase
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
@@ -360,6 +361,17 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
             )
         )
 
+    quiz_clock_mode = str(payload.get("quiz_clock_mode", "stopwatch")).strip().lower()
+    if quiz_clock_mode not in {"off", "timer"}:
+        quiz_clock_mode = "stopwatch"
+    try:
+        quiz_timer_duration_seconds = int(payload.get("quiz_timer_duration_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        quiz_timer_duration_seconds = 0
+    quiz_timer_duration_seconds = max(0, quiz_timer_duration_seconds)
+    if quiz_clock_mode != "timer":
+        quiz_timer_duration_seconds = 0
+
     return AttemptRecord(
         timestamp=str(payload.get("timestamp", "")).strip(),
         quiz_path=str(payload.get("quiz_path", "")).strip(),
@@ -369,6 +381,8 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
         percent=float(payload.get("percent", 0.0) or 0.0),
         duration_seconds=float(payload.get("duration_seconds", 0.0) or 0.0),
         model_key=str(payload.get("model_key", "")).strip(),
+        quiz_clock_mode=quiz_clock_mode,
+        quiz_timer_duration_seconds=quiz_timer_duration_seconds,
         questions=questions,
     )
 
@@ -676,12 +690,58 @@ def _mcq_question_from_payload(payload: dict[str, Any]) -> MCQQuestion:
     if not isinstance(options_raw, list) or len(options_raw) < 2:
         raise APIError(status_code=422, code="VALIDATION_ERROR", message="MCQ question options must have 2+ items.")
 
+    if any(not isinstance(opt, str) for opt in options_raw):
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ question options must be strings.",
+        )
+
+    options = list(options_raw)
+    if any(not option.strip() for option in options):
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ question options must be non-empty strings.",
+        )
+
+    answer = str(payload.get("answer", "A")).strip().upper() or "A"
+    if len(answer) != 1:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ answer must be exactly one letter.",
+        )
+
+    valid_answers = ascii_uppercase[: len(options)]
+    if answer not in valid_answers:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message=f"MCQ answer must be one of {', '.join(valid_answers)}.",
+        )
+
+    try:
+        points = int(payload.get("points", 1))
+    except (TypeError, ValueError) as exc:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ question points must be a positive integer.",
+        ) from exc
+    if points <= 0:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message="MCQ question points must be a positive integer.",
+        )
+
     return MCQQuestion(
         id=str(payload.get("id", "q")).strip() or "q",
         prompt=str(payload.get("prompt", "")).strip(),
-        points=int(payload.get("points", 1) or 1),
-        options=[str(opt) for opt in options_raw],
-        answer=str(payload.get("answer", "A")).strip().upper()[:1] or "A",
+        points=points,
+        options=options,
+        answer=answer,
     )
 
 

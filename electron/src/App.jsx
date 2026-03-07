@@ -127,7 +127,25 @@ function parseNonNegativeInt(value, fallback = 0) {
 }
 
 function normalizeQuizClockMode(value) {
-  return String(value || '').trim().toLowerCase() === 'timer' ? 'timer' : 'stopwatch';
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'timer') {
+    return 'timer';
+  }
+  if (normalized === 'off') {
+    return 'off';
+  }
+  return 'stopwatch';
+}
+
+function quizClockModeLabel(value) {
+  const normalized = normalizeQuizClockMode(value);
+  if (normalized === 'timer') {
+    return 'Timer';
+  }
+  if (normalized === 'off') {
+    return 'Off';
+  }
+  return 'Stopwatch';
 }
 
 function normalizeQuizTimerDurationSeconds(value, fallback = DEFAULT_QUIZ_TIMER_DURATION_SECONDS) {
@@ -1359,7 +1377,7 @@ function App() {
   );
   const quizClockDisplayMode = quiz ? quizClockMode : defaultQuizClockMode;
   const quizClockDisplayTimerDurationSeconds = quiz ? quizTimerDurationSeconds : defaultQuizTimerDurationSeconds;
-  const quizIsPaused = Boolean(quiz && !quizCompleted && quizClockPaused);
+  const quizIsPaused = Boolean(quiz && !quizCompleted && quizClockDisplayMode !== 'off' && quizClockPaused);
   const showQuestionTimer = Boolean(
     normalizedActiveTab === 'quiz' && quiz && currentQuestion && !questionLocked && questionTimerSeconds > 0,
   );
@@ -1439,6 +1457,18 @@ function App() {
     }
     return historyFiltered[selectedAttemptIndex];
   }, [selectedAttemptIndex, historyFiltered]);
+  const selectedAttemptClockMode = normalizeQuizClockMode(selectedAttempt?.quiz_clock_mode || 'stopwatch');
+  const selectedAttemptDurationSeconds = Math.max(0, Number(selectedAttempt?.duration_seconds || 0) || 0);
+  const selectedAttemptTimerDurationSeconds = Math.max(0, Number(selectedAttempt?.quiz_timer_duration_seconds || 0) || 0);
+  const selectedAttemptTimerExpired = (
+    selectedAttemptClockMode === 'timer'
+    && selectedAttemptTimerDurationSeconds > 0
+    && selectedAttemptDurationSeconds >= selectedAttemptTimerDurationSeconds
+  );
+  const selectedAttemptTimerRemainingSeconds = Math.max(
+    0,
+    selectedAttemptTimerDurationSeconds - selectedAttemptDurationSeconds,
+  );
   const selectedAttemptUngradedIndexes = useMemo(() => {
     if (!selectedAttempt?.questions?.length) {
       return [];
@@ -1860,7 +1890,7 @@ function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    if (!quiz || quizStartedAt <= 0 || quizClockPaused || quizCompleted) {
+    if (!quiz || quizStartedAt <= 0 || quizClockPaused || quizCompleted || quizClockMode === 'off') {
       return undefined;
     }
     setQuizClockTickMs(Date.now());
@@ -1870,7 +1900,7 @@ function App() {
     return () => {
       window.clearInterval(timerId);
     };
-  }, [quiz, quizClockPaused, quizCompleted, quizStartedAt]);
+  }, [quiz, quizClockMode, quizClockPaused, quizCompleted, quizStartedAt]);
 
   useEffect(() => {
     if (!quizContextMenu.open) {
@@ -1910,7 +1940,7 @@ function App() {
     const onKeyDown = (event) => {
       const editingTarget = isEditableTarget(event.target);
       const isSpacebar = event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar';
-      if (normalizedActiveTab === 'quiz' && quiz && !quizCompleted && isSpacebar && !editingTarget) {
+      if (normalizedActiveTab === 'quiz' && quiz && !quizCompleted && quizClockDisplayMode !== 'off' && isSpacebar && !editingTarget) {
         event.preventDefault();
         toggleQuizClockPause();
         return;
@@ -1948,9 +1978,10 @@ function App() {
         return;
       }
       const upperKey = String(event.key || '').toUpperCase();
-      if (currentQuestion.type === 'mcq' && !questionLocked && ['A', 'B', 'C', 'D'].includes(upperKey)) {
+      if (currentQuestion.type === 'mcq' && !questionLocked) {
         const optionIndex = upperKey.charCodeAt(0) - 65;
-        if (optionIndex >= 0 && optionIndex < (currentQuestion.options || []).length) {
+        const optionCount = Array.isArray(currentQuestion.options) ? currentQuestion.options.length : 0;
+        if (optionIndex >= 0 && optionIndex < optionCount) {
           event.preventDefault();
           void submitMcqAnswer(upperKey);
         }
@@ -1984,6 +2015,7 @@ function App() {
     maxNavigableQuestionIndex,
     autoAdvanceEnabled,
     questionLocked,
+    quizClockDisplayMode,
     quizIsPaused,
   ]);
 
@@ -2462,7 +2494,7 @@ function App() {
   }
 
   function toggleQuizClockPause() {
-    if (!quiz || quizCompleted) {
+    if (!quiz || quizCompleted || quizClockMode === 'off') {
       return;
     }
     const now = Date.now();
@@ -3151,6 +3183,10 @@ function App() {
     const durationSeconds = Math.max(0, currentQuizElapsedMs() / 1000);
     const percent = maxScore ? (nextScore / maxScore) * 100 : 0;
     const modelKeyValue = effectivePreferredModelKey;
+    const clockModeValue = normalizeQuizClockMode(quizClockMode);
+    const timerDurationValue = clockModeValue === 'timer'
+      ? Math.max(0, Number(quizTimerDurationSeconds || 0) || 0)
+      : 0;
 
     try {
       await apiRequest('/v1/history/append', 'POST', {
@@ -3162,6 +3198,8 @@ function App() {
         percent,
         duration_seconds: durationSeconds,
         model_key: modelKeyValue,
+        quiz_clock_mode: clockModeValue,
+        quiz_timer_duration_seconds: timerDurationValue,
         questions: nextAttemptQuestions,
       });
       setQuizSaved(true);
@@ -3975,7 +4013,18 @@ function App() {
                   <p>
                     {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
                   </p>
-                  <p>Duration: {Number(selectedAttempt.duration_seconds || 0).toFixed(1)}s</p>
+                  <p>Clock: {quizClockModeLabel(selectedAttemptClockMode)}</p>
+                  <p>Duration: {formatElapsedTime(selectedAttemptDurationSeconds * 1000)}</p>
+                  {selectedAttemptClockMode === 'timer' && selectedAttemptTimerDurationSeconds > 0 ? (
+                    <>
+                      <p>Timer limit: {formatElapsedTime(selectedAttemptTimerDurationSeconds * 1000)}</p>
+                      <p>
+                        {selectedAttemptTimerExpired
+                          ? 'Timer result: Expired'
+                          : `Time remaining: ${formatCountdown(selectedAttemptTimerRemainingSeconds * 1000)}`}
+                      </p>
+                    </>
+                  ) : null}
                   <table>
                     <thead>
                       <tr>
@@ -4294,21 +4343,23 @@ function App() {
             </button>
           ))}
         </div>
-        <div className="tabs-quiz-clock-wrap">
-          <div
-            className={`quiz-clock tabs-quiz-clock ${quizClockDisplayMode === 'timer' ? 'timer-mode' : ''}${quizTimerExpired ? ' expired' : ''}`}
-            aria-live="polite"
-          >
-            {quizClockDisplayMode === 'timer'
-              ? `Timer: ${formatCountdown(quizTimerRemainingMs)}`
-              : `Stopwatch: ${formatElapsedTime(quizElapsedMs)}`}
+        {quizClockDisplayMode !== 'off' ? (
+          <div className="tabs-quiz-clock-wrap">
+            <div
+              className={`quiz-clock tabs-quiz-clock ${quizClockDisplayMode === 'timer' ? 'timer-mode' : ''}${quizTimerExpired ? ' expired' : ''}`}
+              aria-live="polite"
+            >
+              {quizClockDisplayMode === 'timer'
+                ? `Timer: ${formatCountdown(quizTimerRemainingMs)}`
+                : `Stopwatch: ${formatElapsedTime(quizElapsedMs)}`}
+            </div>
+            {quiz && !quizCompleted ? (
+              <button type="button" className="quiz-clock-toggle" onClick={() => toggleQuizClockPause()}>
+                {quizIsPaused ? 'Resume' : 'Pause'}
+              </button>
+            ) : null}
           </div>
-          {quiz && !quizCompleted ? (
-            <button type="button" className="quiz-clock-toggle" onClick={() => toggleQuizClockPause()}>
-              {quizIsPaused ? 'Resume' : 'Pause'}
-            </button>
-          ) : null}
-        </div>
+        ) : null}
       </nav>
 
       <main className="tab-panel">
@@ -5055,6 +5106,7 @@ function App() {
                               }))
                             }
                           >
+                            <option value="off">Off</option>
                             <option value="stopwatch">Stopwatch</option>
                             <option value="timer">Timer</option>
                           </select>
@@ -5087,8 +5139,8 @@ function App() {
                         </label>
 
                         <div className="settings-warning-note">
-                          Quiz clock settings apply when you start or restart a quiz. Timer mode auto-finishes the quiz at
-                          zero and marks unanswered questions incorrect.
+                          Quiz clock settings apply when you start or restart a quiz. Off hides the quiz clock and disables
+                          pause/resume. Timer mode auto-finishes the quiz at zero and marks unanswered questions incorrect.
                         </div>
                       </>
                     ) : null}

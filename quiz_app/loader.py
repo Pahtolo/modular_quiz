@@ -18,13 +18,30 @@ def _require_positive_int(value: Any, field_name: str) -> int:
     return value
 
 
+def _require_non_empty_string_list(value: Any, field_name: str, *, minimum_length: int) -> List[str]:
+    if not isinstance(value, list) or len(value) < minimum_length:
+        raise QuizValidationError(
+            f"Field '{field_name}' must be a list of {minimum_length}+ non-empty strings."
+        )
+
+    normalized: List[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise QuizValidationError(
+                f"Field '{field_name}' must be a list of {minimum_length}+ non-empty strings."
+            )
+        normalized.append(item.strip())
+    return normalized
+
+
 def _parse_mcq(raw: Dict[str, Any], index: int) -> MCQQuestion:
     qid = _require_str(raw.get("id", f"q{index}"), "id")
     prompt = _require_str(raw.get("prompt"), "prompt")
 
-    options = raw.get("options")
-    if not isinstance(options, list) or len(options) < 2 or any(not isinstance(o, str) for o in options):
-        raise QuizValidationError(f"Question {qid}: 'options' must be a list of 2+ strings.")
+    try:
+        options = _require_non_empty_string_list(raw.get("options"), "options", minimum_length=2)
+    except QuizValidationError as exc:
+        raise QuizValidationError(f"Question {qid}: {exc}") from exc
 
     answer = _require_str(raw.get("answer"), "answer").upper()
     valid_letters = ascii_uppercase[: len(options)]

@@ -186,6 +186,18 @@ class APIServerTests(unittest.TestCase):
         self.assertFalse(payload["lock_questions_by_progression"])
         self.assertEqual(payload["quiz_roots"], [str((self.root / "Quizzes").resolve())])
 
+        clock_off = self.client.put(
+            "/v1/settings",
+            headers=self.headers,
+            json={
+                "quiz_clock_mode": "off",
+            },
+        )
+        self.assertEqual(clock_off.status_code, 200)
+        clock_off_payload = clock_off.json()["settings"]
+        self.assertEqual(clock_off_payload["quiz_clock_mode"], "off")
+        self.assertEqual(clock_off_payload["quiz_timer_duration_seconds"], 1200)
+
         flags_update = self.client.put(
             "/v1/settings",
             headers=self.headers,
@@ -841,6 +853,113 @@ class APIServerTests(unittest.TestCase):
         )
         self.assertEqual(short_self["result"]["points_awarded"], 1)
 
+    def test_grade_mcq_rejects_whitespace_only_options(self) -> None:
+        response = self.client.post(
+            "/v1/grade/mcq",
+            headers=self.headers,
+            json={
+                "question": {
+                    "id": "q1",
+                    "prompt": "2+2?",
+                    "options": ["   ", "4"],
+                    "answer": "B",
+                    "points": 1,
+                },
+                "user_answer": "A",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("non-empty", payload["message"])
+
+    def test_grade_mcq_rejects_non_string_options(self) -> None:
+        response = self.client.post(
+            "/v1/grade/mcq",
+            headers=self.headers,
+            json={
+                "question": {
+                    "id": "q1",
+                    "prompt": "2+2?",
+                    "options": [1, "4"],
+                    "answer": "B",
+                    "points": 1,
+                },
+                "user_answer": "A",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("strings", payload["message"])
+
+    def test_grade_mcq_rejects_out_of_range_answer(self) -> None:
+        response = self.client.post(
+            "/v1/grade/mcq",
+            headers=self.headers,
+            json={
+                "question": {
+                    "id": "q1",
+                    "prompt": "2+2?",
+                    "options": ["3", "4"],
+                    "answer": "Z",
+                    "points": 1,
+                },
+                "user_answer": "A",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("A, B", payload["message"])
+
+    def test_grade_mcq_rejects_multi_character_answer(self) -> None:
+        response = self.client.post(
+            "/v1/grade/mcq",
+            headers=self.headers,
+            json={
+                "question": {
+                    "id": "q1",
+                    "prompt": "2+2?",
+                    "options": ["3", "4"],
+                    "answer": "AB",
+                    "points": 1,
+                },
+                "user_answer": "A",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("exactly one letter", payload["message"])
+
+    def test_grade_mcq_rejects_non_positive_points(self) -> None:
+        for points in (0, -3):
+            with self.subTest(points=points):
+                response = self.client.post(
+                    "/v1/grade/mcq",
+                    headers=self.headers,
+                    json={
+                        "question": {
+                            "id": "q1",
+                            "prompt": "2+2?",
+                            "options": ["3", "4"],
+                            "answer": "B",
+                            "points": points,
+                        },
+                        "user_answer": "A",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 422, response.text)
+                payload = response.json()["error"]
+                self.assertEqual(payload["code"], "VALIDATION_ERROR")
+                self.assertIn("positive integer", payload["message"])
+
     def test_feedback_chat_endpoint(self) -> None:
         provider = MagicMock()
         provider.feedback_chat.return_value = "You should compare your answer to the expected terms."
@@ -878,6 +997,8 @@ class APIServerTests(unittest.TestCase):
             "percent": 75.0,
             "duration_seconds": 12.0,
             "model_key": "self:",
+            "quiz_clock_mode": "timer",
+            "quiz_timer_duration_seconds": 900,
             "questions": [
                 {
                     "question_id": "q1",
@@ -897,6 +1018,8 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200)
         records = history.json()["records"]
         self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["quiz_clock_mode"], "timer")
+        self.assertEqual(records[0]["quiz_timer_duration_seconds"], 900)
 
         filtered = self.client.get(
             "/v1/history",
@@ -916,6 +1039,8 @@ class APIServerTests(unittest.TestCase):
             "percent": 0.0,
             "duration_seconds": 20.0,
             "model_key": "self:",
+            "quiz_clock_mode": "stopwatch",
+            "quiz_timer_duration_seconds": 0,
             "questions": [
                 {
                     "question_id": "q2",
@@ -936,6 +1061,8 @@ class APIServerTests(unittest.TestCase):
             "score": 2,
             "percent": 50.0,
             "model_key": "openai:gpt-5-mini",
+            "quiz_clock_mode": "timer",
+            "quiz_timer_duration_seconds": 1200,
             "questions": [
                 {
                     "question_id": "q2",
@@ -971,6 +1098,8 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["score"], 2)
         self.assertEqual(records[0]["model_key"], "openai:gpt-5-mini")
+        self.assertEqual(records[0]["quiz_clock_mode"], "timer")
+        self.assertEqual(records[0]["quiz_timer_duration_seconds"], 1200)
         self.assertEqual(records[0]["questions"][0]["points_awarded"], 2)
         self.assertFalse(records[0]["questions"][0]["ungraded"])
 
