@@ -1331,6 +1331,12 @@ textarea {
   gap: 0.9rem;
 }
 
+.manager-tab-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .settings-focus-sink {
   position: absolute;
   width: 1px;
@@ -1402,8 +1408,37 @@ textarea {
   color: var(--ink-soft);
 }
 
+.manager-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.manager-page-header {
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.manager-page-title h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.manager-page-actions {
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.manager-page-meta {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .roots-list-wrap {
-  margin-top: 0.6rem;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--roots-list-bg);
@@ -1417,6 +1452,38 @@ textarea {
 
 .roots-list-wrap.resizing {
   box-shadow: 0 0 0 1px var(--accent);
+}
+
+.manager-tree-shell {
+  position: relative;
+  flex: 1;
+  min-height: 320px;
+}
+
+.manager-tree-wrap {
+  min-height: min(68vh, 720px);
+}
+
+.manager-tree-shell.drag-over .manager-tree-wrap {
+  border-color: var(--drop-drag-border);
+  box-shadow: 0 0 0 1px var(--drop-drag-border);
+  background: var(--drop-drag-bg);
+}
+
+.manager-tree-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--drop-drag-bg) 88%, transparent);
+  color: var(--drop-drag-text);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  pointer-events: none;
 }
 
 .roots-list-resize-handle {
@@ -1492,42 +1559,25 @@ textarea {
 }
 
 .quizzes-dir-path {
-  margin-top: 0.5rem;
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
   color: var(--ink-soft);
   font-size: 0.9rem;
   word-break: break-word;
 }
 
-.quizzes-drop-zone {
-  margin-top: 0.6rem;
-  padding: 0.75rem;
-  border-radius: 10px;
-  border: 1px dashed var(--drop-border);
-  background: var(--drop-bg);
-  color: var(--ink-soft);
-}
-
-.quizzes-drop-zone.drag-over {
-  border-color: var(--drop-drag-border);
-  background: var(--drop-drag-bg);
-  color: var(--drop-drag-text);
-}
-
-.quizzes-manager-controls {
-  margin-top: 0.7rem;
-  display: flex;
-  gap: 0.45rem;
-  flex-wrap: wrap;
+.manager-selection-chip {
+  display: inline-flex;
   align-items: center;
-}
-
-.quizzes-manager-actions {
-  gap: 0.45rem;
-  flex-wrap: wrap;
-}
-
-.quizzes-manager-selection {
-  margin-top: 0.5rem;
+  min-height: 2.1rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
   color: var(--ink-soft);
   font-size: 0.86rem;
 }
@@ -1771,7 +1821,20 @@ textarea {
     max-height: 320px;
   }
 
-  .quizzes-manager-controls {
+  .manager-page-header {
+    flex-direction: column;
+  }
+
+  .manager-page-actions {
+    width: 100%;
+  }
+
+  .manager-page-actions > button {
+    flex: 1 1 0;
+  }
+
+  .manager-page-meta {
+    flex-direction: column;
     align-items: stretch;
   }
 }
