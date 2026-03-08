@@ -209,6 +209,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Keep unfocused API key displays clipped inside their Settings boxes instead of bleeding past the field boundary.
 - [x] Remove the `Minimize` button from the main Quiz Folder Manager panel.
 - [x] Allow the Quiz Folder Manager panel that houses the folder structure to be resized by dragging its edges and corners.
 - [x] Fix Quiz Folder Manager edge-resize behavior so north-edge drags can regrow correctly and always stop on pointer cancellation/loss.
