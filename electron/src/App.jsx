@@ -728,7 +728,20 @@ function formatElapsedTime(milliseconds) {
 }
 
 function timestampToMs(value) {
-  const parsed = Date.parse(String(value || ''));
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return 0;
+  }
+  if (/^\d+$/.test(raw)) {
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+  const parsed = Date.parse(raw);
   if (Number.isNaN(parsed)) {
     return 0;
   }
