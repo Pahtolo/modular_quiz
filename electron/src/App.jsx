@@ -1263,6 +1263,7 @@ function App() {
   const [historyContextIndex, setHistoryContextIndex] = useState(-1);
   const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(-1);
   const [historySortMode, setHistorySortMode] = useState('most_recent');
+  const [historyClockFilter, setHistoryClockFilter] = useState('all');
   const [gradingHistoryAttempt, setGradingHistoryAttempt] = useState(false);
   const [quizSidebarMode, setQuizSidebarMode] = useState('question_nav');
   const [quizzesManagerContextMenu, setQuizzesManagerContextMenu] = useState({
@@ -1521,11 +1522,11 @@ function App() {
     return historyContextPaths[historyContextIndex] || '';
   }, [historyContextIndex, historyContextPaths]);
 
-  const historyFiltered = useMemo(() => {
+  const historyAttemptsForQuiz = useMemo(() => {
     if (!activeHistoryQuizPath) {
       return [];
     }
-    const attemptsWithNumbers = historyRecords
+    return historyRecords
       .filter((record) => record.quiz_path === activeHistoryQuizPath)
       .sort((left, right) => {
         const leftTime = timestampToMs(left?.timestamp);
@@ -1539,6 +1540,15 @@ function App() {
         ...record,
         attempt_number: index + 1,
       }));
+  }, [activeHistoryQuizPath, historyRecords]);
+
+  const historyFiltered = useMemo(() => {
+    const attemptsWithNumbers = historyAttemptsForQuiz.filter((record) => {
+      if (historyClockFilter === 'all') {
+        return true;
+      }
+      return normalizeQuizClockMode(record?.quiz_clock_mode || 'stopwatch') === historyClockFilter;
+    });
     if (historySortMode === 'duration_shortest') {
       return [...attemptsWithNumbers].sort((left, right) => {
         const leftDuration = Number(left?.duration_seconds || 0);
@@ -1563,7 +1573,7 @@ function App() {
       return attemptsWithNumbers;
     }
     return [...attemptsWithNumbers].reverse();
-  }, [activeHistoryQuizPath, historyRecords, historySortMode]);
+  }, [historyAttemptsForQuiz, historyClockFilter, historySortMode]);
 
   const hasOlderHistoryContext = historyContextIndex >= 0 && historyContextIndex < historyContextPaths.length - 1;
   const hasNewerHistoryContext = historyContextIndex > 0;
@@ -1884,7 +1894,7 @@ function App() {
 
   useEffect(() => {
     setSelectedAttemptIndex(-1);
-  }, [historySortMode]);
+  }, [historyClockFilter, historySortMode]);
 
   useEffect(() => {
     if (!autoInjectContextEnabled) {
@@ -4209,6 +4219,17 @@ function App() {
               →
             </button>
             <label className="performance-sort-control">
+              <span>Clock</span>
+              <select
+                value={historyClockFilter}
+                onChange={(event) => setHistoryClockFilter(String(event.target.value || 'all'))}
+              >
+                <option value="all">All</option>
+                <option value="stopwatch">Stopwatch</option>
+                <option value="timer">Timer</option>
+              </select>
+            </label>
+            <label className="performance-sort-control">
               <span>Sort by</span>
               <select
                 value={historySortMode}
@@ -4228,6 +4249,8 @@ function App() {
 
         {!activeHistoryQuizPath ? (
           <p className="roots-empty">Right-click a quiz and choose Performance History to view attempts.</p>
+        ) : historyAttemptsForQuiz.length && !historyFiltered.length ? (
+          <p className="roots-empty">No attempts match the selected clock filter for this quiz.</p>
         ) : historyFiltered.length ? (
           <div className="performance-session-grid">
             <ul className="attempt-list performance-attempt-list">
