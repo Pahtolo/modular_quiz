@@ -1178,6 +1178,77 @@ textarea {
   vertical-align: top;
 }
 
+.performance-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 0.55rem;
+  min-height: 0;
+  flex: 1;
+}
+
+.performance-chart-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-height: 0;
+}
+
+.performance-chart-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.85rem;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.performance-chart {
+  width: 100%;
+  height: auto;
+  min-height: 280px;
+  overflow: visible;
+}
+
+.performance-chart-axis {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.performance-chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.performance-chart-point {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 2;
+  cursor: pointer;
+}
+
+.performance-chart-point.selected {
+  fill: var(--accent-2);
+}
+
+.performance-chart-tick {
+  fill: var(--ink-soft);
+  font-size: 12px;
+}
+
+.performance-chart-tick.y.bottom {
+  dominant-baseline: ideographic;
+}
+
+.performance-chart-tick.x.end {
+  text-anchor: end;
+}
+
 .performance-answer-text pre {
   max-width: 100%;
 }
@@ -1628,7 +1699,8 @@ textarea {
   .form-grid.two-col,
   .mcq-grid,
   .question-shell,
-  .performance-session-grid {
+  .performance-session-grid,
+  .performance-chart-layout {
     grid-template-columns: 1fr;
   }
 
