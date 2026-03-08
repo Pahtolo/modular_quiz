@@ -4348,6 +4348,76 @@ function App() {
     );
   }
 
+  function renderQuestionNavPanel() {
+    return (
+      <aside className="question-nav-column">
+        <div className="question-nav-panel-header">
+          <div className="question-nav-tabs" role="tablist" aria-label="Quiz navigation panels">
+            <button
+              type="button"
+              role="tab"
+              aria-selected="true"
+              className="question-nav-tab active"
+            >
+              Question Nav
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected="false"
+              className="question-nav-tab"
+              onClick={() => openCurrentQuizPerformanceHistory()}
+            >
+              Performance History
+            </button>
+          </div>
+        </div>
+        <div className="question-nav-list">
+          {quiz.questions.map((q, index) => {
+            const questionState = questionStates[index];
+            const answered = Boolean(questionState);
+            const reachable = !lockQuestionsByProgression || index <= furthestReachableIndex;
+            const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
+            const current = index === quizIndex;
+            const result = questionState?.result;
+            const hasGradedOutcome = typeof result?.correct === 'boolean' && !result?.ungraded;
+
+            let navStatusLabel = reachable ? 'Open' : 'Locked';
+            let navStatusClass = '';
+            if (blockedByAutoAdvance) {
+              navStatusLabel = 'Locked';
+            } else if (answered) {
+              if (showFeedbackOnAnswer && hasGradedOutcome) {
+                navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
+                navStatusClass = result.correct ? ' correct' : ' incorrect';
+              } else if (showFeedbackOnCompletion) {
+                navStatusLabel = 'Done';
+                navStatusClass = ' done';
+                if (quizComplete && hasGradedOutcome) {
+                  navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
+                  navStatusClass = result.correct ? ' correct' : ' incorrect';
+                }
+              }
+            }
+
+            return (
+              <button
+                key={`qnav-${q.id || index}`}
+                type="button"
+                disabled={!reachable || blockedByAutoAdvance || quizIsPaused}
+                className={`question-nav-button${current ? ' current' : ''}${navStatusClass}`}
+                onClick={() => jumpToQuestion(index)}
+              >
+                <span>Q{index + 1}</span>
+                <span>{navStatusLabel}</span>
+              </button>
+            );
+          })}
+        </div>
+      </aside>
+    );
+  }
+
   function renderFeedbackChatPanel() {
     if (!currentQuestionState && !currentFeedbackThread.length && !feedbackChatSending) {
       return <p className="roots-empty">Answer a question to start feedback chat.</p>;
@@ -4890,53 +4960,7 @@ function App() {
                       <aside className="question-nav-column performance-history-column">
                         {renderPerformanceHistoryPanel()}
                       </aside>
-                    ) : (
-                      <aside className="question-nav-column">
-                        <h4>Question Nav</h4>
-                        <div className="question-nav-list">
-                          {quiz.questions.map((q, index) => {
-                            const questionState = questionStates[index];
-                            const answered = Boolean(questionState);
-                            const reachable = !lockQuestionsByProgression || index <= furthestReachableIndex;
-                            const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
-                            const current = index === quizIndex;
-                            const result = questionState?.result;
-                            const hasGradedOutcome = typeof result?.correct === 'boolean' && !result?.ungraded;
-
-                            let navStatusLabel = reachable ? 'Open' : 'Locked';
-                            let navStatusClass = '';
-                            if (blockedByAutoAdvance) {
-                              navStatusLabel = 'Locked';
-                            } else if (answered) {
-                              if (showFeedbackOnAnswer && hasGradedOutcome) {
-                                navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
-                                navStatusClass = result.correct ? ' correct' : ' incorrect';
-                              } else if (showFeedbackOnCompletion) {
-                                navStatusLabel = 'Done';
-                                navStatusClass = ' done';
-                                if (quizComplete && hasGradedOutcome) {
-                                  navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
-                                  navStatusClass = result.correct ? ' correct' : ' incorrect';
-                                }
-                              }
-                            }
-
-                            return (
-                              <button
-                                key={`qnav-${q.id || index}`}
-                                type="button"
-                                disabled={!reachable || blockedByAutoAdvance || quizIsPaused}
-                                className={`question-nav-button${current ? ' current' : ''}${navStatusClass}`}
-                                onClick={() => jumpToQuestion(index)}
-                              >
-                                <span>Q{index + 1}</span>
-                                <span>{navStatusLabel}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </aside>
-                    )}
+                    ) : renderQuestionNavPanel()}
                   </div>
                 )
               ) : showingPerformanceHistory ? (
