@@ -4795,25 +4795,7 @@ function App() {
     return (
       <aside className="question-nav-column">
         <div className="question-nav-panel-header">
-          <div className="question-nav-tabs" role="tablist" aria-label="Quiz navigation panels">
-            <button
-              type="button"
-              role="tab"
-              aria-selected="true"
-              className="question-nav-tab active"
-            >
-              Question Nav
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected="false"
-              className="question-nav-tab"
-              onClick={() => openCurrentQuizPerformanceHistory()}
-            >
-              Performance History
-            </button>
-          </div>
+          <h3>Question Nav</h3>
         </div>
         <div className="question-nav-list">
           {quiz.questions.map((q, index) => {
