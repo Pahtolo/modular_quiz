@@ -89,6 +89,32 @@ function MarkdownMathText({ className, text }) {
   );
 }
 
+function looksLikeCodeSnippet(text) {
+  const value = String(text || '');
+  if (!value.trim()) {
+    return false;
+  }
+  if (value.includes('```')) {
+    return true;
+  }
+  if (/`[^`\n]+`/.test(value)) {
+    return true;
+  }
+  if (/^( {4,}|\t).+/m.test(value)) {
+    return true;
+  }
+  return /[{};<>]/.test(value) && /\w+\s*[:=()]/.test(value);
+}
+
+function QuestionAnswerText({ questionType, text }) {
+  const type = String(questionType || '').trim().toLowerCase();
+  const value = String(text || '');
+  if (type === 'short' && looksLikeCodeSnippet(value)) {
+    return <MarkdownMathText className="math-text markdown-math-content performance-answer-text" text={value} />;
+  }
+  return <MathText as="span" className="math-text" text={value} />;
+}
+
 function providerAndModelFromKey(modelKey) {
   if (!modelKey || !modelKey.includes(':')) {
     return { provider: 'self', model: '' };
@@ -328,6 +354,50 @@ function timedOutQuestionResult(question) {
     points_awarded: 0,
     max_points: Number(question?.points || 0),
     feedback: 'Time expired.',
+  };
+}
+
+function shuffleMcqQuestion(question) {
+  const options = Array.isArray(question?.options) ? [...question.options] : [];
+  const answer = String(question?.answer || '').trim().toUpperCase();
+  const correctIndex = answer ? answer.charCodeAt(0) - 65 : -1;
+  if (options.length < 2 || correctIndex < 0 || correctIndex >= options.length) {
+    return question;
+  }
+
+  const indexedOptions = options.map((option, index) => ({
+    option,
+    isCorrect: index === correctIndex,
+  }));
+  for (let index = indexedOptions.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [indexedOptions[index], indexedOptions[swapIndex]] = [indexedOptions[swapIndex], indexedOptions[index]];
+  }
+
+  const shuffledAnswerIndex = indexedOptions.findIndex((entry) => entry.isCorrect);
+  if (shuffledAnswerIndex < 0) {
+    return question;
+  }
+
+  return {
+    ...question,
+    options: indexedOptions.map((entry) => entry.option),
+    answer: String.fromCharCode(65 + shuffledAnswerIndex),
+  };
+}
+
+function shuffleQuizMcqAnswers(quiz) {
+  if (!quiz || !Array.isArray(quiz.questions)) {
+    return quiz;
+  }
+
+  return {
+    ...quiz,
+    questions: quiz.questions.map((question) => (
+      String(question?.type || '').toLowerCase() === 'mcq'
+        ? shuffleMcqQuestion(question)
+        : question
+    )),
   };
 }
 
@@ -1062,6 +1132,8 @@ function App() {
   const [quizzesManagerBusy, setQuizzesManagerBusy] = useState(false);
   const [showQuizzesBox, setShowQuizzesBox] = useState(true);
   const [quizzesDragOver, setQuizzesDragOver] = useState(false);
+  const [editingClaudeApiKey, setEditingClaudeApiKey] = useState(false);
+  const [editingOpenAiApiKey, setEditingOpenAiApiKey] = useState(false);
 
   const [providerModels, setProviderModels] = useState({ self: [], claude: [], openai: [] });
   const [modelLoadError, setModelLoadError] = useState('');
@@ -1114,6 +1186,9 @@ function App() {
   const modelLoadRequestIdRef = useRef(0);
   const quizSelectorPanelTabRef = useRef('quizzes');
   const settingsAutoSaveTimeoutRef = useRef(null);
+  const settingsFocusSinkRef = useRef(null);
+  const claudeApiKeyInputRef = useRef(null);
+  const openAiApiKeyInputRef = useRef(null);
   const quizTimerExpiryHandledRef = useRef(false);
 
   const [sourceInputs, setSourceInputs] = useState([]);
@@ -1328,6 +1403,9 @@ function App() {
     return Math.min(lastAnsweredIndex + 1, quiz.questions.length - 1);
   }, [quiz, lastAnsweredIndex]);
   const lockQuestionsByProgression = settingsForm?.lock_questions_by_progression ?? settings?.lock_questions_by_progression ?? true;
+  const shuffleMcqAnswersEnabled = Boolean(
+    settingsForm?.shuffle_mcq_answers ?? settings?.shuffle_mcq_answers ?? false,
+  );
   const maxNavigableQuestionIndex = useMemo(() => {
     if (!quiz || !quiz.questions?.length) {
       return 0;
@@ -1405,7 +1483,7 @@ function App() {
     if (!activeHistoryQuizPath) {
       return [];
     }
-    const oldestFirst = historyRecords
+    const attemptsWithNumbers = historyRecords
       .filter((record) => record.quiz_path === activeHistoryQuizPath)
       .sort((left, right) => {
         const leftTime = timestampToMs(left?.timestamp);
@@ -1419,10 +1497,30 @@ function App() {
         ...record,
         attempt_number: index + 1,
       }));
-    if (historySortMode === 'least_recent') {
-      return oldestFirst;
+    if (historySortMode === 'duration_shortest') {
+      return [...attemptsWithNumbers].sort((left, right) => {
+        const leftDuration = Number(left?.duration_seconds || 0);
+        const rightDuration = Number(right?.duration_seconds || 0);
+        if (leftDuration !== rightDuration) {
+          return leftDuration - rightDuration;
+        }
+        return timestampToMs(left?.timestamp) - timestampToMs(right?.timestamp);
+      });
     }
-    return [...oldestFirst].reverse();
+    if (historySortMode === 'duration_longest') {
+      return [...attemptsWithNumbers].sort((left, right) => {
+        const leftDuration = Number(left?.duration_seconds || 0);
+        const rightDuration = Number(right?.duration_seconds || 0);
+        if (leftDuration !== rightDuration) {
+          return rightDuration - leftDuration;
+        }
+        return timestampToMs(right?.timestamp) - timestampToMs(left?.timestamp);
+      });
+    }
+    if (historySortMode === 'least_recent') {
+      return attemptsWithNumbers;
+    }
+    return [...attemptsWithNumbers].reverse();
   }, [activeHistoryQuizPath, historyRecords, historySortMode]);
 
   const hasOlderHistoryContext = historyContextIndex >= 0 && historyContextIndex < historyContextPaths.length - 1;
@@ -1568,6 +1666,56 @@ function App() {
     event.preventDefault();
     commitGenerationNumberField(fieldName);
     event.currentTarget.blur();
+  }
+
+  function focusSettingsSink() {
+    if (settingsFocusSinkRef.current && typeof settingsFocusSinkRef.current.focus === 'function') {
+      settingsFocusSinkRef.current.focus();
+      return true;
+    }
+    return false;
+  }
+
+  function formatMaskedApiKey(value) {
+    const raw = String(value || '').trim();
+    if (!raw) {
+      return 'Click to enter API key';
+    }
+    if (raw.length <= 8) {
+      return '\u2022'.repeat(raw.length);
+    }
+    return `${raw.slice(0, 4)}${'\u2022'.repeat(Math.max(4, raw.length - 6))}${raw.slice(-2)}`;
+  }
+
+  function beginApiKeyEditing(setEditing) {
+    setEditing(true);
+  }
+
+  function finishApiKeyEditing(inputRef, setEditing) {
+    const input = inputRef?.current || null;
+    if (input && typeof input.blur === 'function') {
+      input.blur();
+    }
+    if (document.activeElement && typeof document.activeElement.blur === 'function') {
+      document.activeElement.blur();
+    }
+    focusSettingsSink();
+    setEditing(false);
+    window.requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active === input && typeof active.blur === 'function') {
+        active.blur();
+      }
+      focusSettingsSink();
+    });
+  }
+
+  function blurInputOnEnter(event, inputRef, setEditing) {
+    if (event.key !== 'Enter' && event.key !== 'Return') {
+      return;
+    }
+    event.preventDefault();
+    window.setTimeout(() => finishApiKeyEditing(inputRef, setEditing), 0);
   }
 
   function commitQuestionTimerSeconds() {
@@ -1902,6 +2050,20 @@ function App() {
       window.clearInterval(timerId);
     };
   }, [quiz, quizClockMode, quizClockPaused, quizCompleted, quizStartedAt]);
+
+  useEffect(() => {
+    if (!editingClaudeApiKey || !claudeApiKeyInputRef.current) {
+      return;
+    }
+    claudeApiKeyInputRef.current.focus();
+  }, [editingClaudeApiKey]);
+
+  useEffect(() => {
+    if (!editingOpenAiApiKey || !openAiApiKeyInputRef.current) {
+      return;
+    }
+    openAiApiKeyInputRef.current.focus();
+  }, [editingOpenAiApiKey]);
 
   useEffect(() => {
     if (!quizContextMenu.open) {
@@ -3156,7 +3318,9 @@ function App() {
     setQuizLoadError('');
     try {
       const response = await apiRequest('/v1/quizzes/load', 'POST', { path: targetPath });
-      const loadedQuiz = response.quiz;
+      const loadedQuiz = shuffleMcqAnswersEnabled
+        ? shuffleQuizMcqAnswers(response.quiz)
+        : response.quiz;
       const normalizedTargetPath = normalizePathText(targetPath);
       const cachedContext = autoInjectContextEnabled ? generatedQuizContextsByPath[normalizedTargetPath] : null;
       const nextClockMode = normalizeQuizClockMode(
@@ -3447,6 +3611,46 @@ function App() {
         options: currentQuestion.options,
         user_answer: mcqAnswer,
         correct_answer: currentQuestion.answer,
+        extra_context: String(injectedContextText || '').trim(),
+      });
+      appendFeedbackEntries(questionKey, [{
+        role: 'assistant',
+        text: response.text || 'No explanation returned.',
+        kind: 'explain',
+      }], { flagAttention: false });
+    } catch (err) {
+      setQuizLoadError(err.message);
+    } finally {
+      setFeedbackPendingForQuestion(questionKey, false);
+    }
+  }
+
+  async function explainCurrentShort() {
+    if (!currentQuestion || currentQuestion.type !== 'short' || !questionResult || quizIsPaused) {
+      return;
+    }
+    const questionKey = feedbackThreadKey(currentQuestion, quizIndex);
+
+    const modelKeyValue = effectivePreferredModelKey.trim();
+    const selected = providerAndModelFromKey(modelKeyValue);
+    if (selected.provider === 'self') {
+      setQuizLoadError('No model mode does not support short-answer explanation.');
+      return;
+    }
+
+    const userAnswer = String(questionStatesRef.current?.[quizIndex]?.short_answer || shortAnswer || '');
+
+    setQuizLoadError('');
+    setQuizSelectorPanelTab('feedback');
+    setFeedbackTabNeedsAttention(false);
+    setFeedbackPendingForQuestion(questionKey, true);
+
+    try {
+      const response = await apiRequest('/v1/explain/short', 'POST', {
+        provider: selected.provider,
+        model: selected.model,
+        question: currentQuestion,
+        user_answer: userAnswer,
         extra_context: String(injectedContextText || '').trim(),
       });
       appendFeedbackEntries(questionKey, [{
@@ -4003,6 +4207,8 @@ function App() {
               >
                 <option value="most_recent">Most recent</option>
                 <option value="least_recent">Least recent</option>
+                <option value="duration_longest">Duration (longest)</option>
+                <option value="duration_shortest">Duration (shortest)</option>
               </select>
             </label>
             <button type="button" disabled={gradingHistoryAttempt} onClick={() => loadHistory()}>
@@ -4086,8 +4292,8 @@ function App() {
                       {(selectedAttempt.questions || []).map((question, idx) => (
                         <tr key={`${question.question_id}-${idx}`}>
                           <td>{question.question_id}</td>
-                          <td><MathText as="span" className="math-text" text={question.user_answer} /></td>
-                          <td><MathText as="span" className="math-text" text={question.correct_answer_or_expected} /></td>
+                          <td><QuestionAnswerText questionType={question.question_type} text={question.user_answer} /></td>
+                          <td><QuestionAnswerText questionType={question.question_type} text={question.correct_answer_or_expected} /></td>
                           <td>
                             {isUngradedAttemptQuestion(question)
                               ? 'Ungraded'
@@ -4442,7 +4648,7 @@ function App() {
                     </button>
                   </div>
                   {quizSelectorPanelTab === 'quizzes' ? (
-                    <span className="quiz-tree-hint">Click folders to collapse. Right-click quizzes for options.</span>
+                    <span className="quiz-tree-hint">Click quizzes for performance history. Double-click to start. Right-click for options.</span>
                   ) : null}
                 </div>
                 {quizSelectorPanelTab === 'quizzes' ? (
@@ -4469,7 +4675,10 @@ function App() {
                     <QuizTree
                       nodes={visibleQuizTreeNodes}
                       selectedPath={selectedQuizPath}
-                      onSelect={setSelectedQuizPath}
+                      onSelect={(pathValue) => {
+                        setSelectedQuizPath(pathValue);
+                        void openPerformanceHistoryForQuiz(pathValue);
+                      }}
                       onActivate={(pathValue) => {
                         void startSelectedQuiz(pathValue);
                       }}
@@ -4597,8 +4806,14 @@ function App() {
                         </button>
                       ) : null}
 
-                      {currentQuestion.type === 'mcq' && questionResult && selectedProviderModel.provider !== 'self' ? (
+                      {questionResult && selectedProviderModel.provider !== 'self' && currentQuestion.type === 'mcq' ? (
                         <button type="button" disabled={feedbackChatSending || quizIsPaused} onClick={() => explainCurrentMcq()}>
+                          {feedbackChatSending ? 'Explaining...' : 'Explain'}
+                        </button>
+                      ) : null}
+
+                      {questionResult && selectedProviderModel.provider !== 'self' && currentQuestion.type === 'short' ? (
+                        <button type="button" disabled={feedbackChatSending || quizIsPaused} onClick={() => explainCurrentShort()}>
                           {feedbackChatSending ? 'Explaining...' : 'Explain'}
                         </button>
                       ) : null}
@@ -4917,6 +5132,13 @@ function App() {
 
         {normalizedActiveTab === 'settings' && settingsForm ? (
           <section className="card settings-layout">
+            <button
+              ref={settingsFocusSinkRef}
+              type="button"
+              className="settings-focus-sink"
+              aria-hidden="true"
+              tabIndex={-1}
+            />
             <div className="row between">
               <h2>Settings</h2>
               <button type="button" onClick={() => handleImportLegacy()}>
@@ -5227,7 +5449,16 @@ function App() {
                 </section>
                 ) : null}
 
-                {settingsMatches('question nav', 'quiz progression', 'lock questions', 'unlock questions', 'navigation') ? (
+                {settingsMatches(
+                  'question nav',
+                  'quiz progression',
+                  'lock questions',
+                  'unlock questions',
+                  'navigation',
+                  'shuffle answers',
+                  'shuffle mcq answers',
+                  'randomize answers',
+                ) ? (
               <section className="settings-group">
                 <h3>Question Navigation</h3>
                 <div className="form-grid two-col">
@@ -5241,10 +5472,21 @@ function App() {
                     />
                     <span>Lock future questions until you reach them</span>
                   </label>
+
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(shuffleMcqAnswersEnabled)}
+                      onChange={(event) =>
+                        setSettingsForm((prev) => ({ ...prev, shuffle_mcq_answers: event.target.checked }))
+                      }
+                    />
+                    <span>Shuffle MCQ answer order each attempt</span>
+                  </label>
                 </div>
                 <div className="settings-warning-note">
-                  Turning this off lets you jump to any question immediately. Auto-advance still blocks going backward
-                  during live quizzes.
+                  Turning off question locking lets you jump anywhere immediately. MCQ shuffling applies when you start
+                  or restart a quiz. Auto-advance still blocks going backward during live quizzes.
                 </div>
               </section>
                 ) : null}
@@ -5257,22 +5499,48 @@ function App() {
                   {settingsMatches('claude api key', 'claude') ? (
                 <label className="field">
                   <span>Claude API key</span>
-                  <input
-                    type="password"
-                    value={settingsForm.claude_api_key || ''}
-                    onChange={(event) => setSettingsForm((prev) => ({ ...prev, claude_api_key: event.target.value }))}
-                  />
+                  {editingClaudeApiKey ? (
+                    <input
+                      ref={claudeApiKeyInputRef}
+                      type="password"
+                      value={settingsForm.claude_api_key || ''}
+                      onChange={(event) => setSettingsForm((prev) => ({ ...prev, claude_api_key: event.target.value }))}
+                      onBlur={() => finishApiKeyEditing(claudeApiKeyInputRef, setEditingClaudeApiKey)}
+                      onKeyDown={(event) => blurInputOnEnter(event, claudeApiKeyInputRef, setEditingClaudeApiKey)}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="api-key-display"
+                      onClick={() => beginApiKeyEditing(setEditingClaudeApiKey)}
+                    >
+                      {formatMaskedApiKey(settingsForm.claude_api_key)}
+                    </button>
+                  )}
                 </label>
                   ) : null}
 
                   {settingsMatches('openai api key', 'openai') ? (
                 <label className="field">
                   <span>OpenAI API key</span>
-                  <input
-                    type="password"
-                    value={settingsForm.openai_api_key || ''}
-                    onChange={(event) => setSettingsForm((prev) => ({ ...prev, openai_api_key: event.target.value }))}
-                  />
+                  {editingOpenAiApiKey ? (
+                    <input
+                      ref={openAiApiKeyInputRef}
+                      type="password"
+                      value={settingsForm.openai_api_key || ''}
+                      onChange={(event) => setSettingsForm((prev) => ({ ...prev, openai_api_key: event.target.value }))}
+                      onBlur={() => finishApiKeyEditing(openAiApiKeyInputRef, setEditingOpenAiApiKey)}
+                      onKeyDown={(event) => blurInputOnEnter(event, openAiApiKeyInputRef, setEditingOpenAiApiKey)}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="api-key-display"
+                      onClick={() => beginApiKeyEditing(setEditingOpenAiApiKey)}
+                    >
+                      {formatMaskedApiKey(settingsForm.openai_api_key)}
+                    </button>
+                  )}
                 </label>
                   ) : null}
                 </div>

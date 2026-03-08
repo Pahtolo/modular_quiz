@@ -105,6 +105,53 @@ class FeedbackToneTests(unittest.TestCase):
         self.assertIn("Your answer:", captured["prompt"])
         self.assertNotIn("User answer:", captured["prompt"])
 
+    def test_openai_short_explain_prompt_requires_second_person(self) -> None:
+        client = OpenAIClient(auth=OpenAIAuthState(api_key="test"))
+        captured: dict[str, str] = {}
+
+        def _fake(prompt: str, model: str | None = None, max_tokens: int = 500) -> str:
+            _ = model, max_tokens
+            captured["prompt"] = prompt
+            return "You are close."
+
+        with patch.object(client, "_responses_text", side_effect=_fake):
+            _ = client.explain_short(
+                prompt="Define asymptotic notation.",
+                expected_answer="It describes growth rate.",
+                user_answer="Average runtime.",
+            )
+
+        prompt_text = captured["prompt"]
+        self.assertIn("Address the learner directly", prompt_text)
+        self.assertIn("KaTeX-compatible LaTeX", prompt_text)
+        self.assertIn("Your answer:", prompt_text)
+
+    def test_claude_short_explain_prompt_requires_second_person(self) -> None:
+        client = ClaudeClient(api_key="test")
+        captured: dict[str, str] = {}
+
+        def _fake(
+            prompt: str,
+            system: str,
+            model: str | None = None,
+            max_tokens: int = 500,
+        ) -> str:
+            _ = model, max_tokens
+            captured["prompt"] = prompt
+            captured["system"] = system
+            return "You are close."
+
+        with patch.object(client, "_message_text", side_effect=_fake):
+            _ = client.explain_short(
+                prompt="Define asymptotic notation.",
+                expected_answer="It describes growth rate.",
+                user_answer="Average runtime.",
+            )
+
+        self.assertIn("second person", captured["system"])
+        self.assertIn("KaTeX-compatible LaTeX", captured["system"])
+        self.assertIn("Your answer:", captured["prompt"])
+
     def test_openai_feedback_chat_prompt_requires_katex_for_math(self) -> None:
         client = OpenAIClient(auth=OpenAIAuthState(api_key="test"))
         captured: dict[str, str] = {}

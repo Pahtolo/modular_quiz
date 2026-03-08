@@ -409,6 +409,22 @@ def create_mcp_server(
             payload["model"] = model
         return await bridge.request("POST", "/v1/explain/mcq", payload=payload)
 
+    @mcp.tool(name="quiz_explain_short", description="Explain why a short-answer response is right/wrong.", annotations=READ_ONLY)
+    async def quiz_explain_short(
+        provider: str,
+        question: dict[str, Any],
+        user_answer: str,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "provider": provider,
+            "question": question,
+            "user_answer": user_answer,
+        }
+        if model:
+            payload["model"] = model
+        return await bridge.request("POST", "/v1/explain/short", payload=payload)
+
     @mcp.tool(name="quiz_history", description="Read quiz attempt history.", annotations=READ_ONLY)
     async def quiz_history(quiz_path: str | None = None) -> dict[str, Any]:
         params = {"quiz_path": quiz_path} if quiz_path else None

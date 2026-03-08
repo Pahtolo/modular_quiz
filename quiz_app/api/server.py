@@ -1290,6 +1290,35 @@ def create_app(
         )
         return {"text": text}
 
+    @app.post("/v1/explain/short", dependencies=[Depends(_require_auth)])
+    def explain_short(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        provider = str(payload.get("provider", "")).strip().lower()
+        if provider not in {"claude", "openai"}:
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Explanation provider must be claude|openai.")
+
+        question_raw = payload.get("question")
+        if not isinstance(question_raw, dict):
+            raise APIError(status_code=422, code="VALIDATION_ERROR", message="Field 'question' must be an object.")
+        question = _short_question_from_payload(question_raw)
+
+        user_answer = str(payload.get("user_answer", ""))
+        model = str(payload.get("model", "") or "").strip() or None
+        extra_context = str(payload.get("extra_context", "") or "").strip() or None
+
+        settings = _settings(state)
+        client = _provider_client(state, provider, settings)
+        if client is None:
+            raise APIError(status_code=404, code="NOT_FOUND", message=f"Provider '{provider}' unavailable.")
+
+        text = client.explain_short(
+            prompt=question.prompt,
+            expected_answer=question.expected,
+            user_answer=user_answer,
+            model=model,
+            extra_context=extra_context,
+        )
+        return {"text": text}
+
     @app.post("/v1/feedback/chat", dependencies=[Depends(_require_auth)])
     def feedback_chat(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         provider = str(payload.get("provider", "")).strip().lower()

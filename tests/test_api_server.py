@@ -154,6 +154,7 @@ class APIServerTests(unittest.TestCase):
         self.assertIn("quiz_roots", settings)
         self.assertEqual(settings["quiz_clock_mode"], "stopwatch")
         self.assertEqual(settings["quiz_timer_duration_seconds"], 900)
+        self.assertFalse(settings["shuffle_mcq_answers"])
 
         updated = self.client.put(
             "/v1/settings",
@@ -166,6 +167,7 @@ class APIServerTests(unittest.TestCase):
                 "quiz_timer_duration_seconds": 1200,
                 "question_timer_seconds": 45,
                 "lock_questions_by_progression": False,
+                "shuffle_mcq_answers": True,
                 "generation_defaults": {
                     "total": 10,
                     "mcq_count": 7,
@@ -184,6 +186,7 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(payload["quiz_timer_duration_seconds"], 1200)
         self.assertEqual(payload["question_timer_seconds"], 45)
         self.assertFalse(payload["lock_questions_by_progression"])
+        self.assertTrue(payload["shuffle_mcq_answers"])
         self.assertEqual(payload["quiz_roots"], [str((self.root / "Quizzes").resolve())])
 
         clock_off = self.client.put(
@@ -821,6 +824,35 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422, response.text)
         self.assertIn("Question IDs must be unique", response.json()["error"]["message"])
 
+    def test_load_quiz_rejects_mcq_with_more_than_four_options(self) -> None:
+        quiz_path = self.root / "too-many-options.json"
+        quiz_path.write_text(
+            json.dumps(
+                {
+                    "title": "Too Many Options",
+                    "instructions": "Answer all questions.",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "Pick one",
+                            "options": ["A", "B", "C", "D", "E"],
+                            "answer": "A",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.post(
+            "/v1/quizzes/load",
+            headers=self.headers,
+            json={"path": str(quiz_path.resolve())},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertIn("at most 4 choices", response.json()["error"]["message"])
+
     def test_grading_endpoints(self) -> None:
         mcq = self._post(
             "/v1/grade/mcq",
@@ -986,6 +1018,28 @@ class APIServerTests(unittest.TestCase):
             )
         self.assertIn("text", response)
         provider.feedback_chat.assert_called_once()
+
+    def test_explain_short_endpoint(self) -> None:
+        provider = MagicMock()
+        provider.explain_short.return_value = "You are close, but your answer missed the growth-rate detail."
+        with patch("quiz_app.api.server._provider_client", return_value=provider):
+            response = self._post(
+                "/v1/explain/short",
+                {
+                    "provider": "openai",
+                    "model": "gpt-5-mini",
+                    "question": {
+                        "id": "q1",
+                        "type": "short",
+                        "prompt": "Define asymptotic notation.",
+                        "expected": "It describes algorithm growth rate.",
+                        "points": 2,
+                    },
+                    "user_answer": "It means average runtime.",
+                },
+            )
+        self.assertIn("text", response)
+        provider.explain_short.assert_called_once()
 
     def test_history_append_and_filter(self) -> None:
         record = {

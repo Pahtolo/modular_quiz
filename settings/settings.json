@@ -16,6 +16,7 @@
   "quiz_timer_duration_seconds": 900,
   "question_timer_seconds": 0,
   "lock_questions_by_progression": true,
+  "shuffle_mcq_answers": false,
   "claude_api_key": "",
   "claude_model": "claude-3-5-haiku-latest",
   "claude_model_selected": "claude-3-5-haiku-latest",

@@ -51,6 +51,7 @@ class AppSettings:
     quiz_timer_duration_seconds: int = 900
     question_timer_seconds: int = 0
     lock_questions_by_progression: bool = True
+    shuffle_mcq_answers: bool = False
 
     claude_api_key: str = ""
     claude_model: str = "claude-3-5-haiku-latest"
@@ -219,6 +220,10 @@ class SettingsStore:
             lock_questions_by_progression=self._coerce_bool(
                 data.get("lock_questions_by_progression"),
                 defaults.lock_questions_by_progression,
+            ),
+            shuffle_mcq_answers=self._coerce_bool(
+                data.get("shuffle_mcq_answers"),
+                defaults.shuffle_mcq_answers,
             ),
             claude_api_key=self._coerce_str(data.get("claude_api_key"), defaults.claude_api_key),
             claude_model=claude_model,

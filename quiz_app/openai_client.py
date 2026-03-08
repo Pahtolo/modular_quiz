@@ -311,6 +311,30 @@ class OpenAIClient:
         )
         return to_second_person(self._responses_text(ask, model=model, max_tokens=220).strip())
 
+    def explain_short(
+        self,
+        prompt: str,
+        expected_answer: str,
+        user_answer: str,
+        model: str | None = None,
+        extra_context: str | None = None,
+    ) -> str:
+        context_block = ""
+        if extra_context and extra_context.strip():
+            context_block = f"\nAdditional context:\n{extra_context.strip()}\n\n"
+        ask = (
+            "Explain the expected short answer briefly (max 5 sentences). "
+            "Address the learner directly using 'you' and 'your'. "
+            "Do not refer to the learner as 'the user' or 'the student'. "
+            "Mention whether their answer was right or wrong and what was missing or strong. "
+            f"{MATH_FORMAT_INSTRUCTION}\n\n"
+            f"{context_block}"
+            f"Question:\n{prompt}\n\n"
+            f"Your answer:\n{user_answer}\n\n"
+            f"Expected answer:\n{expected_answer}\n"
+        )
+        return to_second_person(self._responses_text(ask, model=model, max_tokens=220).strip())
+
     def feedback_chat(
         self,
         question_prompt: str,
