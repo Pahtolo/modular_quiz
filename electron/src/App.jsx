@@ -13,7 +13,7 @@ import {
   stageDroppedFiles,
 } from './api';
 
-const TABS = ['quiz', 'generate', 'settings'];
+const TABS = ['quiz', 'generate', 'manager', 'settings'];
 const THEME_STORAGE_KEY = 'modular-quiz-theme';
 const QUIZ_EXIT_CONFIRM_MESSAGE = 'Are you sure you want to exit the quiz? Your progress will not be saved.';
 const MAX_INJECTED_CONTEXT_CHARS = 12000;
@@ -142,6 +142,13 @@ function normalizeTabKey(value) {
     return normalized;
   }
   return 'quiz';
+}
+
+function tabLabel(tab) {
+  if (tab === 'manager') {
+    return 'Quiz Manager';
+  }
+  return tab[0].toUpperCase() + tab.slice(1);
 }
 
 function parseNonNegativeInt(value, fallback = 0) {
@@ -1232,7 +1239,6 @@ function App() {
 
   const [settings, setSettings] = useState(null);
   const [settingsForm, setSettingsForm] = useState(null);
-  const [settingsPage, setSettingsPage] = useState('preferences');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [autoAdvanceDelayDraft, setAutoAdvanceDelayDraft] = useState('600');
   const [quizTimerDurationMinutesDraft, setQuizTimerDurationMinutesDraft] = useState(
@@ -5067,7 +5073,7 @@ function App() {
                 void handleTabChange(tab);
               }}
             >
-              {tab[0].toUpperCase() + tab.slice(1)}
+              {tabLabel(tab)}
             </button>
           ))}
         </div>
@@ -5570,6 +5576,12 @@ function App() {
           </section>
         ) : null}
 
+        {normalizedActiveTab === 'manager' ? (
+          <section className="settings-layout">
+            {renderQuizFolderManagerSection()}
+          </section>
+        ) : null}
+
         {normalizedActiveTab === 'settings' && settingsForm ? (
           <section className="card settings-layout">
             <button
@@ -5586,34 +5598,12 @@ function App() {
               </button>
             </div>
 
-            <div className="settings-page-tabs" role="tablist" aria-label="Settings pages">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={settingsPage === 'preferences'}
-                className={`settings-page-tab ${settingsPage === 'preferences' ? 'active' : ''}`.trim()}
-                onClick={() => setSettingsPage('preferences')}
-              >
-                Preferences
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={settingsPage === 'manager'}
-                className={`settings-page-tab ${settingsPage === 'manager' ? 'active' : ''}`.trim()}
-                onClick={() => setSettingsPage('manager')}
-              >
-                Quiz Folder Manager
-              </button>
-            </div>
-
             {settingsSaveStatus.message ? (
               <div className={`settings-save-status ${settingsSaveStatus.tone}`}>
                 {settingsSaveStatus.message}
               </div>
             ) : null}
 
-            {settingsPage === 'preferences' ? (
               <>
                 <label className="field settings-search-field">
                   <span>Search settings</span>
@@ -5985,9 +5975,6 @@ function App() {
                   ) : null}
                 </div>
               </>
-            ) : null}
-
-            {settingsPage === 'manager' ? renderQuizFolderManagerSection() : null}
           </section>
         ) : null}
       </main>
