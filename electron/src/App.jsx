@@ -2254,7 +2254,8 @@ function App() {
   }, [normalizedActiveTab, selectedQuizPath]);
 
   useEffect(() => {
-    if (normalizedActiveTab !== 'settings') {
+    const shouldPollQuizzesManager = normalizedActiveTab === 'settings' || normalizedActiveTab === 'manager';
+    if (!shouldPollQuizzesManager) {
       return undefined;
     }
 
@@ -2262,7 +2263,7 @@ function App() {
       try {
         await loadQuizzesLibrary({ syncManagedSettings: false });
       } catch (_err) {
-        // Polling should be best-effort and not interrupt settings edits.
+        // Polling should be best-effort and not interrupt manager/settings work.
       }
     };
 
