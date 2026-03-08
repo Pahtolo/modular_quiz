@@ -19,6 +19,9 @@ const QUIZ_EXIT_CONFIRM_MESSAGE = 'Are you sure you want to exit the quiz? Your 
 const MAX_INJECTED_CONTEXT_CHARS = 12000;
 const DEFAULT_QUIZ_TIMER_DURATION_SECONDS = 15 * 60;
 const QUIZ_MANAGER_DRAG_MIME = 'text/plain';
+const QUIZ_MANAGER_LIST_MIN_WIDTH = 320;
+const QUIZ_MANAGER_LIST_MIN_HEIGHT = 260;
+const QUIZ_MANAGER_LIST_DEFAULT_HEIGHT = 320;
 const KATEX_DELIMITERS = [
   { left: '$$', right: '$$', display: true },
   { left: '$', right: '$', display: false },
@@ -240,6 +243,10 @@ function formatModelName(provider, modelId) {
   tokens = mergedVersionTokens;
 
   return tokens.map((token) => toTitleWord(token)).join(' ');
+}
+
+function clampValue(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function hasClaudeCredentials(source) {
@@ -1240,6 +1247,13 @@ function App() {
   const [quizzesManagerBusy, setQuizzesManagerBusy] = useState(false);
   const [showQuizzesBox, setShowQuizzesBox] = useState(true);
   const [quizzesDragOver, setQuizzesDragOver] = useState(false);
+  const [quizManagerTreePanelSize, setQuizManagerTreePanelSize] = useState({
+    width: 0,
+    height: QUIZ_MANAGER_LIST_DEFAULT_HEIGHT,
+    offsetX: 0,
+    offsetY: 0,
+  });
+  const [quizManagerTreeResizeState, setQuizManagerTreeResizeState] = useState(null);
   const [editingClaudeApiKey, setEditingClaudeApiKey] = useState(false);
   const [editingOpenAiApiKey, setEditingOpenAiApiKey] = useState(false);
 
@@ -1299,6 +1313,7 @@ function App() {
   const quizSelectorPanelTabRef = useRef('quizzes');
   const settingsAutoSaveTimeoutRef = useRef(null);
   const settingsFocusSinkRef = useRef(null);
+  const quizManagerTreePanelRef = useRef(null);
   const claudeApiKeyInputRef = useRef(null);
   const openAiApiKeyInputRef = useRef(null);
   const quizTimerExpiryHandledRef = useRef(false);
@@ -2044,6 +2059,82 @@ function App() {
       setHistoryChartYAxis(fallback.value);
     }
   }, [historyChartXAxis, historyChartYAxis]);
+
+  useEffect(() => {
+    if (!quizManagerTreeResizeState) {
+      return undefined;
+    }
+
+    const {
+      direction,
+      startX,
+      startY,
+      startWidth,
+      startHeight,
+      startOffsetX,
+      startOffsetY,
+      maxWidth,
+      maxHeight,
+    } = quizManagerTreeResizeState;
+
+    const minHeight = QUIZ_MANAGER_LIST_MIN_HEIGHT;
+    const minWidth = QUIZ_MANAGER_LIST_MIN_WIDTH;
+
+    function handlePointerMove(event) {
+      const deltaX = event.clientX - startX;
+      const deltaY = event.clientY - startY;
+      let nextWidth = startWidth;
+      let nextHeight = startHeight;
+      let nextOffsetX = startOffsetX;
+      let nextOffsetY = startOffsetY;
+
+      if (direction.includes('e')) {
+        nextWidth = clampValue(startWidth + deltaX, minWidth, Math.max(minWidth, maxWidth - startOffsetX));
+      }
+
+      if (direction.includes('s')) {
+        nextHeight = clampValue(startHeight + deltaY, minHeight, maxHeight);
+      }
+
+      if (direction.includes('w')) {
+        const rightEdge = startOffsetX + startWidth;
+        nextOffsetX = clampValue(startOffsetX + deltaX, 0, Math.max(0, rightEdge - minWidth));
+        nextWidth = clampValue(rightEdge - nextOffsetX, minWidth, Math.max(minWidth, maxWidth - nextOffsetX));
+      }
+
+      if (direction.includes('n')) {
+        const bottomEdge = startOffsetY + startHeight;
+        nextOffsetY = clampValue(startOffsetY + deltaY, 0, Math.max(0, bottomEdge - minHeight));
+        nextHeight = clampValue(bottomEdge - nextOffsetY, minHeight, maxHeight);
+      }
+
+      setQuizManagerTreePanelSize({
+        width: Math.round(nextWidth),
+        height: Math.round(nextHeight),
+        offsetX: Math.round(nextOffsetX),
+        offsetY: Math.round(nextOffsetY),
+      });
+    }
+
+    function handlePointerUp() {
+      setQuizManagerTreeResizeState(null);
+    }
+
+    const cursor = `${direction}-resize`;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = cursor;
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+    };
+  }, [quizManagerTreeResizeState]);
 
   useEffect(() => {
     if (!autoInjectContextEnabled) {
@@ -4770,6 +4861,32 @@ function App() {
   }
 
   function renderQuizFolderManagerSection() {
+    const resizeHandleDirections = ['n', 'e', 's', 'w', 'ne', 'nw', 'se', 'sw'];
+
+    function beginQuizManagerTreeResize(direction, event) {
+      if (event.button !== 0) {
+        return;
+      }
+      const panel = quizManagerTreePanelRef.current;
+      if (!panel) {
+        return;
+      }
+      const parentWidth = panel.parentElement?.clientWidth || panel.getBoundingClientRect().width;
+      setQuizManagerTreeResizeState({
+        direction,
+        startX: event.clientX,
+        startY: event.clientY,
+        startWidth: panel.getBoundingClientRect().width,
+        startHeight: panel.getBoundingClientRect().height,
+        startOffsetX: quizManagerTreePanelSize.offsetX,
+        startOffsetY: quizManagerTreePanelSize.offsetY,
+        maxWidth: parentWidth,
+        maxHeight: Math.max(QUIZ_MANAGER_LIST_MIN_HEIGHT, window.innerHeight - panel.getBoundingClientRect().top - 40),
+      });
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
     return (
       <section className="roots-card settings-manager-card">
         <div className="row between roots-header">
@@ -4822,12 +4939,21 @@ function App() {
             </div>
             <div className="quizzes-manager-selection">
               {selectedQuizzesManagerNode ? (
-                `Selected ${selectedQuizzesManagerNode.kind === 'folder' ? 'folder' : 'quiz'}: ${selectedQuizzesManagerNode.name}. New folders will be created in ${selectedQuizzesManagerParentLabel}. Single-click folders to select them, double-click folders to collapse or expand them, drag items into folders to move them, and right-click items to rename or delete.`
+                `Selected ${selectedQuizzesManagerNode.kind === 'folder' ? 'folder' : 'quiz'}: ${selectedQuizzesManagerNode.name}. New folders will be created in ${selectedQuizzesManagerParentLabel}. Single-click folders to select them, double-click folders to collapse or expand them, drag items into folders to move them, right-click items to rename or delete, and drag the folder-structure panel edges or corners to resize it.`
               ) : (
-                `No item selected. New folders will be created in ${selectedQuizzesManagerParentLabel}. Single-click folders to select them, double-click folders to collapse or expand them, drag items into folders to move them, and right-click items to rename or delete.`
+                `No item selected. New folders will be created in ${selectedQuizzesManagerParentLabel}. Single-click folders to select them, double-click folders to collapse or expand them, drag items into folders to move them, right-click items to rename or delete, and drag the folder-structure panel edges or corners to resize it.`
               )}
             </div>
-            <div className="roots-list-wrap">
+            <div
+              ref={quizManagerTreePanelRef}
+              className={`roots-list-wrap ${quizManagerTreeResizeState ? 'resizing' : ''}`.trim()}
+              style={{
+                width: quizManagerTreePanelSize.width > 0 ? `${quizManagerTreePanelSize.width}px` : undefined,
+                height: `${quizManagerTreePanelSize.height}px`,
+                marginLeft: `${quizManagerTreePanelSize.offsetX}px`,
+                marginTop: `${quizManagerTreePanelSize.offsetY}px`,
+              }}
+            >
               <QuizzesStructureTree
                 nodes={quizzesTree}
                 onOpenContextMenu={openQuizzesManagerContextMenu}
@@ -4838,6 +4964,14 @@ function App() {
                 rootPath={quizzesDir}
                 selectedPath={selectedQuizzesManagerPath}
               />
+              {resizeHandleDirections.map((direction) => (
+                <div
+                  key={`quiz-manager-resize-${direction}`}
+                  className={`roots-list-resize-handle ${direction}`.trim()}
+                  onMouseDown={(event) => beginQuizManagerTreeResize(direction, event)}
+                  aria-hidden="true"
+                />
+              ))}
             </div>
           </>
         ) : null}
