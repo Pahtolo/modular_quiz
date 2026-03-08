@@ -728,7 +728,20 @@ function formatElapsedTime(milliseconds) {
 }
 
 function timestampToMs(value) {
-  const parsed = Date.parse(String(value || ''));
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return 0;
+  }
+  if (/^\d+$/.test(raw)) {
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+  const parsed = Date.parse(raw);
   if (Number.isNaN(parsed)) {
     return 0;
   }
@@ -744,6 +757,56 @@ function formatHistoryTimestamp(value) {
     dateStyle: 'medium',
     timeStyle: 'short',
   });
+}
+
+const HISTORY_CHART_AXIS_OPTIONS = [
+  { value: 'attempt_number', label: 'Attempt #' },
+  { value: 'timestamp', label: 'Date/Time' },
+  { value: 'percent', label: '% Correct' },
+  { value: 'score', label: 'Score' },
+  { value: 'max_score', label: 'Max Score' },
+  { value: 'duration_seconds', label: 'Duration' },
+];
+
+function historyChartAxisLabel(axisKey) {
+  const match = HISTORY_CHART_AXIS_OPTIONS.find((option) => option.value === axisKey);
+  return match?.label || 'Value';
+}
+
+function historyChartAxisValue(record, axisKey) {
+  if (axisKey === 'timestamp') {
+    return timestampToMs(record?.timestamp);
+  }
+  if (axisKey === 'percent') {
+    return Number(record?.percent || 0);
+  }
+  if (axisKey === 'score') {
+    return Number(record?.score || 0);
+  }
+  if (axisKey === 'max_score') {
+    return Number(record?.max_score || 0);
+  }
+  if (axisKey === 'duration_seconds') {
+    return Number(record?.duration_seconds || 0);
+  }
+  return Number(record?.attempt_number || 0);
+}
+
+function formatHistoryChartAxisValue(value, axisKey) {
+  const numericValue = Number(value || 0);
+  if (axisKey === 'timestamp') {
+    return formatHistoryTimestamp(numericValue);
+  }
+  if (axisKey === 'percent') {
+    return `${numericValue.toFixed(1)}%`;
+  }
+  if (axisKey === 'duration_seconds') {
+    return formatElapsedTime(numericValue * 1000);
+  }
+  if (axisKey === 'attempt_number') {
+    return `#${Math.max(1, Math.round(numericValue))}`;
+  }
+  return String(numericValue);
 }
 
 function ancestorPathsForTarget(nodes, targetPath, trail = []) {
@@ -1264,6 +1327,9 @@ function App() {
   const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(-1);
   const [historySortMode, setHistorySortMode] = useState('most_recent');
   const [historyClockFilter, setHistoryClockFilter] = useState('all');
+  const [historyViewMode, setHistoryViewMode] = useState('sessions');
+  const [historyChartXAxis, setHistoryChartXAxis] = useState('attempt_number');
+  const [historyChartYAxis, setHistoryChartYAxis] = useState('percent');
   const [gradingHistoryAttempt, setGradingHistoryAttempt] = useState(false);
   const [quizSidebarMode, setQuizSidebarMode] = useState('question_nav');
   const [quizzesManagerContextMenu, setQuizzesManagerContextMenu] = useState({
@@ -1620,6 +1686,79 @@ function App() {
     0,
     selectedAttemptTimerDurationSeconds - selectedAttemptDurationSeconds,
   );
+  const historyChartData = useMemo(() => {
+    const width = 720;
+    const height = 280;
+    const padding = {
+      top: 18,
+      right: 18,
+      bottom: 42,
+      left: 54,
+    };
+    const plotted = historyFiltered
+      .map((record, filteredIndex) => ({
+        record,
+        filteredIndex,
+        xValue: historyChartAxisValue(record, historyChartXAxis),
+        yValue: historyChartAxisValue(record, historyChartYAxis),
+      }))
+      .filter((point) => Number.isFinite(point.xValue) && Number.isFinite(point.yValue))
+      .sort((left, right) => {
+        if (left.xValue !== right.xValue) {
+          return left.xValue - right.xValue;
+        }
+        return left.yValue - right.yValue;
+      });
+
+    if (!plotted.length) {
+      return {
+        width,
+        height,
+        points: [],
+        polylinePoints: '',
+        minX: 0,
+        maxX: 0,
+        minY: 0,
+        maxY: 0,
+      };
+    }
+
+    let minX = plotted[0].xValue;
+    let maxX = plotted[0].xValue;
+    let minY = plotted[0].yValue;
+    let maxY = plotted[0].yValue;
+    for (const point of plotted) {
+      minX = Math.min(minX, point.xValue);
+      maxX = Math.max(maxX, point.xValue);
+      minY = Math.min(minY, point.yValue);
+      maxY = Math.max(maxY, point.yValue);
+    }
+
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
+    const xRange = maxX - minX;
+    const yRange = maxY - minY;
+    const points = plotted.map((point) => {
+      const normalizedX = xRange === 0 ? 0.5 : (point.xValue - minX) / xRange;
+      const normalizedY = yRange === 0 ? 0.5 : (point.yValue - minY) / yRange;
+      return {
+        ...point,
+        chartX: padding.left + (normalizedX * plotWidth),
+        chartY: padding.top + ((1 - normalizedY) * plotHeight),
+      };
+    });
+
+    return {
+      width,
+      height,
+      points,
+      polylinePoints: points.map((point) => `${point.chartX},${point.chartY}`).join(' '),
+      minX,
+      maxX,
+      minY,
+      maxY,
+    };
+  }, [historyFiltered, historyChartXAxis, historyChartYAxis]);
   const selectedAttemptUngradedIndexes = useMemo(() => {
     if (!selectedAttempt?.questions?.length) {
       return [];
@@ -1895,6 +2034,16 @@ function App() {
   useEffect(() => {
     setSelectedAttemptIndex(-1);
   }, [historyClockFilter, historySortMode]);
+
+  useEffect(() => {
+    if (historyChartXAxis !== historyChartYAxis) {
+      return;
+    }
+    const fallback = HISTORY_CHART_AXIS_OPTIONS.find((option) => option.value !== historyChartXAxis);
+    if (fallback) {
+      setHistoryChartYAxis(fallback.value);
+    }
+  }, [historyChartXAxis, historyChartYAxis]);
 
   useEffect(() => {
     if (!autoInjectContextEnabled) {
@@ -4204,6 +4353,146 @@ function App() {
     effectivePreferredModelKey,
   ]);
 
+  function renderSelectedAttemptDetail() {
+    if (!(selectedAttempt && activeHistoryQuizPath)) {
+      return <p>Select an attempt to inspect details.</p>;
+    }
+    return (
+      <>
+        <div className="performance-attempt-header">
+          <h5>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h5>
+          <span className="performance-attempt-timestamp">
+            {formatHistoryTimestamp(selectedAttempt.timestamp)}
+          </span>
+        </div>
+        {selectedAttemptUngradedIndexes.length ? (
+          <div className="row performance-attempt-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={gradingHistoryAttempt}
+              onClick={() => {
+                void gradeSelectedAttemptRetrospectively();
+              }}
+            >
+              {gradingHistoryAttempt
+                ? 'Grading Ungraded...'
+                : `Grade Ungraded (${selectedAttemptUngradedIndexes.length})`}
+            </button>
+          </div>
+        ) : null}
+        <p>
+          {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
+        </p>
+        <p>Clock: {quizClockModeLabel(selectedAttemptClockMode)}</p>
+        <p>Duration: {formatElapsedTime(selectedAttemptDurationSeconds * 1000)}</p>
+        {selectedAttemptClockMode === 'timer' && selectedAttemptTimerDurationSeconds > 0 ? (
+          <>
+            <p>Timer limit: {formatElapsedTime(selectedAttemptTimerDurationSeconds * 1000)}</p>
+            <p>
+              {selectedAttemptTimerExpired
+                ? 'Timer result: Expired'
+                : `Time remaining: ${formatCountdown(selectedAttemptTimerRemainingSeconds * 1000)}`}
+            </p>
+          </>
+        ) : null}
+        <table>
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>User</th>
+              <th>Expected</th>
+              <th>Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(selectedAttempt.questions || []).map((question, idx) => (
+              <tr key={`${question.question_id}-${idx}`}>
+                <td>{question.question_id}</td>
+                <td><QuestionAnswerText questionType={question.question_type} text={question.user_answer} /></td>
+                <td><QuestionAnswerText questionType={question.question_type} text={question.correct_answer_or_expected} /></td>
+                <td>
+                  {isUngradedAttemptQuestion(question)
+                    ? 'Ungraded'
+                    : `${question.points_awarded}/${question.max_points}`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </>
+    );
+  }
+
+  function renderPerformanceHistoryChartPanel() {
+    return (
+      <div className="performance-chart-layout">
+        <div className="performance-chart-card">
+          <div className="performance-chart-meta">
+            <span>{`X-axis: ${historyChartAxisLabel(historyChartXAxis)}`}</span>
+            <span>{`Y-axis: ${historyChartAxisLabel(historyChartYAxis)}`}</span>
+          </div>
+          <svg
+            className="performance-chart"
+            viewBox={`0 0 ${historyChartData.width} ${historyChartData.height}`}
+            role="img"
+            aria-label={`Performance history chart of ${historyChartAxisLabel(historyChartYAxis)} by ${historyChartAxisLabel(historyChartXAxis)}`}
+          >
+            <line
+              className="performance-chart-axis"
+              x1="54"
+              y1={historyChartData.height - 42}
+              x2={historyChartData.width - 18}
+              y2={historyChartData.height - 42}
+            />
+            <line
+              className="performance-chart-axis"
+              x1="54"
+              y1="18"
+              x2="54"
+              y2={historyChartData.height - 42}
+            />
+            {historyChartData.polylinePoints ? (
+              <polyline
+                className="performance-chart-line"
+                points={historyChartData.polylinePoints}
+              />
+            ) : null}
+            {historyChartData.points.map((point) => (
+              <circle
+                key={`${point.record.timestamp}-${point.record.attempt_number}-${point.filteredIndex}`}
+                className={`performance-chart-point ${selectedAttemptIndex === point.filteredIndex ? 'selected' : ''}`.trim()}
+                cx={point.chartX}
+                cy={point.chartY}
+                r="5"
+                onClick={() => setSelectedAttemptIndex(point.filteredIndex)}
+              >
+                <title>
+                  {`Attempt #${point.record.attempt_number} | ${historyChartAxisLabel(historyChartXAxis)}: ${formatHistoryChartAxisValue(point.xValue, historyChartXAxis)} | ${historyChartAxisLabel(historyChartYAxis)}: ${formatHistoryChartAxisValue(point.yValue, historyChartYAxis)}`}
+                </title>
+              </circle>
+            ))}
+            <text className="performance-chart-tick y top" x="12" y="24">
+              {formatHistoryChartAxisValue(historyChartData.maxY, historyChartYAxis)}
+            </text>
+            <text className="performance-chart-tick y bottom" x="12" y={historyChartData.height - 42}>
+              {formatHistoryChartAxisValue(historyChartData.minY, historyChartYAxis)}
+            </text>
+            <text className="performance-chart-tick x start" x="54" y={historyChartData.height - 12}>
+              {formatHistoryChartAxisValue(historyChartData.minX, historyChartXAxis)}
+            </text>
+            <text className="performance-chart-tick x end" x={historyChartData.width - 18} y={historyChartData.height - 12}>
+              {formatHistoryChartAxisValue(historyChartData.maxX, historyChartXAxis)}
+            </text>
+          </svg>
+        </div>
+        <div className="attempt-detail performance-attempt-detail">
+          {renderSelectedAttemptDetail()}
+        </div>
+      </div>
+    );
+  }
+
   function renderPerformanceHistoryPanel() {
     return (
       <div className="performance-sidebar">
@@ -4241,6 +4530,46 @@ function App() {
                 <option value="duration_shortest">Duration (shortest)</option>
               </select>
             </label>
+            <label className="performance-sort-control">
+              <span>View</span>
+              <select
+                value={historyViewMode}
+                onChange={(event) => setHistoryViewMode(String(event.target.value || 'sessions'))}
+              >
+                <option value="sessions">Sessions</option>
+                <option value="chart">Chart</option>
+              </select>
+            </label>
+            {historyViewMode === 'chart' ? (
+              <>
+                <label className="performance-sort-control">
+                  <span>X-axis</span>
+                  <select
+                    value={historyChartXAxis}
+                    onChange={(event) => setHistoryChartXAxis(String(event.target.value || 'attempt_number'))}
+                  >
+                    {HISTORY_CHART_AXIS_OPTIONS.map((option) => (
+                      <option key={`history-chart-x-${option.value}`} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="performance-sort-control">
+                  <span>Y-axis</span>
+                  <select
+                    value={historyChartYAxis}
+                    onChange={(event) => setHistoryChartYAxis(String(event.target.value || 'percent'))}
+                  >
+                    {HISTORY_CHART_AXIS_OPTIONS.filter((option) => option.value !== historyChartXAxis).map((option) => (
+                      <option key={`history-chart-y-${option.value}`} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : null}
             <button type="button" disabled={gradingHistoryAttempt} onClick={() => loadHistory()}>
               Refresh
             </button>
@@ -4252,99 +4581,107 @@ function App() {
         ) : historyAttemptsForQuiz.length && !historyFiltered.length ? (
           <p className="roots-empty">No attempts match the selected clock filter for this quiz.</p>
         ) : historyFiltered.length ? (
-          <div className="performance-session-grid">
-            <ul className="attempt-list performance-attempt-list">
-              {historyFiltered.map((record, index) => (
-                <li key={`${record.timestamp}-${record.attempt_number}-${index}`}>
-                  <button
-                    type="button"
-                    className={selectedAttemptIndex === index ? 'selected' : ''}
-                    onClick={() => setSelectedAttemptIndex(index)}
-                  >
-                    <span className="performance-attempt-cell attempt">{`Attempt #${record.attempt_number}`}</span>
-                    <span className="performance-attempt-cell percent">
-                      {`${Number(record.percent || 0).toFixed(1)}% correct`}
-                    </span>
-                    <span className="performance-attempt-cell grader">{record.model_key || 'No model'}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+          historyViewMode === 'chart' ? (
+            renderPerformanceHistoryChartPanel()
+          ) : (
+            <div className="performance-session-grid">
+              <ul className="attempt-list performance-attempt-list">
+                {historyFiltered.map((record, index) => (
+                  <li key={`${record.timestamp}-${record.attempt_number}-${index}`}>
+                    <button
+                      type="button"
+                      className={selectedAttemptIndex === index ? 'selected' : ''}
+                      onClick={() => setSelectedAttemptIndex(index)}
+                    >
+                      <span className="performance-attempt-cell attempt">{`Attempt #${record.attempt_number}`}</span>
+                      <span className="performance-attempt-cell percent">
+                        {`${Number(record.percent || 0).toFixed(1)}% correct`}
+                      </span>
+                      <span className="performance-attempt-cell grader">{record.model_key || 'No model'}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
 
-            <div className="attempt-detail performance-attempt-detail">
-              {selectedAttempt && activeHistoryQuizPath ? (
-                <>
-                  <div className="performance-attempt-header">
-                    <h5>{selectedAttempt.quiz_title || selectedAttempt.quiz_path}</h5>
-                    <span className="performance-attempt-timestamp">
-                      {formatHistoryTimestamp(selectedAttempt.timestamp)}
-                    </span>
-                  </div>
-                  {selectedAttemptUngradedIndexes.length ? (
-                    <div className="row performance-attempt-actions">
-                      <button
-                        type="button"
-                        className="primary"
-                        disabled={gradingHistoryAttempt}
-                        onClick={() => {
-                          void gradeSelectedAttemptRetrospectively();
-                        }}
-                      >
-                        {gradingHistoryAttempt
-                          ? 'Grading Ungraded...'
-                          : `Grade Ungraded (${selectedAttemptUngradedIndexes.length})`}
-                      </button>
-                    </div>
-                  ) : null}
-                  <p>
-                    {selectedAttempt.score}/{selectedAttempt.max_score} - {Number(selectedAttempt.percent || 0).toFixed(1)}%
-                  </p>
-                  <p>Clock: {quizClockModeLabel(selectedAttemptClockMode)}</p>
-                  <p>Duration: {formatElapsedTime(selectedAttemptDurationSeconds * 1000)}</p>
-                  {selectedAttemptClockMode === 'timer' && selectedAttemptTimerDurationSeconds > 0 ? (
-                    <>
-                      <p>Timer limit: {formatElapsedTime(selectedAttemptTimerDurationSeconds * 1000)}</p>
-                      <p>
-                        {selectedAttemptTimerExpired
-                          ? 'Timer result: Expired'
-                          : `Time remaining: ${formatCountdown(selectedAttemptTimerRemainingSeconds * 1000)}`}
-                      </p>
-                    </>
-                  ) : null}
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Question</th>
-                        <th>User</th>
-                        <th>Expected</th>
-                        <th>Score</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(selectedAttempt.questions || []).map((question, idx) => (
-                        <tr key={`${question.question_id}-${idx}`}>
-                          <td>{question.question_id}</td>
-                          <td><QuestionAnswerText questionType={question.question_type} text={question.user_answer} /></td>
-                          <td><QuestionAnswerText questionType={question.question_type} text={question.correct_answer_or_expected} /></td>
-                          <td>
-                            {isUngradedAttemptQuestion(question)
-                              ? 'Ungraded'
-                              : `${question.points_awarded}/${question.max_points}`}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </>
-              ) : (
-                <p>Select an attempt to inspect details.</p>
-              )}
+              <div className="attempt-detail performance-attempt-detail">
+                {renderSelectedAttemptDetail()}
+              </div>
             </div>
-          </div>
+          )
         ) : (
           <p className="roots-empty">No attempts yet for this quiz.</p>
         )}
       </div>
+    );
+  }
+
+  function renderQuestionNavPanel() {
+    return (
+      <aside className="question-nav-column">
+        <div className="question-nav-panel-header">
+          <div className="question-nav-tabs" role="tablist" aria-label="Quiz navigation panels">
+            <button
+              type="button"
+              role="tab"
+              aria-selected="true"
+              className="question-nav-tab active"
+            >
+              Question Nav
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected="false"
+              className="question-nav-tab"
+              onClick={() => openCurrentQuizPerformanceHistory()}
+            >
+              Performance History
+            </button>
+          </div>
+        </div>
+        <div className="question-nav-list">
+          {quiz.questions.map((q, index) => {
+            const questionState = questionStates[index];
+            const answered = Boolean(questionState);
+            const reachable = !lockQuestionsByProgression || index <= furthestReachableIndex;
+            const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
+            const current = index === quizIndex;
+            const result = questionState?.result;
+            const hasGradedOutcome = typeof result?.correct === 'boolean' && !result?.ungraded;
+
+            let navStatusLabel = reachable ? 'Open' : 'Locked';
+            let navStatusClass = '';
+            if (blockedByAutoAdvance) {
+              navStatusLabel = 'Locked';
+            } else if (answered) {
+              if (showFeedbackOnAnswer && hasGradedOutcome) {
+                navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
+                navStatusClass = result.correct ? ' correct' : ' incorrect';
+              } else if (showFeedbackOnCompletion) {
+                navStatusLabel = 'Done';
+                navStatusClass = ' done';
+                if (quizComplete && hasGradedOutcome) {
+                  navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
+                  navStatusClass = result.correct ? ' correct' : ' incorrect';
+                }
+              }
+            }
+
+            return (
+              <button
+                key={`qnav-${q.id || index}`}
+                type="button"
+                disabled={!reachable || blockedByAutoAdvance || quizIsPaused}
+                className={`question-nav-button${current ? ' current' : ''}${navStatusClass}`}
+                onClick={() => jumpToQuestion(index)}
+              >
+                <span>Q{index + 1}</span>
+                <span>{navStatusLabel}</span>
+              </button>
+            );
+          })}
+        </div>
+      </aside>
     );
   }
 
@@ -4890,53 +5227,7 @@ function App() {
                       <aside className="question-nav-column performance-history-column">
                         {renderPerformanceHistoryPanel()}
                       </aside>
-                    ) : (
-                      <aside className="question-nav-column">
-                        <h4>Question Nav</h4>
-                        <div className="question-nav-list">
-                          {quiz.questions.map((q, index) => {
-                            const questionState = questionStates[index];
-                            const answered = Boolean(questionState);
-                            const reachable = !lockQuestionsByProgression || index <= furthestReachableIndex;
-                            const blockedByAutoAdvance = autoAdvanceEnabled && index < quizIndex;
-                            const current = index === quizIndex;
-                            const result = questionState?.result;
-                            const hasGradedOutcome = typeof result?.correct === 'boolean' && !result?.ungraded;
-
-                            let navStatusLabel = reachable ? 'Open' : 'Locked';
-                            let navStatusClass = '';
-                            if (blockedByAutoAdvance) {
-                              navStatusLabel = 'Locked';
-                            } else if (answered) {
-                              if (showFeedbackOnAnswer && hasGradedOutcome) {
-                                navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
-                                navStatusClass = result.correct ? ' correct' : ' incorrect';
-                              } else if (showFeedbackOnCompletion) {
-                                navStatusLabel = 'Done';
-                                navStatusClass = ' done';
-                                if (quizComplete && hasGradedOutcome) {
-                                  navStatusLabel = result.correct ? 'Correct' : 'Incorrect';
-                                  navStatusClass = result.correct ? ' correct' : ' incorrect';
-                                }
-                              }
-                            }
-
-                            return (
-                              <button
-                                key={`qnav-${q.id || index}`}
-                                type="button"
-                                disabled={!reachable || blockedByAutoAdvance || quizIsPaused}
-                                className={`question-nav-button${current ? ' current' : ''}${navStatusClass}`}
-                                onClick={() => jumpToQuestion(index)}
-                              >
-                                <span>Q{index + 1}</span>
-                                <span>{navStatusLabel}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </aside>
-                    )}
+                    ) : renderQuestionNavPanel()}
                   </div>
                 )
               ) : showingPerformanceHistory ? (
