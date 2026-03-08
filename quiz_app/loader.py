@@ -42,6 +42,8 @@ def _parse_mcq(raw: Dict[str, Any], index: int) -> MCQQuestion:
         options = _require_non_empty_string_list(raw.get("options"), "options", minimum_length=2)
     except QuizValidationError as exc:
         raise QuizValidationError(f"Question {qid}: {exc}") from exc
+    if len(options) > 4:
+        raise QuizValidationError(f"Question {qid}: 'options' must contain at most 4 choices.")
 
     answer = _require_str(raw.get("answer"), "answer").upper()
     valid_letters = ascii_uppercase[: len(options)]

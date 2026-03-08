@@ -824,6 +824,35 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422, response.text)
         self.assertIn("Question IDs must be unique", response.json()["error"]["message"])
 
+    def test_load_quiz_rejects_mcq_with_more_than_four_options(self) -> None:
+        quiz_path = self.root / "too-many-options.json"
+        quiz_path.write_text(
+            json.dumps(
+                {
+                    "title": "Too Many Options",
+                    "instructions": "Answer all questions.",
+                    "questions": [
+                        {
+                            "type": "mcq",
+                            "id": "q1",
+                            "prompt": "Pick one",
+                            "options": ["A", "B", "C", "D", "E"],
+                            "answer": "A",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.post(
+            "/v1/quizzes/load",
+            headers=self.headers,
+            json={"path": str(quiz_path.resolve())},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertIn("at most 4 choices", response.json()["error"]["message"])
+
     def test_grading_endpoints(self) -> None:
         mcq = self._post(
             "/v1/grade/mcq",
