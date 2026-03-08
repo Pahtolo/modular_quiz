@@ -541,6 +541,7 @@ button:disabled {
 .field input,
 .field select,
 .field textarea,
+.api-key-display,
 textarea,
 input,
 select {
@@ -549,6 +550,13 @@ select {
   padding: 0.5rem 0.6rem;
   background: var(--input-bg);
   color: var(--ink);
+}
+
+.api-key-display {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: text;
 }
 
 textarea {
@@ -1124,6 +1132,11 @@ textarea {
 .performance-attempt-detail td {
   padding: 0.3rem 0.35rem;
   font-size: 0.84rem;
+  vertical-align: top;
+}
+
+.performance-answer-text pre {
+  max-width: 100%;
 }
 
 .injected-context-status {
@@ -1202,6 +1215,17 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+}
+
+.settings-focus-sink {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .settings-page-tabs {
