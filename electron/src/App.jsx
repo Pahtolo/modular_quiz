@@ -2467,13 +2467,19 @@ function App() {
       }
       if (showingPerformanceHistory) {
         if (historyViewMode === 'sessions') {
-          if (event.key === 'ArrowLeft' && historyQuizAbovePath) {
+          if (event.key === 'ArrowLeft') {
             event.preventDefault();
+            if (!historyQuizAbovePath) {
+              return;
+            }
             void openAdjacentHistoryQuiz(historyQuizAbovePath);
             return;
           }
-          if (event.key === 'ArrowRight' && historyQuizBelowPath) {
+          if (event.key === 'ArrowRight') {
             event.preventDefault();
+            if (!historyQuizBelowPath) {
+              return;
+            }
             void openAdjacentHistoryQuiz(historyQuizBelowPath);
             return;
           }
@@ -4690,13 +4696,37 @@ function App() {
       <div className="performance-sidebar">
         {activeHistoryQuizPath ? (
           <div className="row performance-context-nav">
-            <button type="button" onClick={() => goToOlderHistoryContext()} disabled={!hasOlderHistoryContext}>
+            <button
+              type="button"
+              onClick={() => {
+                if (historyViewMode === 'sessions') {
+                  if (historyQuizAbovePath) {
+                    void openAdjacentHistoryQuiz(historyQuizAbovePath);
+                  }
+                  return;
+                }
+                goToOlderHistoryContext();
+              }}
+              disabled={historyViewMode === 'sessions' ? !historyQuizAbovePath : !hasOlderHistoryContext}
+            >
               ←
             </button>
             <div className="performance-context-label">
               <strong>{activeHistoryQuizTitle || activeHistoryQuizPath}</strong>
             </div>
-            <button type="button" onClick={() => goToNewerHistoryContext()} disabled={!hasNewerHistoryContext}>
+            <button
+              type="button"
+              onClick={() => {
+                if (historyViewMode === 'sessions') {
+                  if (historyQuizBelowPath) {
+                    void openAdjacentHistoryQuiz(historyQuizBelowPath);
+                  }
+                  return;
+                }
+                goToNewerHistoryContext();
+              }}
+              disabled={historyViewMode === 'sessions' ? !historyQuizBelowPath : !hasNewerHistoryContext}
+            >
               →
             </button>
             <label className="performance-sort-control">
