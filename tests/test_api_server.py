@@ -1157,6 +1157,65 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(records[0]["questions"][0]["points_awarded"], 2)
         self.assertFalse(records[0]["questions"][0]["ungraded"])
 
+    def test_history_append_rejects_malformed_numeric_fields(self) -> None:
+        response = self.client.post(
+            "/v1/history/append",
+            headers=self.headers,
+            json={
+                "timestamp": "2026-03-04T10:00:00",
+                "quiz_path": str(self.root / "q.json"),
+                "quiz_title": "Q",
+                "score": "bad-score",
+                "max_score": 4,
+                "percent": 75.0,
+                "duration_seconds": 12.0,
+                "model_key": "self:",
+                "quiz_clock_mode": "timer",
+                "quiz_timer_duration_seconds": 900,
+                "questions": [],
+            },
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("Field 'score' must be an integer.", payload["message"])
+
+    def test_history_update_rejects_malformed_match_numeric_fields(self) -> None:
+        base_record = {
+            "timestamp": "2026-03-04T11:00:00",
+            "quiz_path": str(self.root / "q.json"),
+            "quiz_title": "Q",
+            "score": 0,
+            "max_score": 4,
+            "percent": 0.0,
+            "duration_seconds": 20.0,
+            "model_key": "self:",
+            "quiz_clock_mode": "stopwatch",
+            "quiz_timer_duration_seconds": 0,
+            "questions": [],
+        }
+        self._post("/v1/history/append", base_record)
+
+        response = self.client.post(
+            "/v1/history/update",
+            headers=self.headers,
+            json={
+                "match": {
+                    "timestamp": base_record["timestamp"],
+                    "quiz_path": base_record["quiz_path"],
+                    "model_key": base_record["model_key"],
+                    "score": base_record["score"],
+                    "max_score": base_record["max_score"],
+                    "duration_seconds": "oops",
+                },
+                "record": base_record,
+            },
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("Field 'match.duration_seconds' must be a number.", payload["message"])
+
     def test_collect_sources_and_generate_run(self) -> None:
         docs = self.root / "docs"
         docs.mkdir(parents=True, exist_ok=True)

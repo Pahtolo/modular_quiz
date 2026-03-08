@@ -342,6 +342,36 @@ def _coerce_bool(value: Any) -> bool:
     return normalized in {"1", "true", "yes", "y"}
 
 
+def _coerce_int(value: Any, field_name: str, default: int = 0) -> int:
+    if value is None:
+        return default
+    if isinstance(value, str) and not value.strip():
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message=f"Field '{field_name}' must be an integer.",
+        ) from exc
+
+
+def _coerce_float(value: Any, field_name: str, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, str) and not value.strip():
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise APIError(
+            status_code=422,
+            code="VALIDATION_ERROR",
+            message=f"Field '{field_name}' must be a number.",
+        ) from exc
+
+
 def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
     questions_raw = payload.get("questions") if isinstance(payload.get("questions"), list) else []
     questions: list[QuestionAttemptRecord] = []
@@ -354,8 +384,8 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
                 question_type=str(item.get("question_type", "")).strip(),
                 user_answer=str(item.get("user_answer", "")).strip(),
                 correct_answer_or_expected=str(item.get("correct_answer_or_expected", "")).strip(),
-                points_awarded=int(item.get("points_awarded", 0) or 0),
-                max_points=int(item.get("max_points", 0) or 0),
+                points_awarded=_coerce_int(item.get("points_awarded"), "questions[].points_awarded", default=0),
+                max_points=_coerce_int(item.get("max_points"), "questions[].max_points", default=0),
                 feedback=str(item.get("feedback", "")).strip(),
                 ungraded=_coerce_bool(item.get("ungraded", False)),
             )
@@ -364,10 +394,11 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
     quiz_clock_mode = str(payload.get("quiz_clock_mode", "stopwatch")).strip().lower()
     if quiz_clock_mode not in {"off", "timer"}:
         quiz_clock_mode = "stopwatch"
-    try:
-        quiz_timer_duration_seconds = int(payload.get("quiz_timer_duration_seconds", 0) or 0)
-    except (TypeError, ValueError):
-        quiz_timer_duration_seconds = 0
+    quiz_timer_duration_seconds = _coerce_int(
+        payload.get("quiz_timer_duration_seconds"),
+        "quiz_timer_duration_seconds",
+        default=0,
+    )
     quiz_timer_duration_seconds = max(0, quiz_timer_duration_seconds)
     if quiz_clock_mode != "timer":
         quiz_timer_duration_seconds = 0
@@ -376,10 +407,10 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
         timestamp=str(payload.get("timestamp", "")).strip(),
         quiz_path=str(payload.get("quiz_path", "")).strip(),
         quiz_title=str(payload.get("quiz_title", "")).strip(),
-        score=int(payload.get("score", 0) or 0),
-        max_score=int(payload.get("max_score", 0) or 0),
-        percent=float(payload.get("percent", 0.0) or 0.0),
-        duration_seconds=float(payload.get("duration_seconds", 0.0) or 0.0),
+        score=_coerce_int(payload.get("score"), "score", default=0),
+        max_score=_coerce_int(payload.get("max_score"), "max_score", default=0),
+        percent=_coerce_float(payload.get("percent"), "percent", default=0.0),
+        duration_seconds=_coerce_float(payload.get("duration_seconds"), "duration_seconds", default=0.0),
         model_key=str(payload.get("model_key", "")).strip(),
         quiz_clock_mode=quiz_clock_mode,
         quiz_timer_duration_seconds=quiz_timer_duration_seconds,
@@ -1408,9 +1439,9 @@ def create_app(
                 message="Fields 'match.timestamp' and 'match.quiz_path' are required.",
             )
         match_model_key = str(match_raw.get("model_key", "")).strip()
-        match_score = int(match_raw.get("score", 0) or 0)
-        match_max_score = int(match_raw.get("max_score", 0) or 0)
-        match_duration_seconds = float(match_raw.get("duration_seconds", 0.0) or 0.0)
+        match_score = _coerce_int(match_raw.get("score"), "match.score", default=0)
+        match_max_score = _coerce_int(match_raw.get("max_score"), "match.max_score", default=0)
+        match_duration_seconds = _coerce_float(match_raw.get("duration_seconds"), "match.duration_seconds", default=0.0)
 
         settings = _settings(state)
         path = _resolve_history_path(state, settings)
