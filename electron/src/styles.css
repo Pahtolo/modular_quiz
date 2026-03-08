@@ -506,6 +506,16 @@ button:disabled {
   white-space: nowrap;
 }
 
+.tree-node-rename-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--tree-selected-border);
+  border-radius: 8px;
+  padding: 0.2rem 0.35rem;
+  background: var(--input-bg);
+  color: inherit;
+}
+
 .tree-node.selected {
   background: var(--tree-selected-bg);
   border-color: var(--tree-selected-border);

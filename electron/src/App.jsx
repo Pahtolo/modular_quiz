@@ -760,7 +760,18 @@ function ancestorPathsForTarget(nodes, targetPath, trail = []) {
   return null;
 }
 
-function QuizTree({ nodes, selectedPath, onSelect, onActivate, onOpenContextMenu }) {
+function QuizTree({
+  nodes,
+  selectedPath,
+  onSelect,
+  onActivate,
+  onOpenContextMenu,
+  renamingPath,
+  renameValue,
+  onRenameValueChange,
+  onRenameSubmit,
+  onRenameCancel,
+}) {
   const [collapsedPaths, setCollapsedPaths] = useState({});
 
   useEffect(() => {
@@ -815,6 +826,7 @@ function QuizTree({ nodes, selectedPath, onSelect, onActivate, onOpenContextMenu
 
   const renderNode = (node) => {
     const isQuiz = node.kind === 'quiz';
+    const isRenamingQuiz = isQuiz && String(renamingPath || '').trim() === String(node.path || '').trim();
     const hasChildren = Boolean(node.children && node.children.length > 0);
     const isCollapsible = !isQuiz && hasChildren;
     const isCollapsed = Boolean(collapsedPaths[node.path]);
@@ -835,30 +847,63 @@ function QuizTree({ nodes, selectedPath, onSelect, onActivate, onOpenContextMenu
           ) : (
             <span className="tree-toggle-spacer" />
           )}
-          <button
-            className={`tree-node ${isQuiz ? 'quiz' : 'group'} ${selectedPath === node.path ? 'selected' : ''}`}
-            type="button"
-            onClick={() => {
-              if (isQuiz) {
-                onSelect(node.path);
-                return;
-              }
-              if (isCollapsible) {
-                toggleCollapsed(node.path);
-              }
-            }}
-            onDoubleClick={() => {
-              if (isQuiz && typeof onActivate === 'function') {
-                onActivate(node.path);
-              }
-            }}
-            onContextMenu={(event) => {
-              openQuizContextMenu(event, node);
-            }}
-          >
-            <span className={`tree-node-kind ${isQuiz ? 'quiz' : 'group'}`}>{nodeKindLabel}</span>
-            <span className="tree-node-name">{nodeLabel(node)}</span>
-          </button>
+          {isRenamingQuiz ? (
+            <div className={`tree-node quiz ${selectedPath === node.path ? 'selected' : ''}`.trim()}>
+              <span className="tree-node-kind quiz">{nodeKindLabel}</span>
+              <input
+                type="text"
+                className="tree-node-rename-input"
+                value={renameValue}
+                onChange={(event) => onRenameValueChange?.(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onRenameCancel?.();
+                    return;
+                  }
+                  if (event.key !== 'Enter') {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onRenameSubmit?.();
+                }}
+                onBlur={() => {
+                  window.setTimeout(() => {
+                    onRenameSubmit?.();
+                  }, 0);
+                }}
+                autoFocus
+              />
+            </div>
+          ) : (
+            <button
+              className={`tree-node ${isQuiz ? 'quiz' : 'group'} ${selectedPath === node.path ? 'selected' : ''}`}
+              type="button"
+              onClick={() => {
+                if (isQuiz) {
+                  onSelect(node.path);
+                  return;
+                }
+                if (isCollapsible) {
+                  toggleCollapsed(node.path);
+                }
+              }}
+              onDoubleClick={() => {
+                if (isQuiz && typeof onActivate === 'function') {
+                  onActivate(node.path);
+                }
+              }}
+              onContextMenu={(event) => {
+                openQuizContextMenu(event, node);
+              }}
+            >
+              <span className={`tree-node-kind ${isQuiz ? 'quiz' : 'group'}`}>{nodeKindLabel}</span>
+              <span className="tree-node-name">{nodeLabel(node)}</span>
+            </button>
+          )}
         </div>
         {hasChildren && !isCollapsed ? (
           <ul className="tree-list">
@@ -1146,6 +1191,10 @@ function App() {
   const [quizSearchText, setQuizSearchText] = useState('');
   const [quizSortMode, setQuizSortMode] = useState('title_asc');
   const [renamingQuiz, setRenamingQuiz] = useState(false);
+  const [quizInlineRename, setQuizInlineRename] = useState({
+    path: '',
+    value: '',
+  });
   const [renameDialog, setRenameDialog] = useState({
     open: false,
     path: '',
@@ -1216,13 +1265,6 @@ function App() {
   const [historySortMode, setHistorySortMode] = useState('most_recent');
   const [gradingHistoryAttempt, setGradingHistoryAttempt] = useState(false);
   const [quizSidebarMode, setQuizSidebarMode] = useState('question_nav');
-  const [quizContextMenu, setQuizContextMenu] = useState({
-    open: false,
-    x: 0,
-    y: 0,
-    path: '',
-    name: '',
-  });
   const [quizzesManagerContextMenu, setQuizzesManagerContextMenu] = useState({
     open: false,
     x: 0,
@@ -2066,23 +2108,6 @@ function App() {
   }, [editingOpenAiApiKey]);
 
   useEffect(() => {
-    if (!quizContextMenu.open) {
-      return undefined;
-    }
-    const onKeyDown = (event) => {
-      if (event.key !== 'Escape') {
-        return;
-      }
-      event.preventDefault();
-      closeQuizContextMenu();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [quizContextMenu.open]);
-
-  useEffect(() => {
     if (!quizzesManagerContextMenu.open) {
       return undefined;
     }
@@ -2601,18 +2626,6 @@ function App() {
     setSelectedAttemptIndex(-1);
   }
 
-  function closeQuizContextMenu() {
-    setQuizContextMenu((prev) => {
-      if (!prev.open) {
-        return prev;
-      }
-      return {
-        ...prev,
-        open: false,
-      };
-    });
-  }
-
   function closeQuizzesManagerContextMenu() {
     setQuizzesManagerContextMenu((prev) => {
       if (!prev.open) {
@@ -2671,32 +2684,6 @@ function App() {
     setQuizClockTickMs(now);
     setQuizClockPausedAtMs(now);
     setQuizClockPaused(true);
-  }
-
-  function openQuizContextMenuForNode(menuPayload) {
-    const targetPath = String(menuPayload?.path || '').trim();
-    if (!targetPath) {
-      return;
-    }
-
-    const MENU_WIDTH = 220;
-    const MENU_HEIGHT = 120;
-    const EDGE_PADDING = 10;
-    const requestedX = Number(menuPayload?.x || 0);
-    const requestedY = Number(menuPayload?.y || 0);
-    const maxX = Math.max(EDGE_PADDING, window.innerWidth - MENU_WIDTH - EDGE_PADDING);
-    const maxY = Math.max(EDGE_PADDING, window.innerHeight - MENU_HEIGHT - EDGE_PADDING);
-    const x = Math.min(Math.max(requestedX, EDGE_PADDING), maxX);
-    const y = Math.min(Math.max(requestedY, EDGE_PADDING), maxY);
-
-    setSelectedQuizPath(targetPath);
-    setQuizContextMenu({
-      open: true,
-      x,
-      y,
-      path: targetPath,
-      name: String(menuPayload?.name || '').trim() || shortPathLabel(targetPath),
-    });
   }
 
   function confirmExitInProgressQuiz() {
@@ -2840,7 +2827,7 @@ function App() {
       }
     }
 
-    closeQuizContextMenu();
+    cancelInlineQuizRename();
     closeQuizzesManagerContextMenu();
     closeQuizClockMenu();
     setActiveTab(normalizedNextTab);
@@ -3151,11 +3138,11 @@ function App() {
     }
   }
 
-  async function renameQuizAtPath(pathValue, titleValue) {
+  async function renameQuizAtPath(pathValue, titleValue, { closeDialog = false } = {}) {
     const targetPath = String(pathValue || '').trim();
     const nextTitle = String(titleValue || '').trim();
     if (!targetPath || !nextTitle) {
-      return;
+      return false;
     }
 
     setRenamingQuiz(true);
@@ -3169,17 +3156,21 @@ function App() {
       if (quiz && response.path === targetPath) {
         setQuiz((prev) => (prev ? { ...prev, title: response.title || nextTitle } : prev));
       }
-      setRenameDialog((prev) => ({
-        ...prev,
-        open: false,
-        path: '',
-        currentTitle: '',
-        nextTitle: '',
-        kind: 'quiz',
-        mode: 'quiz_title',
-      }));
+      if (closeDialog) {
+        setRenameDialog((prev) => ({
+          ...prev,
+          open: false,
+          path: '',
+          currentTitle: '',
+          nextTitle: '',
+          kind: 'quiz',
+          mode: 'quiz_title',
+        }));
+      }
+      return true;
     } catch (err) {
       setQuizLoadError(err.message || 'Failed to rename quiz.');
+      return false;
     } finally {
       setRenamingQuiz(false);
     }
@@ -3218,8 +3209,7 @@ function App() {
     }
   }
 
-  async function handleQuizContextRename(pathValue, currentTitle) {
-    closeQuizContextMenu();
+  function beginInlineQuizRename(pathValue, currentTitle) {
     if (renamingQuiz) {
       return;
     }
@@ -3228,14 +3218,47 @@ function App() {
       return;
     }
     const baseTitle = String(currentTitle || '').trim() || shortPathLabel(targetPath);
-    setRenameDialog({
-      open: true,
+    setQuizInlineRename({
       path: targetPath,
-      currentTitle: baseTitle,
-      nextTitle: baseTitle,
-      kind: 'quiz',
-      mode: 'quiz_title',
+      value: baseTitle,
     });
+    setSelectedQuizPath(targetPath);
+  }
+
+  function cancelInlineQuizRename() {
+    if (renamingQuiz) {
+      return;
+    }
+    setQuizInlineRename({
+      path: '',
+      value: '',
+    });
+  }
+
+  async function submitInlineQuizRename() {
+    const targetPath = String(quizInlineRename.path || '').trim();
+    const trimmed = String(quizInlineRename.value || '').trim();
+    if (!targetPath) {
+      return;
+    }
+    if (!trimmed) {
+      setQuizLoadError('Quiz title cannot be empty.');
+      cancelInlineQuizRename();
+      return;
+    }
+    const renamed = await renameQuizAtPath(targetPath, trimmed);
+    if (!renamed) {
+      return;
+    }
+    setQuizInlineRename({
+      path: '',
+      value: '',
+    });
+  }
+
+  function handleQuizTreeContextMenu(menuPayload) {
+    setQuizLoadError('');
+    beginInlineQuizRename(menuPayload?.path, menuPayload?.name);
   }
 
   async function handleQuizzesManagerContextRename(pathValue, currentName, kindValue) {
@@ -3257,20 +3280,6 @@ function App() {
       kind: targetKind,
       mode: targetKind === 'folder' ? 'folder_name' : 'quiz_title',
     });
-  }
-
-  function handleQuizTreeContextMenu(menuPayload) {
-    setQuizLoadError('');
-    openQuizContextMenuForNode(menuPayload);
-  }
-
-  function openHistoryFromContextMenu() {
-    const targetPath = String(quizContextMenu.path || '').trim();
-    closeQuizContextMenu();
-    if (!targetPath) {
-      return;
-    }
-    void openPerformanceHistoryForQuiz(targetPath);
   }
 
   function closeRenameDialog() {
@@ -3306,7 +3315,7 @@ function App() {
       await renameFolderAtPath(targetPath, trimmed);
       return;
     }
-    await renameQuizAtPath(targetPath, trimmed);
+    await renameQuizAtPath(targetPath, trimmed, { closeDialog: true });
   }
 
   async function startQuizFromPath(pathValue) {
@@ -4531,27 +4540,6 @@ function App() {
         </div>
       ) : null}
 
-      {quizContextMenu.open ? (
-        <div className="quiz-context-menu-overlay" onClick={() => closeQuizContextMenu()}>
-          <div
-            className="quiz-context-menu"
-            style={{ top: `${quizContextMenu.y}px`, left: `${quizContextMenu.x}px` }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                void handleQuizContextRename(quizContextMenu.path, quizContextMenu.name);
-              }}
-            >
-              Rename
-            </button>
-            <button type="button" onClick={() => openHistoryFromContextMenu()}>
-              Performance History
-            </button>
-          </div>
-        </div>
-      ) : null}
       {quizzesManagerContextMenu.open ? (
         <div className="quiz-context-menu-overlay" onClick={() => closeQuizzesManagerContextMenu()}>
           <div
@@ -4648,7 +4636,7 @@ function App() {
                     </button>
                   </div>
                   {quizSelectorPanelTab === 'quizzes' ? (
-                    <span className="quiz-tree-hint">Click quizzes for performance history. Double-click to start. Right-click for options.</span>
+                    <span className="quiz-tree-hint">Click quizzes for performance history. Double-click to start. Right-click to rename in place.</span>
                   ) : null}
                 </div>
                 {quizSelectorPanelTab === 'quizzes' ? (
@@ -4683,6 +4671,18 @@ function App() {
                         void startSelectedQuiz(pathValue);
                       }}
                       onOpenContextMenu={handleQuizTreeContextMenu}
+                      renamingPath={quizInlineRename.path}
+                      renameValue={quizInlineRename.value}
+                      onRenameValueChange={(value) => {
+                        setQuizInlineRename((prev) => ({
+                          ...prev,
+                          value,
+                        }));
+                      }}
+                      onRenameSubmit={() => {
+                        void submitInlineQuizRename();
+                      }}
+                      onRenameCancel={cancelInlineQuizRename}
                     />
                     {!visibleQuizTreeNodes.length ? (
                       <p className="roots-empty">No quizzes match the current filter.</p>
