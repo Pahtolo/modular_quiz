@@ -3625,6 +3625,46 @@ function App() {
     }
   }
 
+  async function explainCurrentShort() {
+    if (!currentQuestion || currentQuestion.type !== 'short' || !questionResult || quizIsPaused) {
+      return;
+    }
+    const questionKey = feedbackThreadKey(currentQuestion, quizIndex);
+
+    const modelKeyValue = effectivePreferredModelKey.trim();
+    const selected = providerAndModelFromKey(modelKeyValue);
+    if (selected.provider === 'self') {
+      setQuizLoadError('No model mode does not support short-answer explanation.');
+      return;
+    }
+
+    const userAnswer = String(questionStatesRef.current?.[quizIndex]?.short_answer || shortAnswer || '');
+
+    setQuizLoadError('');
+    setQuizSelectorPanelTab('feedback');
+    setFeedbackTabNeedsAttention(false);
+    setFeedbackPendingForQuestion(questionKey, true);
+
+    try {
+      const response = await apiRequest('/v1/explain/short', 'POST', {
+        provider: selected.provider,
+        model: selected.model,
+        question: currentQuestion,
+        user_answer: userAnswer,
+        extra_context: String(injectedContextText || '').trim(),
+      });
+      appendFeedbackEntries(questionKey, [{
+        role: 'assistant',
+        text: response.text || 'No explanation returned.',
+        kind: 'explain',
+      }], { flagAttention: false });
+    } catch (err) {
+      setQuizLoadError(err.message);
+    } finally {
+      setFeedbackPendingForQuestion(questionKey, false);
+    }
+  }
+
   async function goToNextQuestion() {
     if (!quiz || quizIsPaused) {
       return;
@@ -4766,8 +4806,14 @@ function App() {
                         </button>
                       ) : null}
 
-                      {currentQuestion.type === 'mcq' && questionResult && selectedProviderModel.provider !== 'self' ? (
+                      {questionResult && selectedProviderModel.provider !== 'self' && currentQuestion.type === 'mcq' ? (
                         <button type="button" disabled={feedbackChatSending || quizIsPaused} onClick={() => explainCurrentMcq()}>
+                          {feedbackChatSending ? 'Explaining...' : 'Explain'}
+                        </button>
+                      ) : null}
+
+                      {questionResult && selectedProviderModel.provider !== 'self' && currentQuestion.type === 'short' ? (
+                        <button type="button" disabled={feedbackChatSending || quizIsPaused} onClick={() => explainCurrentShort()}>
                           {feedbackChatSending ? 'Explaining...' : 'Explain'}
                         </button>
                       ) : null}

@@ -191,6 +191,33 @@ class ClaudeClient:
         )
         return to_second_person(self._message_text(prompt=ask, system=system, model=model, max_tokens=300))
 
+    def explain_short(
+        self,
+        prompt: str,
+        expected_answer: str,
+        user_answer: str,
+        model: str | None = None,
+        extra_context: str | None = None,
+    ) -> str:
+        system = (
+            "You explain short-answer quiz responses concisely in second person. "
+            "Address the learner as 'you'/'your'. "
+            "Never refer to the learner as 'the user' or 'the student'. "
+            "Keep explanations under 5 sentences. "
+            f"{MATH_FORMAT_INSTRUCTION}"
+        )
+        context_block = ""
+        if extra_context and extra_context.strip():
+            context_block = f"Additional context:\n{extra_context.strip()}\n\n"
+        ask = (
+            f"{context_block}"
+            f"Question:\n{prompt}\n\n"
+            f"Your answer:\n{user_answer}\n\n"
+            f"Expected answer:\n{expected_answer}\n\n"
+            "Explain whether your answer was right or wrong and what detail was missing or strong."
+        )
+        return to_second_person(self._message_text(prompt=ask, system=system, model=model, max_tokens=300))
+
     def feedback_chat(
         self,
         question_prompt: str,

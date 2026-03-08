@@ -36,6 +36,15 @@ class ProviderClient(Protocol):
         extra_context: str | None = None,
     ) -> str: ...
 
+    def explain_short(
+        self,
+        prompt: str,
+        expected_answer: str,
+        user_answer: str,
+        model: str | None = None,
+        extra_context: str | None = None,
+    ) -> str: ...
+
     def feedback_chat(
         self,
         question_prompt: str,

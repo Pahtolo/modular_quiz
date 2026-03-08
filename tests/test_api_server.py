@@ -1019,6 +1019,28 @@ class APIServerTests(unittest.TestCase):
         self.assertIn("text", response)
         provider.feedback_chat.assert_called_once()
 
+    def test_explain_short_endpoint(self) -> None:
+        provider = MagicMock()
+        provider.explain_short.return_value = "You are close, but your answer missed the growth-rate detail."
+        with patch("quiz_app.api.server._provider_client", return_value=provider):
+            response = self._post(
+                "/v1/explain/short",
+                {
+                    "provider": "openai",
+                    "model": "gpt-5-mini",
+                    "question": {
+                        "id": "q1",
+                        "type": "short",
+                        "prompt": "Define asymptotic notation.",
+                        "expected": "It describes algorithm growth rate.",
+                        "points": 2,
+                    },
+                    "user_answer": "It means average runtime.",
+                },
+            )
+        self.assertIn("text", response)
+        provider.explain_short.assert_called_once()
+
     def test_history_append_and_filter(self) -> None:
         record = {
             "timestamp": "2026-03-04T10:00:00",
