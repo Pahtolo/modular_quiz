@@ -1250,6 +1250,7 @@ function App() {
   const [quizzesTree, setQuizzesTree] = useState([]);
   const [quizzesWarnings, setQuizzesWarnings] = useState([]);
   const [selectedQuizzesManagerPath, setSelectedQuizzesManagerPath] = useState('');
+  const [quizzesManagerBusy, setQuizzesManagerBusy] = useState(false);
   const [quizzesDragOver, setQuizzesDragOver] = useState(false);
   const [quizManagerTreePanelSize, setQuizManagerTreePanelSize] = useState({
     width: 0,
