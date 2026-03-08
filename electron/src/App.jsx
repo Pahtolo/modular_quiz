@@ -21,7 +21,7 @@ const DEFAULT_QUIZ_TIMER_DURATION_SECONDS = 15 * 60;
 const QUIZ_MANAGER_DRAG_MIME = 'text/plain';
 const QUIZ_MANAGER_LIST_MIN_WIDTH = 320;
 const QUIZ_MANAGER_LIST_MIN_HEIGHT = 260;
-const QUIZ_MANAGER_LIST_DEFAULT_HEIGHT = 320;
+const QUIZ_MANAGER_LIST_DEFAULT_HEIGHT = 520;
 const KATEX_DELIMITERS = [
   { left: '$$', right: '$$', display: true },
   { left: '$', right: '$', display: false },
@@ -1487,21 +1487,6 @@ function App() {
     () => findQuizzesManagerNodeByPath(quizzesTree, selectedQuizzesManagerPath),
     [quizzesTree, selectedQuizzesManagerPath],
   );
-  const selectedQuizzesManagerParentPath = useMemo(() => {
-    if (!selectedQuizzesManagerNode) {
-      return normalizePathText(quizzesDir);
-    }
-    if (selectedQuizzesManagerNode.kind === 'folder') {
-      return normalizePathText(selectedQuizzesManagerNode.path);
-    }
-    return parentDirectoryPath(selectedQuizzesManagerNode.path) || normalizePathText(quizzesDir);
-  }, [quizzesDir, selectedQuizzesManagerNode]);
-  const selectedQuizzesManagerParentLabel = useMemo(() => {
-    const rootPath = normalizePathText(quizzesDir);
-    const parentPath = normalizePathText(selectedQuizzesManagerParentPath);
-    const relative = normalizeRelativePath(relativePathFromRoot(parentPath, rootPath));
-    return relative ? `Quizzes/${relative}` : 'Quizzes';
-  }, [quizzesDir, selectedQuizzesManagerParentPath]);
 
   const visibleQuizTreeNodes = useMemo(() => {
     const baseNodes = omitManagedQuizzesRoot(quizTreeRoots);
@@ -3324,38 +3309,6 @@ function App() {
     }
   }
 
-  async function promptForQuizManagerFolder() {
-    const parentPath = normalizePathText(selectedQuizzesManagerParentPath || quizzesDir);
-    if (!parentPath) {
-      setQuizzesWarnings(['Managed quiz folder is not ready yet.']);
-      return;
-    }
-    const folderName = window.prompt(
-      `Create a new folder inside ${selectedQuizzesManagerParentLabel}.`,
-      '',
-    );
-    const trimmedFolderName = String(folderName || '').trim();
-    if (!trimmedFolderName) {
-      return;
-    }
-
-    setQuizzesManagerBusy(true);
-    setQuizzesWarnings([]);
-    try {
-      const response = await apiRequest('/v1/quizzes/library/folder', 'POST', {
-        name: trimmedFolderName,
-        parent_path: parentPath,
-      });
-      applyQuizzesLibraryResponse(response, { syncManagedSettings: true });
-      setSelectedQuizzesManagerPath(response.path || '');
-      await loadQuizTree();
-    } catch (err) {
-      setQuizzesWarnings([err.message || 'Failed to create folder.']);
-    } finally {
-      setQuizzesManagerBusy(false);
-    }
-  }
-
   async function promptForGenerationOutputFolder() {
     const parentPath = normalizePathText(selectedGenerationOutputFolder?.absolute_path || quizzesDir);
     if (!parentPath) {
@@ -4994,6 +4947,9 @@ function App() {
 
   function renderQuizFolderManagerSection() {
     const resizeHandleDirections = ['n', 'e', 's', 'w', 'ne', 'nw', 'se', 'sw'];
+    const selectedNodeLabel = selectedQuizzesManagerNode
+      ? `${selectedQuizzesManagerNode.kind === 'folder' ? 'Folder' : 'Quiz'} selected: ${selectedQuizzesManagerNode.name}`
+      : 'Right-click items to rename or delete.';
 
     function beginQuizManagerTreeResize(direction, event) {
       if (event.button !== 0 || !event.isPrimary) {
@@ -5030,13 +4986,13 @@ function App() {
     }
 
     return (
-      <section className="roots-card settings-manager-card">
-        <div className="row between roots-header">
-          <div>
-            <strong>Quiz Folder Manager</strong>
+      <section className="manager-page">
+        <div className="row between manager-page-header">
+          <div className="manager-page-title">
+            <h2>Quiz Folder Manager</h2>
             <div className="roots-count">{countQuizFiles(quizzesTree)} quiz file(s) managed</div>
           </div>
-          <div className="row">
+          <div className="row manager-page-actions">
             <button type="button" onClick={() => importQuizzesFromFinder()}>
               Import Folder
             </button>
@@ -5046,69 +5002,61 @@ function App() {
           </div>
         </div>
 
-        <div className="quizzes-dir-path">{quizzesDir || 'No quizzes directory available.'}</div>
+        <div className="manager-page-meta" title={quizzesDir || 'No quizzes directory available.'}>
+          <div className="quizzes-dir-path">{quizzesDir || 'No quizzes directory available.'}</div>
+          <div className="manager-selection-chip">{selectedNodeLabel}</div>
+        </div>
 
         <div
-          className={`quizzes-drop-zone ${quizzesDragOver ? 'drag-over' : ''}`}
+          className={`manager-tree-shell ${quizzesDragOver ? 'drag-over' : ''}`.trim()}
           onDragOver={(event) => {
             event.preventDefault();
             setQuizzesDragOver(true);
           }}
-          onDragLeave={() => setQuizzesDragOver(false)}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget)) {
+              return;
+            }
+            setQuizzesDragOver(false);
+          }}
           onDrop={(event) => {
             void handleQuizzesDrop(event);
           }}
         >
-          Drag and drop quiz folders or `.json` files here to import into the managed quiz folder.
-        </div>
-        <div className="quizzes-manager-controls">
-          <div className="row quizzes-manager-actions">
-            <button
-              type="button"
-              disabled={quizzesManagerBusy || !quizzesDir}
-              onClick={() => {
-                void promptForQuizManagerFolder();
-              }}
-            >
-              {quizzesManagerBusy ? 'Working...' : 'New Folder'}
-            </button>
-          </div>
-        </div>
-        <div className="quizzes-manager-selection">
-          {selectedQuizzesManagerNode ? (
-            `Selected ${selectedQuizzesManagerNode.kind === 'folder' ? 'folder' : 'quiz'}: ${selectedQuizzesManagerNode.name}. New folders will be created in ${selectedQuizzesManagerParentLabel}. Single-click folders to select them, double-click folders to collapse or expand them, drag items into folders to move them, right-click items to rename or delete, and drag the folder-structure panel edges or corners to resize it.`
-          ) : (
-            `No item selected. New folders will be created in ${selectedQuizzesManagerParentLabel}. Single-click folders to select them, double-click folders to collapse or expand them, drag items into folders to move them, right-click items to rename or delete, and drag the folder-structure panel edges or corners to resize it.`
-          )}
-        </div>
-        <div
-          ref={quizManagerTreePanelRef}
-          className={`roots-list-wrap ${quizManagerTreeResizeState ? 'resizing' : ''}`.trim()}
-          style={{
-            width: quizManagerTreePanelSize.width > 0 ? `${quizManagerTreePanelSize.width}px` : undefined,
-            height: `${quizManagerTreePanelSize.height}px`,
-            marginLeft: `${quizManagerTreePanelSize.offsetX}px`,
-            marginTop: `${quizManagerTreePanelSize.offsetY}px`,
-          }}
-        >
-          <QuizzesStructureTree
-            nodes={quizzesTree}
-            onOpenContextMenu={openQuizzesManagerContextMenu}
-            onMoveItem={({ sourcePath, destinationFolderPath }) => {
-              void moveQuizManagerItem(sourcePath, destinationFolderPath);
+          <div
+            ref={quizManagerTreePanelRef}
+            className={`roots-list-wrap manager-tree-wrap ${quizManagerTreeResizeState ? 'resizing' : ''}`.trim()}
+            style={{
+              width: quizManagerTreePanelSize.width > 0 ? `${quizManagerTreePanelSize.width}px` : undefined,
+              height: `${quizManagerTreePanelSize.height}px`,
+              marginLeft: `${quizManagerTreePanelSize.offsetX}px`,
+              marginTop: `${quizManagerTreePanelSize.offsetY}px`,
             }}
-            onSelect={setSelectedQuizzesManagerPath}
-            rootPath={quizzesDir}
-            selectedPath={selectedQuizzesManagerPath}
-          />
-          {resizeHandleDirections.map((direction) => (
-            <div
-              key={`quiz-manager-resize-${direction}`}
-              className={`roots-list-resize-handle ${direction}`.trim()}
-              onPointerDown={(event) => beginQuizManagerTreeResize(direction, event)}
-              aria-hidden="true"
+          >
+            <QuizzesStructureTree
+              nodes={quizzesTree}
+              onOpenContextMenu={openQuizzesManagerContextMenu}
+              onMoveItem={({ sourcePath, destinationFolderPath }) => {
+                void moveQuizManagerItem(sourcePath, destinationFolderPath);
+              }}
+              onSelect={setSelectedQuizzesManagerPath}
+              rootPath={quizzesDir}
+              selectedPath={selectedQuizzesManagerPath}
             />
-          ))}
+            {resizeHandleDirections.map((direction) => (
+              <div
+                key={`quiz-manager-resize-${direction}`}
+                className={`roots-list-resize-handle ${direction}`.trim()}
+                onPointerDown={(event) => beginQuizManagerTreeResize(direction, event)}
+                aria-hidden="true"
+              />
+            ))}
+          </div>
+          {quizzesDragOver ? (
+            <div className="manager-tree-drop-overlay" aria-hidden="true">
+              Drop folders or `.json` files to import
+            </div>
+          ) : null}
         </div>
 
         {quizzesWarnings.length ? (
@@ -5714,7 +5662,7 @@ function App() {
         ) : null}
 
         {normalizedActiveTab === 'manager' ? (
-          <section className="settings-layout">
+          <section className="manager-tab-shell">
             {renderQuizFolderManagerSection()}
           </section>
         ) : null}
