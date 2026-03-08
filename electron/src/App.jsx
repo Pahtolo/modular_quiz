@@ -1319,6 +1319,8 @@ function App() {
   const settingsAutoSaveTimeoutRef = useRef(null);
   const settingsFocusSinkRef = useRef(null);
   const quizManagerTreePanelRef = useRef(null);
+  const quizManagerTreeResizeHandleRef = useRef(null);
+  const quizManagerTreeResizePointerIdRef = useRef(null);
   const claudeApiKeyInputRef = useRef(null);
   const openAiApiKeyInputRef = useRef(null);
   const quizTimerExpiryHandledRef = useRef(false);
@@ -2086,6 +2088,10 @@ function App() {
     const minWidth = QUIZ_MANAGER_LIST_MIN_WIDTH;
 
     function handlePointerMove(event) {
+      const activePointerId = quizManagerTreeResizePointerIdRef.current;
+      if (activePointerId != null && event.pointerId !== activePointerId) {
+        return;
+      }
       const deltaX = event.clientX - startX;
       const deltaY = event.clientY - startY;
       let nextWidth = startWidth;
@@ -2110,7 +2116,8 @@ function App() {
       if (direction.includes('n')) {
         const bottomEdge = startOffsetY + startHeight;
         nextOffsetY = clampValue(startOffsetY + deltaY, 0, Math.max(0, bottomEdge - minHeight));
-        nextHeight = clampValue(bottomEdge - nextOffsetY, minHeight, maxHeight);
+        const nextMaxHeight = Math.max(minHeight, maxHeight + (startOffsetY - nextOffsetY));
+        nextHeight = clampValue(bottomEdge - nextOffsetY, minHeight, nextMaxHeight);
       }
 
       setQuizManagerTreePanelSize({
@@ -2121,23 +2128,60 @@ function App() {
       });
     }
 
-    function handlePointerUp() {
+    function endResize() {
       setQuizManagerTreeResizeState(null);
+    }
+
+    function handlePointerUp(event) {
+      const activePointerId = quizManagerTreeResizePointerIdRef.current;
+      if (activePointerId != null && event?.pointerId != null && event.pointerId !== activePointerId) {
+        return;
+      }
+      endResize();
+    }
+
+    function handleWindowBlur() {
+      endResize();
+    }
+
+    function handleLostPointerCapture(event) {
+      const activePointerId = quizManagerTreeResizePointerIdRef.current;
+      if (activePointerId != null && event.pointerId !== activePointerId) {
+        return;
+      }
+      endResize();
     }
 
     const cursor = `${direction}-resize`;
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
+    const activeHandle = quizManagerTreeResizeHandleRef.current;
     document.body.style.cursor = cursor;
     document.body.style.userSelect = 'none';
-    window.addEventListener('mousemove', handlePointerMove);
-    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('blur', handleWindowBlur);
+    activeHandle?.addEventListener('lostpointercapture', handleLostPointerCapture);
 
     return () => {
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
-      window.removeEventListener('mousemove', handlePointerMove);
-      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('blur', handleWindowBlur);
+      activeHandle?.removeEventListener('lostpointercapture', handleLostPointerCapture);
+      const activePointerId = quizManagerTreeResizePointerIdRef.current;
+      if (activeHandle && activePointerId != null && activeHandle.hasPointerCapture?.(activePointerId)) {
+        try {
+          activeHandle.releasePointerCapture(activePointerId);
+        } catch {
+          // Ignore release errors during teardown.
+        }
+      }
+      quizManagerTreeResizeHandleRef.current = null;
+      quizManagerTreeResizePointerIdRef.current = null;
     };
   }, [quizManagerTreeResizeState]);
 
@@ -4869,12 +4913,22 @@ function App() {
     const resizeHandleDirections = ['n', 'e', 's', 'w', 'ne', 'nw', 'se', 'sw'];
 
     function beginQuizManagerTreeResize(direction, event) {
-      if (event.button !== 0) {
+      if (event.button !== 0 || !event.isPrimary) {
         return;
       }
       const panel = quizManagerTreePanelRef.current;
       if (!panel) {
         return;
+      }
+      const target = event.currentTarget;
+      quizManagerTreeResizeHandleRef.current = target;
+      quizManagerTreeResizePointerIdRef.current = event.pointerId;
+      if (target?.setPointerCapture) {
+        try {
+          target.setPointerCapture(event.pointerId);
+        } catch {
+          // Ignore unsupported capture errors and rely on global fallbacks.
+        }
       }
       const parentWidth = panel.parentElement?.clientWidth || panel.getBoundingClientRect().width;
       setQuizManagerTreeResizeState({
@@ -4968,7 +5022,7 @@ function App() {
             <div
               key={`quiz-manager-resize-${direction}`}
               className={`roots-list-resize-handle ${direction}`.trim()}
-              onMouseDown={(event) => beginQuizManagerTreeResize(direction, event)}
+              onPointerDown={(event) => beginQuizManagerTreeResize(direction, event)}
               aria-hidden="true"
             />
           ))}

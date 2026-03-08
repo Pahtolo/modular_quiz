@@ -1422,6 +1422,7 @@ textarea {
 .roots-list-resize-handle {
   position: absolute;
   z-index: 3;
+  touch-action: none;
 }
 
 .roots-list-resize-handle.n,
