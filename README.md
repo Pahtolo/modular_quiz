@@ -1,17 +1,28 @@
 # Modular Quiz
 
-Electron + React desktop app with a Python backend for quiz taking, grading, and quiz generation.
+Desktop quiz app (Electron + React + Python/FastAPI) for generating quizzes, taking timed attempts, grading responses, and reviewing performance history.
 
-Repository note: `settings/settings.json` is a sanitized template for source control only. Runtime settings and API keys belong in the app userData directory and should never be committed.
+Repository note: `settings/settings.json` is a sanitized template for source control only. Real runtime settings and API keys belong in app userData and should never be committed.
 
-## Current Runtime Targets
-- `electron/`: primary desktop UI (default)
-- `run_api.py`: local FastAPI backend entrypoint
-- `run.py`: optional terminal quiz runner
+## What It Does (Current)
+- Loads quizzes from a managed library and nested folders.
+- Supports MCQ + short-answer questions with:
+  - no-model (record ungraded),
+  - Claude grading/explanations,
+  - OpenAI grading/explanations.
+- Provides `Explain` for both MCQ and short answers.
+- Supports follow-up feedback chat with markdown + KaTeX rendering.
+- Supports quiz clock modes: `stopwatch`, `timer`, and `off`.
+- Tracks per-attempt history with drill-down, sort controls, and retrospective grading for ungraded answers.
+- Generates quizzes from source material (`.txt`, `.md`, `.pdf`, `.docx`, `.pptx`) with OCR fallback for low-text PDFs.
 
-PySide6 GUI has been removed.
+## Runtime Targets
+- `electron/`: primary desktop UI.
+- `run_api.py`: local FastAPI backend entrypoint.
+- `run_mcp.py`: MCP bridge server for ChatGPT Apps / MCP clients.
+- `run.py`: optional terminal quiz runner.
 
-## Quick Start (Electron)
+## Quick Start (Electron App)
 1. Install backend dependencies:
 ```bash
 python3 -m pip install -r requirements-api.txt
@@ -21,20 +32,21 @@ python3 -m pip install -r requirements-api.txt
 cd electron
 npm install
 ```
-3. Run in development:
+3. Start dev app:
 ```bash
 cd electron
 npm run dev
 ```
 
-## Backend API (manual)
-Run the backend standalone:
+## Run Backend API Manually
 ```bash
 python3 run_api.py --host 127.0.0.1 --port 8766 --token dev-token
 ```
 
-## MCP Bridge (for ChatGPT Apps / MCP clients)
-Run the MCP server that proxies to the backend API routes:
+If `--token` is omitted, a random token is generated and printed to stdout as `API_TOKEN=...`.
+
+## MCP Bridge (ChatGPT Apps / MCP Clients)
+Start MCP bridge that proxies backend API routes:
 ```bash
 python3 run_mcp.py --api-base-url http://127.0.0.1:8766 --api-token dev-token
 ```
@@ -44,98 +56,67 @@ Default streamable HTTP endpoint:
 http://127.0.0.1:8768/mcp
 ```
 
-Typical local workflow:
-1. Start the backend API (`run_api.py`) and keep its token.
-2. Start the MCP bridge (`run_mcp.py`) with the same token.
-3. Expose `http://127.0.0.1:8768/mcp` through an HTTPS tunnel when connecting from ChatGPT.
-4. Add the HTTPS MCP URL in ChatGPT connector settings.
+Typical local flow:
+1. Start `run_api.py` and capture the API token.
+2. Start `run_mcp.py` with the same token.
+3. Tunnel `http://127.0.0.1:8768/mcp` over HTTPS for remote clients.
+4. Use the HTTPS URL in ChatGPT connector settings.
 
-### OAuth-Protected MCP Mode (ChatGPT account linking)
-Enable OAuth verification on the MCP server by providing issuer/resource settings:
-```bash
-python3 run_mcp.py \
-  --api-base-url http://127.0.0.1:8766 \
-  --api-token dev-token \
-  --auth-issuer-url https://YOUR_AUTH_ISSUER \
-  --auth-resource-server-url https://YOUR_PUBLIC_HOST/mcp \
-  --auth-audience https://YOUR_PUBLIC_HOST/mcp \
-  --auth-required-scopes "quiz.read quiz.write"
-```
-
-Notes:
-- `--auth-issuer-url` enables OAuth mode.
-- `--auth-resource-server-url` must be the publicly reachable MCP URL used by ChatGPT.
-- `--auth-jwks-url` is optional; default is `<issuer>/.well-known/jwks.json`.
-- The server exposes RFC protected resource metadata at `/.well-known/oauth-protected-resource/...` automatically when OAuth mode is enabled.
-
-## Build and Package (Electron)
+## Build and Packaging
 Build renderer:
 ```bash
 cd electron
 npm run build:renderer
 ```
 
-Build bundled Python sidecar:
+Build bundled Python sidecar + OCR runtime staging:
 ```bash
 cd electron
 npm run build:sidecar
 ```
-Notes:
-- `build:sidecar` now stages bundled OCR runtime binaries (`tesseract`, `pdftoppm`) and `eng`/`osd` tessdata into installer resources.
-- Ensure OCR binaries are installed before building:
-  - macOS: `brew install tesseract poppler`
-  - Windows: `choco install tesseract poppler`
 
-Create macOS package artifact:
+Prereqs for sidecar OCR staging:
+- macOS: `brew install tesseract poppler`
+- Windows: `choco install tesseract poppler`
+
+Create artifacts:
 ```bash
 cd electron
 npm run dist -- --mac dmg
-```
-
-Create Windows NSIS installer (run on Windows):
-```bash
-cd electron
 npm run dist -- --win nsis
 ```
 
-GitHub Actions:
-- `macOS Package` builds and uploads unsigned arm64 DMG artifacts on `v*` tags and manual dispatch.
-- `Windows Package` builds and uploads unsigned NSIS artifacts on `v*` tags and manual dispatch.
-- `Secret Scan` runs full-history gitleaks scans on `v*` tags and manual dispatch.
+## Test Commands
+Run all backend tests:
+```bash
+python3 -m unittest discover -s tests -p "test_*.py"
+```
 
-## Open-Source Publish Checklist
-1. Run tests and tracked-settings hygiene checks:
+Or with pytest:
+```bash
+pytest -q
+```
+
+## CI Workflows
+- `macOS Package`: unsigned arm64 DMG artifacts on `v*` tags and manual dispatch.
+- `Windows Package`: unsigned NSIS artifacts on `v*` tags and manual dispatch.
+- `Secret Scan`: full-history gitleaks scan on `v*` tags and manual dispatch.
+
+## Release Checklist (Open Source)
+1. Run tests and hygiene checks:
 ```bash
 python3 -m unittest tests.test_repo_hygiene
 python3 -m unittest discover -s tests -p "test_*.py"
 ```
-2. Run a full-history secret scan locally before publishing:
+2. Run full-history local gitleaks:
 ```bash
 docker run --rm -v "$(pwd):/repo" ghcr.io/gitleaks/gitleaks:latest \
   detect --source /repo --redact --report-format json --report-path /repo/gitleaks-report.json
 ```
-3. If any leak is detected, rotate affected credentials immediately, then either rewrite git history or publish a clean snapshot repository.
-4. Build and verify release artifacts:
-  - macOS DMG: push a `v*` tag to trigger the `macOS Package` workflow, or run it manually.
-  - Windows NSIS: push a `v*` tag to trigger the `Windows Package` workflow, or run it manually.
-5. Tag and publish:
+3. Rotate and remediate if any secret is found.
+4. Build/verify macOS and Windows artifacts.
+5. Tag and push:
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
-```
-6. Attach/verify both macOS and Windows artifacts in the GitHub release entry.
-
-## Features
-- Quiz browser from configured `quiz_roots`
-- MCQ + short-answer grading (self, Claude, OpenAI)
-- Quiz generation from source material (`.txt`, `.md`, `.docx`, `.pptx`, `.pdf`)
-- PDF low-text OCR fallback with bundled runtime in packaged apps
-- Performance history and attempt drill-down
-- Settings persistence and legacy import
-- MCP bridge exposing quiz/settings tools over streamable HTTP
-
-## Tests
-Run all tests:
-```bash
-python3 -m unittest discover -s tests -p "test_*.py"
 ```
