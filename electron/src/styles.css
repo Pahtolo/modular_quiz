@@ -540,6 +540,7 @@ button:disabled {
   gap: 0.3rem;
   color: var(--ink-soft);
   font-size: 0.94rem;
+  min-width: 0;
 }
 
 .field.checkbox {
@@ -563,7 +564,12 @@ select {
 }
 
 .api-key-display {
+  display: block;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-align: left;
   font: inherit;
   cursor: text;
