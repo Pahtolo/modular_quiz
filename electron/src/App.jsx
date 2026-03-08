@@ -1508,6 +1508,10 @@ function App() {
     const filteredNodes = filterQuizNodes(baseNodes, quizSearchText);
     return sortQuizNodes(filteredNodes, quizSortMode);
   }, [quizTreeRoots, quizSearchText, quizSortMode]);
+  const orderedQuizPaths = useMemo(
+    () => flattenQuizNodes(visibleQuizTreeNodes, []),
+    [visibleQuizTreeNodes],
+  );
 
   const maxScore = useMemo(() => {
     if (!quiz || !quiz.questions) {
@@ -1665,6 +1669,29 @@ function App() {
 
   const hasOlderHistoryContext = historyContextIndex >= 0 && historyContextIndex < historyContextPaths.length - 1;
   const hasNewerHistoryContext = historyContextIndex > 0;
+  const historyKeyboardQuizPaths = useMemo(() => {
+    if (!activeHistoryQuizPath) {
+      return [];
+    }
+    if (orderedQuizPaths.includes(activeHistoryQuizPath)) {
+      return orderedQuizPaths;
+    }
+    const baseNodes = sortQuizNodes(omitManagedQuizzesRoot(quizTreeRoots), quizSortMode);
+    return flattenQuizNodes(baseNodes, []);
+  }, [activeHistoryQuizPath, orderedQuizPaths, quizSortMode, quizTreeRoots]);
+  const activeHistoryKeyboardQuizIndex = useMemo(
+    () => historyKeyboardQuizPaths.findIndex((pathValue) => pathValue === activeHistoryQuizPath),
+    [activeHistoryQuizPath, historyKeyboardQuizPaths],
+  );
+  const historyQuizAbovePath = activeHistoryKeyboardQuizIndex > 0
+    ? historyKeyboardQuizPaths[activeHistoryKeyboardQuizIndex - 1]
+    : '';
+  const historyQuizBelowPath = (
+    activeHistoryKeyboardQuizIndex >= 0
+    && activeHistoryKeyboardQuizIndex < historyKeyboardQuizPaths.length - 1
+  )
+    ? historyKeyboardQuizPaths[activeHistoryKeyboardQuizIndex + 1]
+    : '';
   const activeHistoryQuizTitle = useMemo(() => {
     if (!activeHistoryQuizPath) {
       return '';
@@ -2439,6 +2466,18 @@ function App() {
         return;
       }
       if (showingPerformanceHistory) {
+        if (historyViewMode === 'sessions') {
+          if (event.key === 'ArrowLeft' && historyQuizAbovePath) {
+            event.preventDefault();
+            void openAdjacentHistoryQuiz(historyQuizAbovePath);
+            return;
+          }
+          if (event.key === 'ArrowRight' && historyQuizBelowPath) {
+            event.preventDefault();
+            void openAdjacentHistoryQuiz(historyQuizBelowPath);
+            return;
+          }
+        }
         if (event.key === 'ArrowLeft' && hasOlderHistoryContext) {
           event.preventDefault();
           goToOlderHistoryContext();
@@ -2493,6 +2532,10 @@ function App() {
   }, [
     normalizedActiveTab,
     showingPerformanceHistory,
+    historyViewMode,
+    historyQuizAbovePath,
+    historyQuizBelowPath,
+    openAdjacentHistoryQuiz,
     hasOlderHistoryContext,
     hasNewerHistoryContext,
     quiz,
@@ -2907,6 +2950,15 @@ function App() {
     setHistoryContextPaths((prev) => [nextPath, ...prev.filter((item) => item !== nextPath)]);
     setHistoryContextIndex(0);
     setSelectedAttemptIndex(-1);
+  }
+
+  async function openAdjacentHistoryQuiz(targetPath) {
+    const nextPath = String(targetPath || '').trim();
+    if (!nextPath) {
+      return;
+    }
+    setSelectedQuizPath(nextPath);
+    await openPerformanceHistoryForQuiz(nextPath);
   }
 
   function goToOlderHistoryContext() {
