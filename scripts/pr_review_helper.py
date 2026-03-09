@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_REREVIEW_MESSAGE = "Addressed the latest PR review feedback. @codex please re-review."
+DEFAULT_REREVIEW_MESSAGE = "Addressed the latest PR review feedback. @codex review"
 
 
 def _run(args: list[str], *, cwd: Path | None = None) -> str:
