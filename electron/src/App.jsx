@@ -834,7 +834,7 @@ function updaterBannerTone(status) {
 
 function updaterStatusMessage(status) {
   if (!status.supported) {
-    return status.reason || 'In-app updates are available only in packaged releases.';
+    return status.reason || 'In-app updates are currently available only in packaged Windows releases.';
   }
   if (status.error) {
     return `Update error: ${status.error}`;
@@ -5899,8 +5899,8 @@ function App() {
                     ) : null}
 
                     <div className="settings-warning-note">
-                      Windows auto-update is ready once release assets are published. macOS still needs signed and notarized
-                      release builds before production auto-update can succeed.
+                      In-app updates are currently enabled only for packaged Windows releases. macOS still needs signed and
+                      notarized release builds before production auto-update can be turned on.
                     </div>
                   </section>
                 ) : null}

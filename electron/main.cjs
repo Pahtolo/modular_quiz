@@ -85,7 +85,7 @@ function setUpdaterStatus(patch) {
 }
 
 function updatesSupported() {
-  return app.isPackaged && !process.mas;
+  return app.isPackaged && !process.mas && process.platform === 'win32';
 }
 
 function initializeUpdater() {
@@ -96,7 +96,7 @@ function initializeUpdater() {
   updaterInitialized = true;
   setUpdaterStatus({
     supported: updatesSupported(),
-    reason: updatesSupported() ? '' : 'In-app updates are available only in packaged releases.',
+    reason: updatesSupported() ? '' : 'In-app updates are currently available only in packaged Windows releases.',
   });
 
   if (!updatesSupported()) {
@@ -188,7 +188,7 @@ async function checkForUpdates() {
   if (!updatesSupported()) {
     return setUpdaterStatus({
       supported: false,
-      reason: 'In-app updates are available only in packaged releases.',
+      reason: 'In-app updates are currently available only in packaged Windows releases.',
     });
   }
   initializeUpdater();
@@ -208,7 +208,7 @@ async function downloadUpdate() {
   if (!updatesSupported()) {
     return setUpdaterStatus({
       supported: false,
-      reason: 'In-app updates are available only in packaged releases.',
+      reason: 'In-app updates are currently available only in packaged Windows releases.',
     });
   }
   initializeUpdater();
@@ -238,7 +238,7 @@ async function downloadUpdate() {
 
 function installUpdate() {
   if (!updatesSupported()) {
-    throw new Error('In-app updates are available only in packaged releases.');
+    throw new Error('In-app updates are currently available only in packaged Windows releases.');
   }
   if (!updaterStatus.downloaded) {
     throw new Error('No downloaded update is ready to install.');
