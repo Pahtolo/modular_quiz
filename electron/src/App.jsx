@@ -5,12 +5,17 @@ import remarkGfm from 'remark-gfm';
 import {
   apiRequest,
   backendInfo,
+  checkForAppUpdates,
   deleteManagedQuizItem,
+  downloadAppUpdate,
+  getUpdaterStatus,
+  installAppUpdate,
   openExternal,
   openPath,
   pickFolder,
   pickSourceInputs,
   stageDroppedFiles,
+  subscribeToUpdaterStatus,
 } from './api';
 
 const TABS = ['quiz', 'generate', 'manager', 'settings'];
@@ -773,6 +778,96 @@ function formatHistoryTimestamp(value) {
   });
 }
 
+function createDefaultUpdaterStatus() {
+  return {
+    supported: false,
+    currentVersion: '',
+    availableVersion: '',
+    releaseName: '',
+    releaseDate: '',
+    releaseUrl: 'https://github.com/Pahtolo/modular_quiz/releases/latest',
+    checking: false,
+    available: false,
+    downloading: false,
+    downloaded: false,
+    progressPercent: 0,
+    bytesPerSecond: 0,
+    transferred: 0,
+    total: 0,
+    lastCheckedAt: '',
+    error: '',
+    reason: '',
+  };
+}
+
+function formatByteCount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '0 B';
+  }
+  if (numeric < 1024) {
+    return `${Math.round(numeric)} B`;
+  }
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = numeric / 1024;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const precision = size >= 100 ? 0 : 1;
+  return `${size.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function updaterBannerTone(status) {
+  if (status.error) {
+    return 'error';
+  }
+  if (status.downloaded) {
+    return 'success';
+  }
+  if (status.available) {
+    return 'warn';
+  }
+  return '';
+}
+
+function updaterStatusMessage(status) {
+  if (!status.supported) {
+    return status.reason || 'In-app updates are available only in packaged releases.';
+  }
+  if (status.error) {
+    return `Update error: ${status.error}`;
+  }
+  if (status.downloaded) {
+    return `Version ${status.availableVersion || 'the latest release'} is ready. Restart the app to install it.`;
+  }
+  if (status.downloading) {
+    const percent = Math.max(0, Math.min(100, Math.round(Number(status.progressPercent) || 0)));
+    return `Downloading version ${status.availableVersion || 'the latest release'} (${percent}%).`;
+  }
+  if (status.checking) {
+    return 'Checking GitHub Releases for updates...';
+  }
+  if (status.available) {
+    return `Version ${status.availableVersion || 'the latest release'} is available to download.`;
+  }
+  if (status.lastCheckedAt) {
+    return 'This app is up to date.';
+  }
+  return 'Check GitHub Releases for the latest version from inside the app.';
+}
+
+function updaterProgressMessage(status) {
+  if (!status.downloading) {
+    return '';
+  }
+  const transferred = formatByteCount(status.transferred);
+  const total = status.total ? formatByteCount(status.total) : '?';
+  const speed = status.bytesPerSecond ? `${formatByteCount(status.bytesPerSecond)}/s` : '';
+  return [transferred, `of ${total}`, speed].filter(Boolean).join(' ');
+}
+
 const HISTORY_CHART_AXIS_OPTIONS = [
   { value: 'attempt_number', label: 'Attempt #' },
   { value: 'timestamp', label: 'Date/Time' },
@@ -1246,6 +1341,7 @@ function App() {
   );
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaveStatus, setSettingsSaveStatus] = useState({ tone: '', message: '' });
+  const [updaterStatus, setUpdaterStatus] = useState(() => createDefaultUpdaterStatus());
   const [quizzesDir, setQuizzesDir] = useState('');
   const [quizzesTree, setQuizzesTree] = useState([]);
   const [quizzesWarnings, setQuizzesWarnings] = useState([]);
@@ -1976,6 +2072,41 @@ function App() {
 
   useEffect(() => {
     void boot();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadUpdater() {
+      try {
+        const status = await getUpdaterStatus();
+        if (active && status) {
+          setUpdaterStatus({ ...createDefaultUpdaterStatus(), ...status });
+        }
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        setUpdaterStatus((prev) => ({
+          ...prev,
+          error: err?.message || 'Could not load updater status.',
+        }));
+      }
+    }
+
+    void loadUpdater();
+
+    const unsubscribe = subscribeToUpdaterStatus((status) => {
+      if (!active || !status) {
+        return;
+      }
+      setUpdaterStatus({ ...createDefaultUpdaterStatus(), ...status });
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -3135,6 +3266,25 @@ function App() {
       return false;
     } finally {
       setSavingSettings(false);
+    }
+  }
+
+  async function handlePrimaryUpdateAction() {
+    try {
+      if (updaterStatus.downloaded) {
+        await installAppUpdate();
+        return;
+      }
+      if (updaterStatus.available) {
+        await downloadAppUpdate();
+        return;
+      }
+      await checkForAppUpdates();
+    } catch (err) {
+      setUpdaterStatus((prev) => ({
+        ...prev,
+        error: err?.message || 'Update action failed.',
+      }));
     }
   }
 
@@ -4422,6 +4572,7 @@ function App() {
   const shouldShowQuestionFeedback = Boolean(questionResult && (!quizComplete ? showFeedbackOnAnswer : showFeedbackOnCompletion));
   const settingsFilterHasMatches = [
     settingsMatches('appearance', 'theme', 'dark mode', 'light mode'),
+    settingsMatches('app update', 'updates', 'update', 'version', 'download latest', 'release'),
     settingsMatches('preferred available model', 'preferred model', 'model selection', 'grading model'),
     settingsMatches(
       'feedback',
@@ -4438,6 +4589,15 @@ function App() {
     settingsMatches('claude api key', 'claude'),
     settingsMatches('openai api key', 'openai'),
   ].some(Boolean);
+  const updateBannerKind = updaterBannerTone(updaterStatus);
+  const updateBannerMessage = updaterStatusMessage(updaterStatus);
+  const updateProgressDetail = updaterProgressMessage(updaterStatus);
+  const updatePrimaryActionLabel = updaterStatus.downloaded
+    ? 'Restart to Install'
+    : (updaterStatus.available ? 'Download Update' : 'Check for Updates');
+  const updatePrimaryActionDisabled = updaterStatus.checking || updaterStatus.downloading;
+  const updateLatestVersionLabel = updaterStatus.availableVersion
+    || (updaterStatus.lastCheckedAt ? updaterStatus.currentVersion : 'Not checked yet');
   const settingsDirty = useMemo(() => {
     if (!settingsForm || !settings) {
       return false;
@@ -5677,9 +5837,73 @@ function App() {
                   <input
                     value={settingsSearch}
                     onChange={(event) => setSettingsSearch(event.target.value)}
-                    placeholder="Try: theme, feedback, question nav, OpenAI, quiz clock"
+                    placeholder="Try: update, theme, feedback, question nav, OpenAI, quiz clock"
                   />
                 </label>
+
+                {settingsMatches('app update', 'updates', 'update', 'version', 'download latest', 'release') ? (
+                  <section className="settings-group">
+                    <h3>App Updates</h3>
+                    <div className="form-grid two-col">
+                      <div className="field">
+                        <span>Current version</span>
+                        <div className="settings-static-value">{updaterStatus.currentVersion || 'Unknown'}</div>
+                      </div>
+
+                      <div className="field">
+                        <span>Latest version</span>
+                        <div className="settings-static-value">{updateLatestVersionLabel || 'Unknown'}</div>
+                      </div>
+                    </div>
+
+                    {updateBannerMessage ? (
+                      <div className={`banner ${updateBannerKind}`.trim()}>{updateBannerMessage}</div>
+                    ) : null}
+
+                    {updateProgressDetail ? (
+                      <div className="settings-warning-note">
+                        Transfer: {updateProgressDetail}
+                      </div>
+                    ) : null}
+
+                    <div className="settings-update-actions">
+                      <button
+                        type="button"
+                        disabled={updatePrimaryActionDisabled}
+                        onClick={() => {
+                          void handlePrimaryUpdateAction();
+                        }}
+                      >
+                        {updatePrimaryActionLabel}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void openExternal(updaterStatus.releaseUrl || 'https://github.com/Pahtolo/modular_quiz/releases/latest');
+                        }}
+                      >
+                        Open Latest Release
+                      </button>
+                    </div>
+
+                    {updaterStatus.releaseDate ? (
+                      <div className="settings-warning-note">
+                        Release date: {formatHistoryTimestamp(updaterStatus.releaseDate)}
+                      </div>
+                    ) : null}
+
+                    {updaterStatus.lastCheckedAt ? (
+                      <div className="settings-warning-note">
+                        Last checked: {formatHistoryTimestamp(updaterStatus.lastCheckedAt)}
+                      </div>
+                    ) : null}
+
+                    <div className="settings-warning-note">
+                      Windows auto-update is ready once release assets are published. macOS still needs signed and notarized
+                      release builds before production auto-update can succeed.
+                    </div>
+                  </section>
+                ) : null}
 
                 {settingsMatches('appearance', 'theme', 'dark mode', 'light mode') ? (
               <section className="settings-group">

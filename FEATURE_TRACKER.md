@@ -214,10 +214,11 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- _No pending action items._
+- [ ] Configure macOS code-signing/notarization secrets so packaged macOS releases can use in-app auto-update in production.
 
 ### Completed Tasks
 
+- [x] Add in-app update checks/download/install controls in Settings, backed by Electron auto-updater and GitHub Releases metadata.
 - [x] Keep unfocused API key displays clipped inside their Settings boxes instead of bleeding past the field boundary.
 - [x] Remove the `Minimize` button from the main Quiz Folder Manager panel.
 - [x] Allow the Quiz Folder Manager panel that houses the folder structure to be resized by dragging its edges and corners.

@@ -1331,6 +1331,17 @@ textarea {
   max-width: 540px;
 }
 
+.settings-static-value {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
 .settings-group {
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -1369,6 +1380,12 @@ textarea {
 
 .settings-save-status.error {
   color: var(--result-bad-text);
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
 }
 
 .roots-card {

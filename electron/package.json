@@ -13,6 +13,7 @@
     "dist": "npm run build:renderer && npm run build:sidecar && electron-builder"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "katex": "^0.16.25",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -40,6 +41,13 @@
       "preload.cjs",
       "renderer/dist/**/*"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Pahtolo",
+        "repo": "modular_quiz"
+      }
+    ],
     "extraResources": [
       {
         "from": "build/backend",
@@ -56,7 +64,8 @@
     ],
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "identity": null,
       "category": "public.app-category.education"

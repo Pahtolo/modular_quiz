@@ -15,6 +15,24 @@ contextBridge.exposeInMainWorld('modularQuiz', {
     openPath: (path) => ipcRenderer.invoke('shell:open-path', { path }),
     openExternal: (url) => ipcRenderer.invoke('shell:open-external', { url }),
   },
+  updater: {
+    getStatus: () => ipcRenderer.invoke('updater:get-status'),
+    check: () => ipcRenderer.invoke('updater:check'),
+    download: () => ipcRenderer.invoke('updater:download'),
+    install: () => ipcRenderer.invoke('updater:install'),
+    subscribeStatus: (callback) => {
+      if (typeof callback !== 'function') {
+        return () => {};
+      }
+      const listener = (_event, payload) => {
+        callback(payload);
+      };
+      ipcRenderer.on('updater:status', listener);
+      return () => {
+        ipcRenderer.removeListener('updater:status', listener);
+      };
+    },
+  },
   sources: {
     stageDroppedFiles: (files) => ipcRenderer.invoke('sources:stage-dropped-files', { files }),
   },
