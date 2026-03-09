@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.pr_review_helper import DEFAULT_REREVIEW_MESSAGE
+from scripts.pr_review_helper import DEFAULT_REVIEW_TRIGGER_MESSAGE
 from scripts.pr_review_helper import build_pr_status
 from scripts.pr_review_helper import parse_remote_slug
 
 
 class PRReviewHelperTests(unittest.TestCase):
-    def test_default_rereview_message_uses_exact_codex_trigger(self) -> None:
-        self.assertIn("@codex review", DEFAULT_REREVIEW_MESSAGE)
+    def test_default_review_trigger_message_uses_exact_codex_trigger(self) -> None:
+        self.assertEqual(DEFAULT_REVIEW_TRIGGER_MESSAGE, "@codex review")
 
     def test_parse_remote_slug_supports_common_formats(self) -> None:
         self.assertEqual(parse_remote_slug("https://github.com/Pahtolo/modular_quiz.git"), "Pahtolo/modular_quiz")

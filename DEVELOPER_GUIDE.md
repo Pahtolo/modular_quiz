@@ -69,5 +69,6 @@ python3 -m unittest tests.test_api_server -v
 
 ## PR Review Loop Helper
 - `python3 scripts/pr_review_helper.py status --json` inspects the open PR for the current branch and lists unresolved review threads.
-- `python3 scripts/pr_review_helper.py rereview` posts a rereview comment on the current branch PR after fixes are pushed.
+- `python3 scripts/pr_review_helper.py comment --message "..."` posts a plain PR comment on the current branch PR.
+- `python3 scripts/pr_review_helper.py trigger-review` manually posts `@codex review` on the current branch PR when a retrigger is needed.
 - The helper expects `gh` to be installed and authenticated for the current shell session.

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_REREVIEW_MESSAGE = "Addressed the latest PR review feedback. @codex review"
+DEFAULT_REVIEW_TRIGGER_MESSAGE = "@codex review"
 
 
 def _run(args: list[str], *, cwd: Path | None = None) -> str:
@@ -187,11 +187,11 @@ def fetch_pr_status(cwd: Path | None = None, *, branch: str | None = None) -> di
     return build_pr_status(payload, owner=owner, repo=repo)
 
 
-def post_rereview_comment(
+def post_pr_comment(
     cwd: Path | None = None,
     *,
     branch: str | None = None,
-    message: str = DEFAULT_REREVIEW_MESSAGE,
+    message: str,
 ) -> dict[str, Any]:
     status = fetch_pr_status(cwd, branch=branch)
     if not status["has_open_pr"]:
@@ -228,10 +228,19 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--branch", help="Override the branch name instead of using the current branch.")
     status_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
-    rereview_parser = subparsers.add_parser("rereview", help="Post a rereview comment on the current branch PR.")
-    rereview_parser.add_argument("--branch", help="Override the branch name instead of using the current branch.")
-    rereview_parser.add_argument("--message", default=DEFAULT_REREVIEW_MESSAGE, help="Comment body to post to the PR.")
-    rereview_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON after posting.")
+    comment_parser = subparsers.add_parser("comment", help="Post a PR comment on the current branch PR.")
+    comment_parser.add_argument("--branch", help="Override the branch name instead of using the current branch.")
+    comment_parser.add_argument("--message", required=True, help="Comment body to post to the PR.")
+    comment_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON after posting.")
+
+    trigger_parser = subparsers.add_parser("trigger-review", help="Manually trigger a Codex review on the current branch PR.")
+    trigger_parser.add_argument("--branch", help="Override the branch name instead of using the current branch.")
+    trigger_parser.add_argument(
+        "--message",
+        default=DEFAULT_REVIEW_TRIGGER_MESSAGE,
+        help="Comment body to post to the PR to trigger review.",
+    )
+    trigger_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON after posting.")
     return parser
 
 
@@ -248,13 +257,13 @@ def main(argv: list[str] | None = None) -> int:
             _print_text_status(status)
         return 0
 
-    if args.command == "rereview":
-        status = post_rereview_comment(cwd, branch=args.branch, message=args.message)
+    if args.command in {"comment", "trigger-review"}:
+        status = post_pr_comment(cwd, branch=args.branch, message=args.message)
         if args.json:
             print(json.dumps(status, indent=2))
         else:
             pr = status["pull_request"]
-            print(f"Posted rereview comment on PR #{pr['number']}: {pr['url']}")
+            print(f"Posted PR comment on PR #{pr['number']}: {pr['url']}")
         return 0
 
     parser.error(f"Unsupported command: {args.command}")
