@@ -12,6 +12,15 @@ from typing import Any
 DEFAULT_REVIEW_TRIGGER_MESSAGE = "@codex review"
 
 
+def _empty_pr_status() -> dict[str, Any]:
+    return {
+        "has_open_pr": False,
+        "pull_request": None,
+        "unresolved_threads": [],
+        "unresolved_count": 0,
+    }
+
+
 def _run(args: list[str], *, cwd: Path | None = None) -> str:
     completed = subprocess.run(
         args,
@@ -48,8 +57,63 @@ def repo_slug(cwd: Path | None = None) -> str:
     return parse_remote_slug(_git_output("remote", "get-url", "origin", cwd=cwd))
 
 
+def github_remote_slugs(cwd: Path | None = None) -> dict[str, str]:
+    remote_names = [name.strip() for name in _git_output("remote", cwd=cwd).splitlines() if name.strip()]
+    slugs: dict[str, str] = {}
+    for remote_name in remote_names:
+        try:
+            slugs[remote_name] = parse_remote_slug(_git_output("remote", "get-url", remote_name, cwd=cwd))
+        except (subprocess.CalledProcessError, ValueError):
+            continue
+    return slugs
+
+
 def current_branch(cwd: Path | None = None) -> str:
     return _git_output("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd)
+
+
+def configured_remote_for_branch(branch_name: str, cwd: Path | None = None) -> str | None:
+    try:
+        remote_name = _git_output("config", "--get", f"branch.{branch_name}.remote", cwd=cwd)
+    except subprocess.CalledProcessError:
+        return None
+    return remote_name.strip() or None
+
+
+def ordered_search_repo_slugs(remote_slugs: dict[str, str], *, preferred_remote: str | None = None) -> list[str]:
+    ordered_slugs: list[str] = []
+
+    def add_remote(remote_name: str | None) -> None:
+        if not remote_name:
+            return
+        slug = remote_slugs.get(remote_name)
+        if slug and slug not in ordered_slugs:
+            ordered_slugs.append(slug)
+
+    add_remote(preferred_remote)
+    add_remote("upstream")
+    add_remote("origin")
+    for remote_name, slug in remote_slugs.items():
+        if slug not in ordered_slugs:
+            ordered_slugs.append(slug)
+    return ordered_slugs
+
+
+def build_pr_status_from_payloads(
+    payloads_by_repo_slug: dict[str, dict[str, Any]],
+    *,
+    head_repo_slug: str,
+    search_repo_slugs: list[str],
+) -> dict[str, Any]:
+    owner, repo = head_repo_slug.split("/", 1)
+    for search_repo_slug in search_repo_slugs:
+        payload = payloads_by_repo_slug.get(search_repo_slug)
+        if payload is None:
+            continue
+        status = build_pr_status(payload, owner=owner, repo=repo)
+        if status["has_open_pr"]:
+            return status
+    return _empty_pr_status()
 
 
 def _graphql(owner: str, repo: str, head_ref_name: str, *, cwd: Path | None = None) -> dict[str, Any]:
@@ -139,12 +203,7 @@ def _matching_pr_nodes(payload: dict[str, Any], *, owner: str, repo: str) -> lis
 def build_pr_status(payload: dict[str, Any], *, owner: str, repo: str) -> dict[str, Any]:
     nodes = _matching_pr_nodes(payload, owner=owner, repo=repo)
     if not nodes:
-        return {
-            "has_open_pr": False,
-            "pull_request": None,
-            "unresolved_threads": [],
-            "unresolved_count": 0,
-        }
+        return _empty_pr_status()
 
     pr = nodes[0]
     unresolved_threads: list[dict[str, Any]] = []
@@ -181,10 +240,23 @@ def build_pr_status(payload: dict[str, Any], *, owner: str, repo: str) -> dict[s
 
 
 def fetch_pr_status(cwd: Path | None = None, *, branch: str | None = None) -> dict[str, Any]:
-    owner_repo = repo_slug(cwd)
-    owner, repo = owner_repo.split("/", 1)
-    payload = _graphql(owner, repo, branch or current_branch(cwd), cwd=cwd)
-    return build_pr_status(payload, owner=owner, repo=repo)
+    branch_name = branch or current_branch(cwd)
+    remote_slugs = github_remote_slugs(cwd)
+    preferred_remote = configured_remote_for_branch(branch_name, cwd=cwd) or "origin"
+    head_repo_slug = remote_slugs.get(preferred_remote) or remote_slugs.get("origin")
+    if not head_repo_slug:
+        raise SystemExit("No GitHub remote found for the current branch.")
+
+    payloads_by_repo_slug: dict[str, dict[str, Any]] = {}
+    search_repo_slugs = ordered_search_repo_slugs(remote_slugs, preferred_remote=preferred_remote)
+    for search_repo_slug in search_repo_slugs:
+        owner, repo = search_repo_slug.split("/", 1)
+        payloads_by_repo_slug[search_repo_slug] = _graphql(owner, repo, branch_name, cwd=cwd)
+    return build_pr_status_from_payloads(
+        payloads_by_repo_slug,
+        head_repo_slug=head_repo_slug,
+        search_repo_slugs=search_repo_slugs,
+    )
 
 
 def post_pr_comment(

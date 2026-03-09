@@ -4,6 +4,8 @@ import unittest
 
 from scripts.pr_review_helper import DEFAULT_REVIEW_TRIGGER_MESSAGE
 from scripts.pr_review_helper import build_pr_status
+from scripts.pr_review_helper import build_pr_status_from_payloads
+from scripts.pr_review_helper import ordered_search_repo_slugs
 from scripts.pr_review_helper import parse_remote_slug
 
 
@@ -15,6 +17,19 @@ class PRReviewHelperTests(unittest.TestCase):
         self.assertEqual(parse_remote_slug("https://github.com/Pahtolo/modular_quiz.git"), "Pahtolo/modular_quiz")
         self.assertEqual(parse_remote_slug("git@github.com:Pahtolo/modular_quiz.git"), "Pahtolo/modular_quiz")
         self.assertEqual(parse_remote_slug("ssh://git@github.com/Pahtolo/modular_quiz.git"), "Pahtolo/modular_quiz")
+
+    def test_ordered_search_repo_slugs_prioritizes_branch_remote_and_deduplicates(self) -> None:
+        self.assertEqual(
+            ordered_search_repo_slugs(
+                {
+                    "origin": "pahtolo/modular_quiz-fork",
+                    "upstream": "Pahtolo/modular_quiz",
+                    "backup": "pahtolo/modular_quiz-fork",
+                },
+                preferred_remote="origin",
+            ),
+            ["pahtolo/modular_quiz-fork", "Pahtolo/modular_quiz"],
+        )
 
     def test_build_pr_status_returns_no_pr_when_branch_has_none(self) -> None:
         status = build_pr_status(
@@ -132,6 +147,39 @@ class PRReviewHelperTests(unittest.TestCase):
             },
             owner="Pahtolo",
             repo="modular_quiz",
+        )
+        self.assertTrue(status["has_open_pr"])
+        self.assertEqual(status["pull_request"]["number"], 15)
+
+    def test_build_pr_status_from_payloads_finds_upstream_pr_for_fork_remote(self) -> None:
+        status = build_pr_status_from_payloads(
+            {
+                "pahtolo/modular_quiz-fork": {"data": {"repository": {"pullRequests": {"nodes": []}}}},
+                "Pahtolo/modular_quiz": {
+                    "data": {
+                        "repository": {
+                            "pullRequests": {
+                                "nodes": [
+                                    {
+                                        "number": 15,
+                                        "title": "Add PR review loop helper",
+                                        "url": "https://github.com/Pahtolo/modular_quiz/pull/15",
+                                        "isDraft": False,
+                                        "reviewDecision": "COMMENTED",
+                                        "headRefName": "codex/pr-review-helper",
+                                        "headRepository": {"name": "modular_quiz-fork"},
+                                        "headRepositoryOwner": {"login": "pahtolo"},
+                                        "baseRefName": "master",
+                                        "reviewThreads": {"nodes": []},
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+            },
+            head_repo_slug="pahtolo/modular_quiz-fork",
+            search_repo_slugs=["pahtolo/modular_quiz-fork", "Pahtolo/modular_quiz"],
         )
         self.assertTrue(status["has_open_pr"])
         self.assertEqual(status["pull_request"]["number"], 15)
