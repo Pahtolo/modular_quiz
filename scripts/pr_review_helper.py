@@ -64,6 +64,12 @@ query($owner: String!, $repo: String!, $headRefName: String!) {
         isDraft
         reviewDecision
         headRefName
+        headRepository {
+          name
+        }
+        headRepositoryOwner {
+          login
+        }
         baseRefName
         reviewThreads(first: 100) {
           nodes {
@@ -112,8 +118,20 @@ def _latest_comment(thread: dict[str, Any]) -> dict[str, Any] | None:
     return comments[-1]
 
 
-def build_pr_status(payload: dict[str, Any]) -> dict[str, Any]:
+def _matching_pr_nodes(payload: dict[str, Any], *, owner: str, repo: str) -> list[dict[str, Any]]:
     nodes = ((((payload.get("data") or {}).get("repository") or {}).get("pullRequests") or {}).get("nodes")) or []
+    matches: list[dict[str, Any]] = []
+    for node in nodes:
+        head_repo_name = ((node.get("headRepository") or {}).get("name") or "").strip()
+        head_repo_owner = ((node.get("headRepositoryOwner") or {}).get("login") or "").strip()
+        if head_repo_name != repo or head_repo_owner != owner:
+            continue
+        matches.append(node)
+    return matches
+
+
+def build_pr_status(payload: dict[str, Any], *, owner: str, repo: str) -> dict[str, Any]:
+    nodes = _matching_pr_nodes(payload, owner=owner, repo=repo)
     if not nodes:
         return {
             "has_open_pr": False,
@@ -160,7 +178,7 @@ def fetch_pr_status(cwd: Path | None = None, *, branch: str | None = None) -> di
     owner_repo = repo_slug(cwd)
     owner, repo = owner_repo.split("/", 1)
     payload = _graphql(owner, repo, branch or current_branch(cwd), cwd=cwd)
-    return build_pr_status(payload)
+    return build_pr_status(payload, owner=owner, repo=repo)
 
 
 def post_rereview_comment(

@@ -13,7 +13,11 @@ class PRReviewHelperTests(unittest.TestCase):
         self.assertEqual(parse_remote_slug("ssh://git@github.com/Pahtolo/modular_quiz.git"), "Pahtolo/modular_quiz")
 
     def test_build_pr_status_returns_no_pr_when_branch_has_none(self) -> None:
-        status = build_pr_status({"data": {"repository": {"pullRequests": {"nodes": []}}}})
+        status = build_pr_status(
+            {"data": {"repository": {"pullRequests": {"nodes": []}}}},
+            owner="Pahtolo",
+            repo="modular_quiz",
+        )
         self.assertFalse(status["has_open_pr"])
         self.assertEqual(status["unresolved_count"], 0)
         self.assertEqual(status["unresolved_threads"], [])
@@ -32,6 +36,8 @@ class PRReviewHelperTests(unittest.TestCase):
                                     "isDraft": False,
                                     "reviewDecision": "CHANGES_REQUESTED",
                                     "headRefName": "codex/fix-short-question-points-validation",
+                                    "headRepository": {"name": "modular_quiz"},
+                                    "headRepositoryOwner": {"login": "Pahtolo"},
                                     "baseRefName": "master",
                                     "reviewThreads": {
                                         "nodes": [
@@ -73,6 +79,9 @@ class PRReviewHelperTests(unittest.TestCase):
                     }
                 }
             }
+            ,
+            owner="Pahtolo",
+            repo="modular_quiz",
         )
         self.assertTrue(status["has_open_pr"])
         self.assertEqual(status["pull_request"]["number"], 14)
@@ -80,6 +89,48 @@ class PRReviewHelperTests(unittest.TestCase):
         self.assertEqual(status["unresolved_threads"][0]["path"], "quiz_app/api/server.py")
         self.assertEqual(status["unresolved_threads"][0]["line"], 780)
         self.assertEqual(status["unresolved_threads"][0]["author"], "codex-reviewer")
+
+    def test_build_pr_status_ignores_same_branch_name_from_other_repo_owner(self) -> None:
+        status = build_pr_status(
+            {
+                "data": {
+                    "repository": {
+                        "pullRequests": {
+                            "nodes": [
+                                {
+                                    "number": 99,
+                                    "title": "Fork PR with same branch name",
+                                    "url": "https://github.com/Pahtolo/modular_quiz/pull/99",
+                                    "isDraft": False,
+                                    "reviewDecision": "COMMENTED",
+                                    "headRefName": "codex/pr-review-helper",
+                                    "headRepository": {"name": "modular_quiz"},
+                                    "headRepositoryOwner": {"login": "someone-else"},
+                                    "baseRefName": "master",
+                                    "reviewThreads": {"nodes": []},
+                                },
+                                {
+                                    "number": 15,
+                                    "title": "Add PR review loop helper",
+                                    "url": "https://github.com/Pahtolo/modular_quiz/pull/15",
+                                    "isDraft": False,
+                                    "reviewDecision": "COMMENTED",
+                                    "headRefName": "codex/pr-review-helper",
+                                    "headRepository": {"name": "modular_quiz"},
+                                    "headRepositoryOwner": {"login": "Pahtolo"},
+                                    "baseRefName": "master",
+                                    "reviewThreads": {"nodes": []},
+                                },
+                            ]
+                        }
+                    }
+                }
+            },
+            owner="Pahtolo",
+            repo="modular_quiz",
+        )
+        self.assertTrue(status["has_open_pr"])
+        self.assertEqual(status["pull_request"]["number"], 15)
 
 
 if __name__ == "__main__":
