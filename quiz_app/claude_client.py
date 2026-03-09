@@ -9,6 +9,7 @@ from typing import Sequence
 from .feedback_voice import to_second_person
 from .generator.prompting import build_quiz_generation_prompt
 from .graders import GradeResult
+from .http_tls import urlopen_with_trust_store
 from .loader import load_quiz
 from .models import Quiz, ShortQuestion
 from .providers import ModelOption, friendly_model_label
@@ -80,7 +81,7 @@ class ClaudeClient:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urlopen_with_trust_store(req, timeout=60) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
@@ -107,7 +108,7 @@ class ClaudeClient:
             method="GET",
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urlopen_with_trust_store(req, timeout=30) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
             rows = body.get("data") if isinstance(body, dict) else []
             model_ids: list[str] = []

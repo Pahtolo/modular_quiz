@@ -9,6 +9,7 @@ from typing import Callable, List, Sequence
 from .feedback_voice import to_second_person
 from .generator.prompting import build_quiz_generation_prompt
 from .graders import GradeResult
+from .http_tls import urlopen_with_trust_store
 from .models import MCQQuestion, Quiz, ShortQuestion
 from .providers import ModelOption, friendly_model_label, recommended_first
 
@@ -75,7 +76,7 @@ class OpenAIClient:
         )
         for attempt in range(1, OPENAI_REQUEST_MAX_ATTEMPTS + 1):
             try:
-                with urllib.request.urlopen(req, timeout=60) as resp:
+                with urlopen_with_trust_store(req, timeout=60) as resp:
                     return json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="ignore")

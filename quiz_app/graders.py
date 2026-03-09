@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Callable
 from urllib import error, request
 
+from .http_tls import urlopen_with_trust_store
 from .models import MCQQuestion, ShortQuestion
 
 
@@ -102,7 +103,7 @@ class ClaudeShortGrader:
         )
 
         try:
-            with request.urlopen(req, timeout=30) as resp:
+            with urlopen_with_trust_store(req, timeout=30) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
         except error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="ignore")
