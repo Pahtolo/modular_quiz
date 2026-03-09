@@ -13,10 +13,11 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [ ] After user review, fix the active bugs listed in `BUGS_FOUND.md` and add regression tests for each fix.
+- _No pending action items._
 
 ### Completed Tasks
 
+- [x] 2026-03-08 EDT resolved/revalidated `BUGS_FOUND.md` active bugs with regression coverage updates (including `/v1/history/update` malformed `record` numeric payloads) and shifted local API runtime defaults to userData-style settings paths to protect tracked repo templates.
 - [x] Ensure quiz generation injects `template_quiz.json` into the prompt.
 - [x] Add prompt validation checks before quiz generation is run.
 - [x] Consolidate provider-specific quiz generation prompts into one shared prompt builder.
@@ -35,10 +36,11 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [ ] Validate numeric payload fields for `/v1/history/append` and `/v1/history/update` so malformed values return 422 instead of 500.
+- _No pending action items._
 
 ### Completed Tasks
 
+- [x] Validate numeric payload fields for `/v1/history/append` and `/v1/history/update` so malformed values return 422 instead of 500.
 - [x] Right-clicking a quiz now focuses a cursor on the name, allowing inline quiz-name edits.
 - [x] Left-clicking a quiz automatically opens its performance history.
 - [x] Reject uploaded quiz JSON files where any MCQ has more than 4 options so oversized quizzes cannot load or run.
