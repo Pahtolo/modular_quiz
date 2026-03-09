@@ -217,21 +217,23 @@ class APIServerTests(unittest.TestCase):
         self.assertFalse(flags_payload["show_feedback_on_completion"])
         self.assertTrue(flags_payload["auto_advance_enabled"])
 
-    def test_settings_sanitizes_deprecated_claude_models(self) -> None:
+    def test_settings_migrates_legacy_default_claude_selection(self) -> None:
         updated = self.client.put(
             "/v1/settings",
             headers=self.headers,
             json={
-                "claude_model_selected": "claude-3-7-sonnet-latest",
-                "claude_models": ["claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"],
-                "preferred_model_key": "claude:claude-3-7-sonnet-latest",
+                "claude_model": "claude-3-5-haiku-latest",
+                "claude_model_selected": "claude-3-5-haiku-latest",
+                "claude_models": ["claude-3-5-haiku-latest", "claude-3-opus-latest"],
+                "preferred_model_key": "claude:claude-3-5-haiku-latest",
             },
         )
         self.assertEqual(updated.status_code, 200, updated.text)
         payload = updated.json()["settings"]
-        self.assertNotIn("claude-3-7-sonnet-latest", payload["claude_models"])
-        self.assertNotEqual(payload["claude_model_selected"], "claude-3-7-sonnet-latest")
-        self.assertNotEqual(payload["preferred_model_key"], "claude:claude-3-7-sonnet-latest")
+        self.assertEqual(payload["claude_model"], "claude-3-7-sonnet-latest")
+        self.assertEqual(payload["claude_model_selected"], "claude-3-7-sonnet-latest")
+        self.assertEqual(payload["preferred_model_key"], "claude:claude-3-7-sonnet-latest")
+        self.assertIn("claude-3-7-sonnet-latest", payload["claude_models"])
 
     def test_models_preview_lists_models_from_draft_settings(self) -> None:
         preview_provider = MagicMock()
@@ -1501,14 +1503,14 @@ class APIServerTests(unittest.TestCase):
             "/v1/generate/collect-sources",
             {"paths": [str(docs)]},
         )
-        provider = _ModelAwareStubProvider(available_models=["claude-3-5-haiku-latest"])
+        provider = _ModelAwareStubProvider(available_models=["claude-3-7-sonnet-latest"])
         with patch("quiz_app.api.server._provider_client", return_value=provider):
             generated = self._post(
                 "/v1/generate/run",
                 {
                     "sources": collect["sources"],
                     "provider": "claude",
-                    "model": "claude-3-7-sonnet-latest",
+                    "model": "claude-3-5-haiku-latest",
                     "total": 2,
                     "mcq_count": 1,
                     "short_count": 1,
@@ -1518,7 +1520,7 @@ class APIServerTests(unittest.TestCase):
             )
 
         self.assertTrue(generated["ok"], generated.get("errors"))
-        self.assertEqual(provider.last_generation_model, "claude-3-5-haiku-latest")
+        self.assertEqual(provider.last_generation_model, "claude-3-7-sonnet-latest")
         self.assertTrue(any("Falling back" in line for line in generated["warnings"]))
 
     def test_generate_run_prefers_preferred_model_key_for_claude_fallback(self) -> None:
@@ -1538,7 +1540,7 @@ class APIServerTests(unittest.TestCase):
             {"paths": [str(docs)]},
         )
         provider = _ModelAwareStubProvider(
-            available_models=["claude-3-5-haiku-latest", "claude-3-opus-latest"]
+            available_models=["claude-3-7-sonnet-latest", "claude-3-opus-latest"]
         )
         with patch("quiz_app.api.server._provider_client", return_value=provider):
             generated = self._post(
@@ -1546,7 +1548,7 @@ class APIServerTests(unittest.TestCase):
                 {
                     "sources": collect["sources"],
                     "provider": "claude",
-                    "model": "claude-3-7-sonnet-latest",
+                    "model": "claude-3-5-haiku-latest",
                     "total": 2,
                     "mcq_count": 1,
                     "short_count": 1,

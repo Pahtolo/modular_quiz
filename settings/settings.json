@@ -3,7 +3,7 @@
   "quiz_roots": [
     "."
   ],
-  "preferred_model_key": "claude:claude-3-5-haiku-latest",
+  "preferred_model_key": "claude:claude-3-7-sonnet-latest",
   "performance_history_path": "settings/performance_history.json",
   "short_grader": "claude",
   "feedback_mode": "show_then_next",
@@ -18,10 +18,10 @@
   "lock_questions_by_progression": true,
   "shuffle_mcq_answers": false,
   "claude_api_key": "",
-  "claude_model": "claude-3-5-haiku-latest",
-  "claude_model_selected": "claude-3-5-haiku-latest",
+  "claude_model": "claude-3-7-sonnet-latest",
+  "claude_model_selected": "claude-3-7-sonnet-latest",
   "claude_models": [
-    "claude-3-5-haiku-latest",
+    "claude-3-7-sonnet-latest",
     "claude-3-opus-latest"
   ],
   "openai_auth_mode": "api_key",
