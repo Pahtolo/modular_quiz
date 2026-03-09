@@ -132,6 +132,36 @@ class PRReviewHelperTests(unittest.TestCase):
         self.assertTrue(status["has_open_pr"])
         self.assertEqual(status["pull_request"]["number"], 15)
 
+    def test_build_pr_status_matches_repo_and_owner_case_insensitively(self) -> None:
+        status = build_pr_status(
+            {
+                "data": {
+                    "repository": {
+                        "pullRequests": {
+                            "nodes": [
+                                {
+                                    "number": 15,
+                                    "title": "Add PR review loop helper",
+                                    "url": "https://github.com/Pahtolo/modular_quiz/pull/15",
+                                    "isDraft": False,
+                                    "reviewDecision": "COMMENTED",
+                                    "headRefName": "codex/pr-review-helper",
+                                    "headRepository": {"name": "Modular_Quiz"},
+                                    "headRepositoryOwner": {"login": "PAHTOLO"},
+                                    "baseRefName": "master",
+                                    "reviewThreads": {"nodes": []},
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            owner="pahtolo",
+            repo="modular_quiz",
+        )
+        self.assertTrue(status["has_open_pr"])
+        self.assertEqual(status["pull_request"]["number"], 15)
+
 
 if __name__ == "__main__":
     unittest.main()

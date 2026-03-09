@@ -118,13 +118,19 @@ def _latest_comment(thread: dict[str, Any]) -> dict[str, Any] | None:
     return comments[-1]
 
 
+def _normalized_repo_value(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
 def _matching_pr_nodes(payload: dict[str, Any], *, owner: str, repo: str) -> list[dict[str, Any]]:
     nodes = ((((payload.get("data") or {}).get("repository") or {}).get("pullRequests") or {}).get("nodes")) or []
     matches: list[dict[str, Any]] = []
+    expected_owner = _normalized_repo_value(owner)
+    expected_repo = _normalized_repo_value(repo)
     for node in nodes:
-        head_repo_name = ((node.get("headRepository") or {}).get("name") or "").strip()
-        head_repo_owner = ((node.get("headRepositoryOwner") or {}).get("login") or "").strip()
-        if head_repo_name != repo or head_repo_owner != owner:
+        head_repo_name = _normalized_repo_value((node.get("headRepository") or {}).get("name"))
+        head_repo_owner = _normalized_repo_value((node.get("headRepositoryOwner") or {}).get("login"))
+        if head_repo_name != expected_repo or head_repo_owner != expected_owner:
             continue
         matches.append(node)
     return matches
