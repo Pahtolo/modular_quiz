@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.2 - 2026-03-09
+
+### Hotfix
+- Fixed packaged Claude and OpenAI HTTPS requests so frozen app releases use a bundled CA certificate store instead of relying on host trust-store discovery.
+- Fixed packaged OpenAI OAuth token exchange and refresh requests to use the same bundled certificate trust path.
+
+### Packaging and platform updates
+- Added `certifi` as an explicit sidecar runtime dependency so the packaged Python backend consistently ships with a usable CA bundle.
+
 ## v0.2.1 - 2026-03-09
 
 This release supersedes `v0.2.0`, which was cut from the wrong branch and missed merged `master` fixes.
