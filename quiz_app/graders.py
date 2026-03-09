@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Callable
 from urllib import error, request
 
+from .claude_models import DEFAULT_CLAUDE_MODEL
 from .http_tls import urlopen_with_trust_store
 from .models import MCQQuestion, ShortQuestion
 
@@ -65,7 +66,7 @@ class SelfShortGrader:
 
 
 class ClaudeShortGrader:
-    def __init__(self, api_key: str, model: str = "claude-4-5-haiku-latest"):
+    def __init__(self, api_key: str, model: str = DEFAULT_CLAUDE_MODEL):
         self.api_key = api_key
         self.model = model
 

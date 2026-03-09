@@ -8,16 +8,12 @@ from pathlib import Path
 from tempfile import mkstemp
 from typing import Any, Mapping
 
+from .claude_models import DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_MODELS, LEGACY_DEFAULT_CLAUDE_MODEL
+
 
 DEFAULT_SETTINGS_PATH = Path("settings") / "settings.json"
 FILE_MODE_PRIVATE = 0o600
-DEFAULT_CLAUDE_MODELS = [
-    "claude-3-5-haiku-latest",
-    "claude-3-opus-latest",
-]
-DEPRECATED_CLAUDE_MODELS = {
-    "claude-3-7-sonnet-latest",
-}
+DEPRECATED_CLAUDE_MODELS: set[str] = set()
 DEFAULT_OPENAI_SCOPES = ["model.read", "response.write"]
 DEFAULT_OPENAI_OAUTH_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 DEFAULT_OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -38,7 +34,7 @@ ALLOWED_QUIZ_CLOCK_MODES = {"off", "stopwatch", "timer"}
 class AppSettings:
     quiz_dir: str = "."
     quiz_roots: list[str] = field(default_factory=lambda: ["."])
-    preferred_model_key: str = "claude:claude-3-5-haiku-latest"
+    preferred_model_key: str = f"claude:{DEFAULT_CLAUDE_MODEL}"
     performance_history_path: str = "settings/performance_history.json"
     short_grader: str = "claude"
     feedback_mode: str = "show_then_next"
@@ -54,8 +50,8 @@ class AppSettings:
     shuffle_mcq_answers: bool = False
 
     claude_api_key: str = ""
-    claude_model: str = "claude-3-5-haiku-latest"
-    claude_model_selected: str = "claude-3-5-haiku-latest"
+    claude_model: str = DEFAULT_CLAUDE_MODEL
+    claude_model_selected: str = DEFAULT_CLAUDE_MODEL
     claude_models: list[str] = field(default_factory=lambda: list(DEFAULT_CLAUDE_MODELS))
 
     openai_auth_mode: str = "api_key"
@@ -158,6 +154,16 @@ class SettingsStore:
         provider_from_key, model_from_key = self._parse_model_key(preferred_model_key)
         if provider_from_key == "claude" and model_from_key in DEPRECATED_CLAUDE_MODELS:
             preferred_model_key = ""
+        if (
+            claude_model == LEGACY_DEFAULT_CLAUDE_MODEL
+            and claude_model_selected == LEGACY_DEFAULT_CLAUDE_MODEL
+            and preferred_model_key == f"claude:{LEGACY_DEFAULT_CLAUDE_MODEL}"
+            and claude_models == [LEGACY_DEFAULT_CLAUDE_MODEL, "claude-3-opus-latest"]
+        ):
+            claude_model = defaults.claude_model
+            claude_model_selected = defaults.claude_model_selected
+            claude_models = list(defaults.claude_models)
+            preferred_model_key = defaults.preferred_model_key
         if not self._is_valid_model_key(preferred_model_key):
             if short_grader == "openai":
                 preferred_model_key = f"openai:{openai_model_selected}"

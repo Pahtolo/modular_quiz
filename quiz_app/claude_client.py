@@ -6,6 +6,7 @@ import urllib.request
 from pathlib import Path
 from typing import Sequence
 
+from .claude_models import DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_MODELS
 from .feedback_voice import to_second_person
 from .generator.prompting import build_quiz_generation_prompt
 from .graders import GradeResult
@@ -14,9 +15,7 @@ from .loader import load_quiz
 from .models import Quiz, ShortQuestion
 from .providers import ModelOption, friendly_model_label
 
-DEPRECATED_CLAUDE_MODELS = {
-    "claude-3-7-sonnet-latest",
-}
+DEPRECATED_CLAUDE_MODELS: set[str] = set()
 MATH_FORMAT_INSTRUCTION = (
     "If you include math, write it in KaTeX-compatible LaTeX. "
     "Use $...$ for inline math and $$...$$ for display math."
@@ -29,15 +28,12 @@ class ClaudeClient:
     def __init__(
         self,
         api_key: str,
-        default_model: str = "claude-3-5-haiku-latest",
+        default_model: str = DEFAULT_CLAUDE_MODEL,
         curated_models: Sequence[str] | None = None,
     ):
         self.api_key = (api_key or "").strip()
         self.default_model = default_model
-        raw_models = curated_models or [
-            "claude-3-5-haiku-latest",
-            "claude-3-opus-latest",
-        ]
+        raw_models = curated_models or DEFAULT_CLAUDE_MODELS
         seen: set[str] = set()
         self.curated_models: list[str] = []
         for model_id in raw_models:
@@ -58,17 +54,7 @@ class ClaudeClient:
             for model_id in model_ids
         ]
 
-    def _message_text(self, prompt: str, system: str, model: str | None = None, max_tokens: int = 500) -> str:
-        if not self.api_key:
-            raise RuntimeError("Claude API key is missing.")
-
-        payload = {
-            "model": model or self.default_model,
-            "max_tokens": max_tokens,
-            "temperature": 0,
-            "system": system,
-            "messages": [{"role": "user", "content": prompt}],
-        }
+    def _messages_request(self, payload: dict, *, timeout: int) -> dict:
         req = urllib.request.Request(
             "https://api.anthropic.com/v1/messages",
             data=json.dumps(payload).encode("utf-8"),
@@ -79,12 +65,97 @@ class ClaudeClient:
             },
             method="POST",
         )
+        with urlopen_with_trust_store(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _list_model_ids(self) -> list[str]:
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/models",
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            method="GET",
+        )
+        with urlopen_with_trust_store(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        rows = body.get("data") if isinstance(body, dict) else []
+        model_ids: list[str] = []
+        seen: set[str] = set()
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                model_id = str(row.get("id", "")).strip()
+                if not model_id or model_id in seen or model_id in DEPRECATED_CLAUDE_MODELS:
+                    continue
+                seen.add(model_id)
+                model_ids.append(model_id)
+        return model_ids
+
+    @staticmethod
+    def _extract_model_not_found(detail: str) -> str:
+        try:
+            payload = json.loads(detail)
+        except json.JSONDecodeError:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        error = payload.get("error")
+        if not isinstance(error, dict) or error.get("type") != "not_found_error":
+            return ""
+        message = str(error.get("message", "")).strip()
+        match = re.search(r"model:\s*([A-Za-z0-9._@:-]+)", message)
+        return match.group(1) if match else ""
+
+    def _fallback_model_for(self, requested_model: str) -> str:
+        available = self._list_model_ids()
+        if requested_model in available:
+            return requested_model
+        if self.default_model in available:
+            return self.default_model
+        for curated in self.curated_models:
+            if curated in available:
+                return curated
+        return available[0] if available else ""
+
+    def _message_text(
+        self,
+        prompt: str,
+        system: str,
+        model: str | None = None,
+        max_tokens: int = 500,
+        *,
+        allow_model_fallback: bool = True,
+    ) -> str:
+        if not self.api_key:
+            raise RuntimeError("Claude API key is missing.")
+
+        selected_model = model or self.default_model
+        payload = {
+            "model": selected_model,
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "system": system,
+            "messages": [{"role": "user", "content": prompt}],
+        }
 
         try:
-            with urlopen_with_trust_store(req, timeout=60) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+            body = self._messages_request(payload, timeout=60)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
+            if allow_model_fallback and exc.code == 404:
+                missing_model = self._extract_model_not_found(detail)
+                fallback_model = self._fallback_model_for(missing_model or selected_model)
+                if fallback_model and fallback_model != selected_model:
+                    self.default_model = fallback_model
+                    return self._message_text(
+                        prompt=prompt,
+                        system=system,
+                        model=fallback_model,
+                        max_tokens=max_tokens,
+                        allow_model_fallback=False,
+                    )
             raise RuntimeError(f"Claude HTTP {exc.code}: {detail}") from exc
         except Exception as exc:
             raise RuntimeError(f"Claude request failed: {exc}") from exc
@@ -99,29 +170,8 @@ class ClaudeClient:
         if not self.api_key:
             return self._model_options(self.curated_models)
 
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/models",
-            headers={
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-            },
-            method="GET",
-        )
         try:
-            with urlopen_with_trust_store(req, timeout=30) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            rows = body.get("data") if isinstance(body, dict) else []
-            model_ids: list[str] = []
-            seen: set[str] = set()
-            if isinstance(rows, list):
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    model_id = str(row.get("id", "")).strip()
-                    if not model_id or model_id in seen or model_id in DEPRECATED_CLAUDE_MODELS:
-                        continue
-                    seen.add(model_id)
-                    model_ids.append(model_id)
+            model_ids = self._list_model_ids()
             if model_ids:
                 return self._model_options(model_ids)
         except Exception:

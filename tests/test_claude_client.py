@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from quiz_app.claude_client import ClaudeClient
@@ -26,6 +27,54 @@ class ClaudeClientTests(unittest.TestCase):
 
         self.assertEqual(text, "hello")
         mocked_open.assert_called_once()
+
+    def test_message_text_retries_with_available_model_after_not_found(self) -> None:
+        client = ClaudeClient(
+            api_key="test-key",
+            default_model="claude-3-5-haiku-latest",
+            curated_models=["claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"],
+        )
+        missing_body = json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "not_found_error",
+                    "message": "model: claude-3-5-haiku-latest",
+                },
+            }
+        ).encode("utf-8")
+
+        def _missing_error() -> HTTPError:
+            return HTTPError(
+                url="https://api.anthropic.com/v1/messages",
+                code=404,
+                msg="Not Found",
+                hdrs=None,
+                fp=None,
+            )
+
+        class _Response:
+            def __init__(self, payload: dict):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps(self.payload).encode("utf-8")
+
+        missing = _missing_error()
+        missing.read = lambda: missing_body
+
+        with patch.object(client, "_messages_request", side_effect=[missing, {"content": [{"type": "text", "text": "ok"}]}]):
+            with patch.object(client, "_list_model_ids", return_value=["claude-3-7-sonnet-latest"]):
+                text = client._message_text(prompt="Prompt", system="System")
+
+        self.assertEqual(text, "ok")
+        self.assertEqual(client.default_model, "claude-3-7-sonnet-latest")
 
     def test_generate_quiz_normalizes_blank_question_ids(self) -> None:
         client = ClaudeClient(api_key="test-key")
