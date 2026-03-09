@@ -43,6 +43,41 @@ export async function openExternal(url) {
   return bridge.shell.openExternal(url);
 }
 
+export async function getUpdaterStatus() {
+  if (!bridge.updater || typeof bridge.updater.getStatus !== 'function') {
+    return null;
+  }
+  return bridge.updater.getStatus();
+}
+
+export async function checkForAppUpdates() {
+  if (!bridge.updater || typeof bridge.updater.check !== 'function') {
+    throw new Error('Updater support is not available until the app restarts.');
+  }
+  return bridge.updater.check();
+}
+
+export async function downloadAppUpdate() {
+  if (!bridge.updater || typeof bridge.updater.download !== 'function') {
+    throw new Error('Updater support is not available until the app restarts.');
+  }
+  return bridge.updater.download();
+}
+
+export async function installAppUpdate() {
+  if (!bridge.updater || typeof bridge.updater.install !== 'function') {
+    throw new Error('Updater support is not available until the app restarts.');
+  }
+  return bridge.updater.install();
+}
+
+export function subscribeToUpdaterStatus(callback) {
+  if (!bridge.updater || typeof bridge.updater.subscribeStatus !== 'function') {
+    return () => {};
+  }
+  return bridge.updater.subscribeStatus(callback);
+}
+
 export async function stageDroppedFiles(files) {
   if (!bridge.sources || typeof bridge.sources.stageDroppedFiles !== 'function') {
     throw new Error('Dropped file staging support is not available until the app restarts.');

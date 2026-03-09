@@ -1,4 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -14,9 +15,238 @@ let backendInfo = {
 };
 const DROPPED_SOURCE_STAGING_ROOT = 'modular-quiz-drops';
 const DROPPED_SOURCE_STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const RELEASES_URL = 'https://github.com/Pahtolo/modular_quiz/releases';
+const RELEASES_LATEST_URL = `${RELEASES_URL}/latest`;
+
+let updaterInitialized = false;
+let updaterCheckPromise = null;
+let updaterDownloadPromise = null;
+let updaterStatus = {
+  supported: false,
+  currentVersion: app.getVersion(),
+  availableVersion: '',
+  releaseName: '',
+  releaseDate: '',
+  releaseUrl: RELEASES_LATEST_URL,
+  checking: false,
+  available: false,
+  downloading: false,
+  downloaded: false,
+  progressPercent: 0,
+  bytesPerSecond: 0,
+  transferred: 0,
+  total: 0,
+  lastCheckedAt: '',
+  error: '',
+  reason: '',
+};
 
 function projectRoot() {
   return path.resolve(__dirname, '..');
+}
+
+function serializeUpdateInfo(info) {
+  const version = String(
+    info?.version
+    || info?.tag
+    || info?.releaseName
+    || '',
+  ).trim();
+  return {
+    availableVersion: version,
+    releaseName: String(info?.releaseName || '').trim(),
+    releaseDate: String(info?.releaseDate || '').trim(),
+    releaseUrl: RELEASES_LATEST_URL,
+  };
+}
+
+function updaterSnapshot() {
+  return { ...updaterStatus };
+}
+
+function emitUpdaterStatus() {
+  const snapshot = updaterSnapshot();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('updater:status', snapshot);
+    }
+  }
+  return snapshot;
+}
+
+function setUpdaterStatus(patch) {
+  updaterStatus = {
+    ...updaterStatus,
+    ...patch,
+    currentVersion: app.getVersion(),
+    releaseUrl: patch?.releaseUrl || updaterStatus.releaseUrl || RELEASES_LATEST_URL,
+  };
+  return emitUpdaterStatus();
+}
+
+function updatesSupported() {
+  return app.isPackaged && !process.mas && process.platform === 'win32';
+}
+
+function initializeUpdater() {
+  if (updaterInitialized) {
+    return;
+  }
+
+  updaterInitialized = true;
+  setUpdaterStatus({
+    supported: updatesSupported(),
+    reason: updatesSupported() ? '' : 'In-app updates are currently available only in packaged Windows releases.',
+  });
+
+  if (!updatesSupported()) {
+    return;
+  }
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.logger = console;
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdaterStatus({
+      checking: true,
+      error: '',
+      lastCheckedAt: new Date().toISOString(),
+    });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    setUpdaterStatus({
+      ...serializeUpdateInfo(info),
+      checking: false,
+      available: true,
+      downloading: false,
+      downloaded: false,
+      progressPercent: 0,
+      bytesPerSecond: 0,
+      transferred: 0,
+      total: 0,
+      error: '',
+      lastCheckedAt: new Date().toISOString(),
+    });
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    const serialized = serializeUpdateInfo(info);
+    setUpdaterStatus({
+      ...serialized,
+      checking: false,
+      available: false,
+      downloading: false,
+      downloaded: false,
+      progressPercent: 0,
+      bytesPerSecond: 0,
+      transferred: 0,
+      total: 0,
+      error: '',
+      lastCheckedAt: new Date().toISOString(),
+      availableVersion: serialized.availableVersion || app.getVersion(),
+    });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    setUpdaterStatus({
+      downloading: true,
+      downloaded: false,
+      progressPercent: Number(progress?.percent) || 0,
+      bytesPerSecond: Number(progress?.bytesPerSecond) || 0,
+      transferred: Number(progress?.transferred) || 0,
+      total: Number(progress?.total) || 0,
+      error: '',
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    setUpdaterStatus({
+      ...serializeUpdateInfo(info),
+      checking: false,
+      available: true,
+      downloading: false,
+      downloaded: true,
+      progressPercent: 100,
+      error: '',
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    setUpdaterStatus({
+      checking: false,
+      downloading: false,
+      error: String(err?.message || err || 'Update failed.'),
+      lastCheckedAt: new Date().toISOString(),
+    });
+  });
+}
+
+async function checkForUpdates() {
+  if (!updatesSupported()) {
+    return setUpdaterStatus({
+      supported: false,
+      reason: 'In-app updates are currently available only in packaged Windows releases.',
+    });
+  }
+  initializeUpdater();
+  if (updaterCheckPromise) {
+    return updaterCheckPromise;
+  }
+
+  updaterCheckPromise = autoUpdater.checkForUpdates()
+    .then(() => updaterSnapshot())
+    .finally(() => {
+      updaterCheckPromise = null;
+    });
+  return updaterCheckPromise;
+}
+
+async function downloadUpdate() {
+  if (!updatesSupported()) {
+    return setUpdaterStatus({
+      supported: false,
+      reason: 'In-app updates are currently available only in packaged Windows releases.',
+    });
+  }
+  initializeUpdater();
+  if (updaterStatus.downloaded) {
+    return updaterSnapshot();
+  }
+  if (!updaterStatus.available) {
+    throw new Error('No update is ready to download yet. Check for updates first.');
+  }
+  if (updaterDownloadPromise) {
+    return updaterDownloadPromise;
+  }
+
+  setUpdaterStatus({
+    downloading: true,
+    error: '',
+    progressPercent: updaterStatus.progressPercent || 0,
+  });
+
+  updaterDownloadPromise = autoUpdater.downloadUpdate()
+    .then(() => updaterSnapshot())
+    .finally(() => {
+      updaterDownloadPromise = null;
+    });
+  return updaterDownloadPromise;
+}
+
+function installUpdate() {
+  if (!updatesSupported()) {
+    throw new Error('In-app updates are currently available only in packaged Windows releases.');
+  }
+  if (!updaterStatus.downloaded) {
+    throw new Error('No downloaded update is ready to install.');
+  }
+
+  setTimeout(() => {
+    autoUpdater.quitAndInstall(false, true);
+  }, 50);
 }
 
 function resolveOcrRuntimeEnv() {
@@ -409,6 +639,10 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    emitUpdaterStatus();
+  });
 }
 
 function setupIpcHandlers() {
@@ -578,10 +812,22 @@ function setupIpcHandlers() {
     const paths = stageDroppedFiles(files);
     return { paths };
   });
+
+  ipcMain.handle('updater:get-status', async () => updaterSnapshot());
+
+  ipcMain.handle('updater:check', async () => checkForUpdates());
+
+  ipcMain.handle('updater:download', async () => downloadUpdate());
+
+  ipcMain.handle('updater:install', async () => {
+    installUpdate();
+    return { ok: true };
+  });
 }
 
 app.whenReady().then(async () => {
   setupIpcHandlers();
+  initializeUpdater();
 
   try {
     await startBackend();
@@ -590,6 +836,14 @@ app.whenReady().then(async () => {
     dialog.showErrorBox('Backend Startup Failed', String(err?.message || err));
     app.quit();
     return;
+  }
+
+  if (updatesSupported()) {
+    setTimeout(() => {
+      void checkForUpdates().catch((err) => {
+        console.warn('[electron] updater check failed:', err.message);
+      });
+    }, 3000);
   }
 
   app.on('activate', () => {

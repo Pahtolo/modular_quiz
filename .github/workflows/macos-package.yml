@@ -43,9 +43,9 @@ jobs:
         working-directory: electron
         run: npm ci
 
-      - name: Build macOS DMG
+      - name: Build macOS release artifacts
         working-directory: electron
-        run: PYTHON_BIN=python3 npm run dist -- --mac dmg
+        run: PYTHON_BIN=python3 npm run dist -- --mac dmg zip
 
       - name: Upload macOS installer artifact
         uses: actions/upload-artifact@v4
@@ -54,6 +54,9 @@ jobs:
           path: |
             electron/dist/*.dmg
             electron/dist/*.dmg.blockmap
+            electron/dist/*.zip
+            electron/dist/*.zip.blockmap
+            electron/dist/latest-mac.yml
           if-no-files-found: error
 
       - name: Attach tag assets to GitHub release
@@ -63,3 +66,6 @@ jobs:
           files: |
             electron/dist/*.dmg
             electron/dist/*.dmg.blockmap
+            electron/dist/*.zip
+            electron/dist/*.zip.blockmap
+            electron/dist/latest-mac.yml
