@@ -91,7 +91,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- the 'Sort by' feature is only valid for 'Sessions' view, n
+- the 'Sort by' feature is only valid for 'Sessions' view, not 'Chart' view. Remove it from view when viewing charts.
 
 ### Completed Tasks
 
