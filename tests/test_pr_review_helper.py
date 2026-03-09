@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from scripts.pr_review_helper import DEFAULT_REVIEW_TRIGGER_MESSAGE
 from scripts.pr_review_helper import build_pr_status
 from scripts.pr_review_helper import build_pr_status_from_payloads
 from scripts.pr_review_helper import ordered_search_repo_slugs
 from scripts.pr_review_helper import parse_remote_slug
+from scripts.pr_review_helper import post_pr_comment
 
 
 class PRReviewHelperTests(unittest.TestCase):
@@ -183,6 +185,7 @@ class PRReviewHelperTests(unittest.TestCase):
         )
         self.assertTrue(status["has_open_pr"])
         self.assertEqual(status["pull_request"]["number"], 15)
+        self.assertEqual(status["pull_request"]["repository_slug"], "Pahtolo/modular_quiz")
 
     def test_build_pr_status_matches_repo_and_owner_case_insensitively(self) -> None:
         status = build_pr_status(
@@ -213,6 +216,35 @@ class PRReviewHelperTests(unittest.TestCase):
         )
         self.assertTrue(status["has_open_pr"])
         self.assertEqual(status["pull_request"]["number"], 15)
+
+    def test_post_pr_comment_targets_pr_repository_slug(self) -> None:
+        with (
+            patch("scripts.pr_review_helper.fetch_pr_status") as fetch_pr_status,
+            patch("scripts.pr_review_helper._gh_output") as gh_output,
+        ):
+            fetch_pr_status.return_value = {
+                "has_open_pr": True,
+                "pull_request": {
+                    "number": 15,
+                    "url": "https://github.com/Pahtolo/modular_quiz/pull/15",
+                    "repository_slug": "Pahtolo/modular_quiz",
+                },
+                "unresolved_threads": [],
+                "unresolved_count": 0,
+            }
+
+            post_pr_comment(message="recheck")
+
+        gh_output.assert_called_once_with(
+            "pr",
+            "comment",
+            "15",
+            "--repo",
+            "Pahtolo/modular_quiz",
+            "--body",
+            "recheck",
+            cwd=None,
+        )
 
 
 if __name__ == "__main__":

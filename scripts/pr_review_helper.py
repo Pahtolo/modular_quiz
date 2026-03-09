@@ -112,6 +112,7 @@ def build_pr_status_from_payloads(
             continue
         status = build_pr_status(payload, owner=owner, repo=repo)
         if status["has_open_pr"]:
+            status["pull_request"]["repository_slug"] = search_repo_slug
             return status
     return _empty_pr_status()
 
@@ -268,8 +269,13 @@ def post_pr_comment(
     status = fetch_pr_status(cwd, branch=branch)
     if not status["has_open_pr"]:
         raise SystemExit("No open pull request found for the current branch.")
-    pr_number = status["pull_request"]["number"]
-    _gh_output("pr", "comment", str(pr_number), "--body", message, cwd=cwd)
+    pr = status["pull_request"]
+    pr_number = pr["number"]
+    comment_args = ["pr", "comment", str(pr_number)]
+    if pr.get("repository_slug"):
+        comment_args.extend(["--repo", pr["repository_slug"]])
+    comment_args.extend(["--body", message])
+    _gh_output(*comment_args, cwd=cwd)
     return status
 
 
