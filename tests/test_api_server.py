@@ -1312,6 +1312,55 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(payload["code"], "VALIDATION_ERROR")
         self.assertIn("Field 'match.duration_seconds' must be a number.", payload["message"])
 
+    def test_history_update_rejects_malformed_record_numeric_fields(self) -> None:
+        base_record = {
+            "timestamp": "2026-03-04T11:30:00",
+            "quiz_path": str(self.root / "q.json"),
+            "quiz_title": "Q",
+            "score": 1,
+            "max_score": 4,
+            "percent": 25.0,
+            "duration_seconds": 30.0,
+            "model_key": "self:",
+            "quiz_clock_mode": "stopwatch",
+            "quiz_timer_duration_seconds": 0,
+            "questions": [
+                {
+                    "question_id": "q1",
+                    "question_type": "mcq",
+                    "user_answer": "A",
+                    "correct_answer_or_expected": "A",
+                    "points_awarded": 1,
+                    "max_points": 1,
+                    "feedback": "",
+                    "ungraded": False,
+                }
+            ],
+        }
+        self._post("/v1/history/append", base_record)
+
+        bad_record = dict(base_record)
+        bad_record["duration_seconds"] = "oops"
+        response = self.client.post(
+            "/v1/history/update",
+            headers=self.headers,
+            json={
+                "match": {
+                    "timestamp": base_record["timestamp"],
+                    "quiz_path": base_record["quiz_path"],
+                    "model_key": base_record["model_key"],
+                    "score": base_record["score"],
+                    "max_score": base_record["max_score"],
+                    "duration_seconds": base_record["duration_seconds"],
+                },
+                "record": bad_record,
+            },
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+        self.assertIn("Field 'duration_seconds' must be a number.", payload["message"])
+
     def test_collect_sources_and_generate_run(self) -> None:
         docs = self.root / "docs"
         docs.mkdir(parents=True, exist_ok=True)
