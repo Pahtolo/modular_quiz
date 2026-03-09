@@ -13,6 +13,8 @@ from quiz_app.settings_store import AppSettings
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRACKED_SETTINGS_PATH = REPO_ROOT / "settings" / "settings.json"
 TRACKED_HISTORY_PATH = REPO_ROOT / "settings" / "performance_history.json"
+SIDECAR_BUILD_SCRIPT = REPO_ROOT / "electron" / "scripts" / "build_sidecar.cjs"
+SIDECAR_BUILD_SHELL_SCRIPT = REPO_ROOT / "electron" / "scripts" / "build_sidecar.sh"
 SECRET_FIELDS = {
     "claude_api_key",
     "openai_api_key",
@@ -66,6 +68,14 @@ class RepoHygieneTests(unittest.TestCase):
     def test_tracked_performance_history_is_empty_template(self) -> None:
         payload = json.loads(TRACKED_HISTORY_PATH.read_text(encoding="utf-8"))
         self.assertEqual(payload, [])
+
+    def test_sidecar_build_scripts_bundle_template_quiz_json(self) -> None:
+        cjs_text = SIDECAR_BUILD_SCRIPT.read_text(encoding="utf-8")
+        sh_text = SIDECAR_BUILD_SHELL_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("template_quiz.json", cjs_text)
+        self.assertIn("--add-data", cjs_text)
+        self.assertIn("template_quiz.json", sh_text)
+        self.assertIn("--add-data", sh_text)
 
 
 if __name__ == "__main__":
