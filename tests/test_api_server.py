@@ -886,26 +886,28 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(short_self["result"]["points_awarded"], 1)
 
     def test_grade_short_rejects_non_integer_points(self) -> None:
-        response = self.client.post(
-            "/v1/grade/short",
-            headers=self.headers,
-            json={
-                "provider": "self",
-                "question": {
-                    "id": "q2",
-                    "prompt": "Say hi",
-                    "expected": "hi",
-                    "points": "abc",
-                },
-                "user_answer": "hello",
-                "self_score": 0,
-            },
-        )
+        for points in ("abc", 1.9):
+            with self.subTest(points=points):
+                response = self.client.post(
+                    "/v1/grade/short",
+                    headers=self.headers,
+                    json={
+                        "provider": "self",
+                        "question": {
+                            "id": "q2",
+                            "prompt": "Say hi",
+                            "expected": "hi",
+                            "points": points,
+                        },
+                        "user_answer": "hello",
+                        "self_score": 0,
+                    },
+                )
 
-        self.assertEqual(response.status_code, 422, response.text)
-        payload = response.json()["error"]
-        self.assertEqual(payload["code"], "VALIDATION_ERROR")
-        self.assertIn("positive integer", payload["message"])
+                self.assertEqual(response.status_code, 422, response.text)
+                payload = response.json()["error"]
+                self.assertEqual(payload["code"], "VALIDATION_ERROR")
+                self.assertIn("positive integer", payload["message"])
 
     def test_grade_short_rejects_non_positive_points(self) -> None:
         for points in (0, -3):
@@ -1088,26 +1090,28 @@ class APIServerTests(unittest.TestCase):
         provider.explain_short.assert_called_once()
 
     def test_explain_short_rejects_non_integer_points(self) -> None:
-        response = self.client.post(
-            "/v1/explain/short",
-            headers=self.headers,
-            json={
-                "provider": "openai",
-                "question": {
-                    "id": "q1",
-                    "type": "short",
-                    "prompt": "Define asymptotic notation.",
-                    "expected": "It describes algorithm growth rate.",
-                    "points": "abc",
-                },
-                "user_answer": "It means average runtime.",
-            },
-        )
+        for points in ("abc", 1.9):
+            with self.subTest(points=points):
+                response = self.client.post(
+                    "/v1/explain/short",
+                    headers=self.headers,
+                    json={
+                        "provider": "openai",
+                        "question": {
+                            "id": "q1",
+                            "type": "short",
+                            "prompt": "Define asymptotic notation.",
+                            "expected": "It describes algorithm growth rate.",
+                            "points": points,
+                        },
+                        "user_answer": "It means average runtime.",
+                    },
+                )
 
-        self.assertEqual(response.status_code, 422, response.text)
-        payload = response.json()["error"]
-        self.assertEqual(payload["code"], "VALIDATION_ERROR")
-        self.assertIn("positive integer", payload["message"])
+                self.assertEqual(response.status_code, 422, response.text)
+                payload = response.json()["error"]
+                self.assertEqual(payload["code"], "VALIDATION_ERROR")
+                self.assertIn("positive integer", payload["message"])
 
     def test_explain_short_rejects_non_positive_points(self) -> None:
         for points in (0, -3):

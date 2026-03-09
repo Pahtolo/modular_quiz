@@ -779,14 +779,30 @@ def _mcq_question_from_payload(payload: dict[str, Any]) -> MCQQuestion:
 def _short_question_points_from_payload(payload: dict[str, Any]) -> int:
     if "points" not in payload:
         return 2
-    try:
-        points = int(payload.get("points"))
-    except (TypeError, ValueError) as exc:
+    raw_points = payload.get("points")
+    if isinstance(raw_points, bool):
         raise APIError(
             status_code=422,
             code="VALIDATION_ERROR",
             message="Short-answer question points must be a positive integer.",
-        ) from exc
+        )
+    if isinstance(raw_points, float):
+        if not raw_points.is_integer():
+            raise APIError(
+                status_code=422,
+                code="VALIDATION_ERROR",
+                message="Short-answer question points must be a positive integer.",
+            )
+        points = int(raw_points)
+    else:
+        try:
+            points = int(raw_points)
+        except (TypeError, ValueError) as exc:
+            raise APIError(
+                status_code=422,
+                code="VALIDATION_ERROR",
+                message="Short-answer question points must be a positive integer.",
+            ) from exc
     if points <= 0:
         raise APIError(
             status_code=422,
