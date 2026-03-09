@@ -9,9 +9,11 @@ const outDir = path.join(electronDir, 'build', 'backend');
 const workDir = path.join(electronDir, 'build', 'pyinstaller-work');
 const specDir = path.join(electronDir, 'build', 'pyinstaller-spec');
 const entrypoint = path.join(rootDir, 'run_api.py');
+const templateQuizPath = path.join(rootDir, 'template_quiz.json');
 
 const platform = process.platform;
 const isWindows = platform === 'win32';
+const pyinstallerDataSeparator = isWindows ? ';' : ':';
 const pythonBin = process.env.PYTHON_BIN || (isWindows ? 'python' : 'python3');
 const requiredModules = [
   'fastapi',
@@ -68,6 +70,8 @@ const args = [
   workDir,
   '--specpath',
   specDir,
+  '--add-data',
+  `${templateQuizPath}${pyinstallerDataSeparator}.`,
   entrypoint,
 ];
 

@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -9,8 +10,14 @@ from quiz_app.providers import ProviderClient
 from .extractors import extract_all_materials
 from .types import GenerationRequest, GenerationResult
 
-_TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "template_quiz.json"
 _PROMPT_TEMPLATE_HEADER = "Generation template (JSON)"
+
+
+def _template_path() -> Path:
+    packaged_root = getattr(sys, "_MEIPASS", None)
+    if packaged_root:
+        return Path(packaged_root) / "template_quiz.json"
+    return Path(__file__).resolve().parents[2] / "template_quiz.json"
 
 
 def _validate_request(request: GenerationRequest) -> list[str]:
@@ -29,7 +36,7 @@ def _validate_request(request: GenerationRequest) -> list[str]:
 
 
 def _load_template_text() -> str:
-    return _TEMPLATE_PATH.read_text(encoding="utf-8").strip()
+    return _template_path().read_text(encoding="utf-8").strip()
 
 
 def _validate_template_text(template_text: str) -> list[str]:

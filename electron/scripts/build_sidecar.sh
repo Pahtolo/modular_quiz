@@ -21,6 +21,7 @@ pyinstaller \
   --distpath "$OUT_DIR" \
   --workpath "$ELECTRON_DIR/build/pyinstaller-work" \
   --specpath "$ELECTRON_DIR/build/pyinstaller-spec" \
+  --add-data "$ROOT_DIR/template_quiz.json:." \
   "$ROOT_DIR/run_api.py"
 
 echo "Built sidecar: $OUT_DIR/modular-quiz-api"
