@@ -37,7 +37,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Action Items
 
-- [ ] If a short answer is incorrect, or partially correct, automatically provide clarifying feedback.
+- _No pending action items._
 
 ### Completed Tasks
 
