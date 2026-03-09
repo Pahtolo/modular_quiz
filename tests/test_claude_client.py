@@ -8,6 +8,25 @@ from quiz_app.claude_client import ClaudeClient
 
 
 class ClaudeClientTests(unittest.TestCase):
+    def test_message_text_uses_trust_store_urlopen(self) -> None:
+        client = ClaudeClient(api_key="test-key")
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({"content": [{"type": "text", "text": "hello"}]}).encode("utf-8")
+
+        with patch("quiz_app.claude_client.urlopen_with_trust_store", return_value=_Response()) as mocked_open:
+            text = client._message_text(prompt="Prompt", system="System")
+
+        self.assertEqual(text, "hello")
+        mocked_open.assert_called_once()
+
     def test_generate_quiz_normalizes_blank_question_ids(self) -> None:
         client = ClaudeClient(api_key="test-key")
         generated_payload = {

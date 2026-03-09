@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable
 
+from .http_tls import urlopen_with_trust_store
+
 
 @dataclass(frozen=True)
 class OAuthConfig:
@@ -168,7 +170,7 @@ class OpenAIPKCEAuthenticator:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urlopen_with_trust_store(req, timeout=30) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
         except Exception as exc:  # broad to preserve response details for UI
             raise OAuthError(f"Token exchange failed: {exc}") from exc
@@ -248,7 +250,7 @@ def refresh_access_token(config: OAuthConfig, refresh_token: str) -> OAuthTokenS
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urlopen_with_trust_store(req, timeout=30) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         raise OAuthError(f"Token refresh failed: {exc}") from exc

@@ -8,6 +8,25 @@ from quiz_app.openai_client import OpenAIAuthState, OpenAIClient, OpenAIRequestE
 
 
 class OpenAIClientTests(unittest.TestCase):
+    def test_request_json_uses_trust_store_urlopen(self) -> None:
+        client = OpenAIClient(auth=OpenAIAuthState(api_key="test-key"))
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({"data": []}).encode("utf-8")
+
+        with patch("quiz_app.openai_client.urlopen_with_trust_store", return_value=_Response()) as mocked_open:
+            payload = client._request_json("GET", "/models")
+
+        self.assertEqual(payload, {"data": []})
+        mocked_open.assert_called_once()
+
     def test_generate_quiz_normalizes_blank_question_ids(self) -> None:
         client = OpenAIClient(auth=OpenAIAuthState(api_key="test-key"))
         generated_payload = {

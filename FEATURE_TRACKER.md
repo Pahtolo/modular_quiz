@@ -17,6 +17,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Packaged Claude and OpenAI HTTPS requests now use a bundled CA certificate store so frozen app releases do not fail with `CERTIFICATE_VERIFY_FAILED` on some machines.
 - [x] 2026-03-08 EDT resolved/revalidated `BUGS_FOUND.md` active bugs with regression coverage updates (including `/v1/history/update` malformed `record` numeric payloads) and shifted local API runtime defaults to userData-style settings paths to protect tracked repo templates.
 - [x] Ensure quiz generation injects `template_quiz.json` into the prompt.
 - [x] Add prompt validation checks before quiz generation is run.
