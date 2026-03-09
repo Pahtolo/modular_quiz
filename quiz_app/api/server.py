@@ -796,7 +796,7 @@ def create_app(
         project_root=(project_root or settings_path.parent.parent).resolve(),
     )
 
-    app = FastAPI(title="Modular Quiz API", version="0.1.0")
+    app = FastAPI(title="Modular Quiz API", version="0.2.0")
     app.state.api_state = state
 
     @app.exception_handler(APIError)
