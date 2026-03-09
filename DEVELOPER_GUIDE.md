@@ -66,3 +66,8 @@ Run API tests only:
 ```bash
 python3 -m unittest tests.test_api_server -v
 ```
+
+## PR Review Loop Helper
+- `python3 scripts/pr_review_helper.py status --json` inspects the open PR for the current branch and lists unresolved review threads.
+- `python3 scripts/pr_review_helper.py rereview` posts a rereview comment on the current branch PR after fixes are pushed.
+- The helper expects `gh` to be installed and authenticated for the current shell session.
