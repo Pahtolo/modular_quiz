@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.5 - 2026-03-12
+
+### Packaging hotfix
+- Fixed tagged macOS and Windows packaging workflows to provide `GH_TOKEN` during the `electron-builder` build step, so release installers can be generated and attached to GitHub releases successfully.
+
 ## v0.2.4 - 2026-03-12
 
 ### User-facing updates

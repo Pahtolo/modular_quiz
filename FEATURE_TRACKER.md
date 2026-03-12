@@ -270,3 +270,4 @@ Use this file as the single source of truth for feature work across features.
 - [x] Format preferred-model dropdown labels as human-readable model names (for example, `Claude 3 Haiku`).
 - [x] Model options should not be formatted "Claude: claude-3-haiku-20240307". Should instead be formated "Claude 3 Haiku"
 - [x] Preserve decimal version formatting in model labels (for example, `Claude Opus 4.6`, not `Claude Opus 4 6`).
+- [x] Pass `GH_TOKEN` into tagged macOS and Windows packaging builds so `electron-builder` can publish release installers instead of failing before artifact upload.
