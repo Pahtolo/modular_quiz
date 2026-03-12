@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import CodeMirror from '@uiw/react-codemirror';
+import { historyField } from '@codemirror/commands';
 import { cpp } from '@codemirror/lang-cpp';
 import { css } from '@codemirror/lang-css';
 import { html } from '@codemirror/lang-html';
@@ -28,6 +29,9 @@ const NOTEBOOK_EDITOR_BASIC_SETUP = {
   lineNumbers: true,
   highlightActiveLine: true,
   highlightActiveLineGutter: true,
+};
+const NOTEBOOK_EDITOR_STATE_FIELDS = {
+  history: historyField,
 };
 
 function codeLanguageExtension(language) {
@@ -69,6 +73,10 @@ export default function ShortAnswerNotebook({
 }) {
   const notebook = normalizeNotebookAnswer(value);
   const [isCodeFullscreen, setIsCodeFullscreen] = useState(false);
+  const codeEditorViewRef = useRef(null);
+  const codeEditorStateRef = useRef(null);
+  const codeEditorViewportRef = useRef({ left: 0, top: 0, shouldRestore: false });
+  const codeEditorFocusRef = useRef(false);
   const codeExtensions = useMemo(
     () => [
       ...codeLanguageExtension(notebook.language),
@@ -110,6 +118,39 @@ export default function ShortAnswerNotebook({
     });
   }
 
+  function captureCodeEditorState(view = codeEditorViewRef.current) {
+    if (!view) {
+      return;
+    }
+    codeEditorStateRef.current = view.state.toJSON(NOTEBOOK_EDITOR_STATE_FIELDS);
+    codeEditorViewportRef.current = {
+      left: view.scrollDOM.scrollLeft,
+      top: view.scrollDOM.scrollTop,
+      shouldRestore: true,
+    };
+    codeEditorFocusRef.current = view.hasFocus;
+  }
+
+  function restoreCodeEditorViewport(view) {
+    if (!codeEditorViewportRef.current.shouldRestore) {
+      return;
+    }
+    const { left, top } = codeEditorViewportRef.current;
+    requestAnimationFrame(() => {
+      view.scrollDOM.scrollLeft = left;
+      view.scrollDOM.scrollTop = top;
+      if (codeEditorFocusRef.current && !disabled) {
+        view.focus();
+      }
+      codeEditorViewportRef.current.shouldRestore = false;
+    });
+  }
+
+  function setCodeFullscreen(nextValue) {
+    captureCodeEditorState();
+    setIsCodeFullscreen(nextValue);
+  }
+
   function renderLanguagePicker() {
     return (
       <label className="short-answer-notebook-language">
@@ -135,7 +176,18 @@ export default function ShortAnswerNotebook({
         editable={!disabled}
         basicSetup={NOTEBOOK_EDITOR_BASIC_SETUP}
         extensions={codeExtensions}
+        initialState={codeEditorStateRef.current
+          ? {
+            json: codeEditorStateRef.current,
+            fields: NOTEBOOK_EDITOR_STATE_FIELDS,
+          }
+          : undefined}
         onChange={(nextValue) => updateNotebook({ text: nextValue })}
+        onCreateEditor={(view) => {
+          codeEditorViewRef.current = view;
+          restoreCodeEditorViewport(view);
+        }}
+        onUpdate={(viewUpdate) => captureCodeEditorState(viewUpdate.view)}
         placeholder="Write your answer as code"
       />
     );
@@ -171,7 +223,7 @@ export default function ShortAnswerNotebook({
             <button
               type="button"
               className={`secondary short-answer-notebook-fullscreen-toggle ${isCodeFullscreen ? 'active' : ''}`}
-              onClick={() => setIsCodeFullscreen((current) => !current)}
+              onClick={() => setCodeFullscreen(!isCodeFullscreen)}
             >
               {isCodeFullscreen ? 'Exit Full Screen' : 'Full Screen'}
             </button>
@@ -229,7 +281,7 @@ export default function ShortAnswerNotebook({
                   <button
                     type="button"
                     className="secondary short-answer-notebook-fullscreen-toggle active"
-                    onClick={() => setIsCodeFullscreen(false)}
+                    onClick={() => setCodeFullscreen(false)}
                   >
                     Exit Full Screen
                   </button>
