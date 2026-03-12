@@ -1069,6 +1069,38 @@ class APIServerTests(unittest.TestCase):
         self.assertIn("text", response)
         provider.feedback_chat.assert_called_once()
 
+    def test_feedback_chat_preserves_indented_answer_whitespace(self) -> None:
+        provider = MagicMock()
+        provider.feedback_chat.return_value = "Compare your code to the expected example."
+        user_answer = "    print('hello')\n    return total"
+        expected_answer = "    print('expected')\n    return total"
+        with patch("quiz_app.api.server._provider_client", return_value=provider):
+            response = self._post(
+                "/v1/feedback/chat",
+                {
+                    "provider": "openai",
+                    "model": "gpt-5-mini",
+                    "user_message": "Why is this wrong?",
+                    "feedback": "You are incorrect.",
+                    "question": {
+                        "id": "q1",
+                        "type": "short",
+                        "prompt": "Write the function.",
+                        "options": [],
+                    },
+                    "user_answer": user_answer,
+                    "expected_answer": expected_answer,
+                    "chat_history": [
+                        {"role": "assistant", "text": "You are incorrect."},
+                    ],
+                },
+            )
+
+        self.assertIn("text", response)
+        provider.feedback_chat.assert_called_once()
+        self.assertEqual(provider.feedback_chat.call_args.kwargs["user_answer"], user_answer)
+        self.assertEqual(provider.feedback_chat.call_args.kwargs["expected_answer"], expected_answer)
+
     def test_explain_short_endpoint(self) -> None:
         provider = MagicMock()
         provider.explain_short.return_value = "You are close, but your answer missed the growth-rate detail."
@@ -1254,6 +1286,46 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(records[0]["quiz_timer_duration_seconds"], 1200)
         self.assertEqual(records[0]["questions"][0]["points_awarded"], 2)
         self.assertFalse(records[0]["questions"][0]["ungraded"])
+
+    def test_history_append_preserves_indented_short_answer_markdown(self) -> None:
+        indented_answer = "    print('hello')\n    return total"
+        indented_expected = "    print('expected')"
+        append_resp = self._post(
+            "/v1/history/append",
+            {
+                "timestamp": "2026-03-04T11:30:00",
+                "quiz_path": str(self.root / "q.json"),
+                "quiz_title": "Q",
+                "score": 0,
+                "max_score": 2,
+                "percent": 0.0,
+                "duration_seconds": 8.0,
+                "model_key": "openai:gpt-5-mini",
+                "quiz_clock_mode": "stopwatch",
+                "quiz_timer_duration_seconds": 0,
+                "questions": [
+                    {
+                        "question_id": "q-code",
+                        "question_type": "short",
+                        "user_answer": indented_answer,
+                        "correct_answer_or_expected": indented_expected,
+                        "points_awarded": 0,
+                        "max_points": 2,
+                        "feedback": "Needs work.",
+                        "ungraded": False,
+                    }
+                ],
+            },
+        )
+        self.assertTrue(append_resp["ok"])
+
+        history = self.client.get("/v1/history", headers=self.headers)
+        self.assertEqual(history.status_code, 200)
+        records = history.json()["records"]
+        self.assertEqual(len(records), 1)
+        question = records[0]["questions"][0]
+        self.assertEqual(question["user_answer"], indented_answer)
+        self.assertEqual(question["correct_answer_or_expected"], indented_expected)
 
     def test_history_append_rejects_malformed_numeric_fields(self) -> None:
         response = self.client.post(

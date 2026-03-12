@@ -57,6 +57,14 @@
   --banner-success-bg: #e9f8ee;
   --banner-success-border: #abd8b8;
   --input-bg: #ffffff;
+  --code-surface: #f7f2e8;
+  --code-border: #d6c8b3;
+  --code-keyword: #0b5cad;
+  --code-string: #9a3412;
+  --code-comment: #6b7280;
+  --code-function: #0f766e;
+  --code-number: #b45309;
+  --code-type: #14597f;
 }
 
 :root[data-theme='dark'] {
@@ -118,6 +126,14 @@
   --banner-success-bg: #1f3e2e;
   --banner-success-border: #458060;
   --input-bg: #111d2f;
+  --code-surface: #162235;
+  --code-border: #314762;
+  --code-keyword: #7ecbff;
+  --code-string: #ffbe7a;
+  --code-comment: #93a4bc;
+  --code-function: #7de2cf;
+  --code-number: #f6c96c;
+  --code-type: #9bd6ff;
 }
 
 * {
@@ -162,6 +178,10 @@ button.primary {
   background: var(--primary-gradient);
   border-color: var(--primary-border);
   color: #f8fbff;
+}
+
+button.secondary {
+  background: var(--surface-2);
 }
 
 button:disabled {
@@ -788,6 +808,115 @@ textarea {
   gap: 0.55rem;
 }
 
+.short-answer-notebook {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.short-answer-notebook-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.short-answer-notebook-mode-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.short-answer-notebook-mode-group button,
+.short-answer-notebook-preview-toggle {
+  padding: 0.38rem 0.72rem;
+}
+
+.short-answer-notebook-mode-group button.active,
+.short-answer-notebook-preview-toggle.active {
+  background: var(--primary-gradient);
+  border-color: var(--primary-border);
+  color: #f8fbff;
+}
+
+.short-answer-notebook-language {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+.short-answer-notebook-surface {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--input-bg);
+  overflow: hidden;
+}
+
+.short-answer-notebook-textarea {
+  min-height: 220px;
+  border: 0;
+  border-radius: 0;
+  resize: vertical;
+}
+
+.short-answer-notebook-textarea:focus {
+  outline: none;
+}
+
+.short-answer-notebook-preview {
+  min-height: 220px;
+  padding: 0.85rem 0.95rem;
+  overflow: auto;
+}
+
+.short-answer-notebook-preview-empty {
+  display: flex;
+  align-items: center;
+  color: var(--ink-soft);
+}
+
+.short-answer-notebook .cm-editor {
+  border: 0;
+  font-size: 0.95rem;
+}
+
+.short-answer-notebook .cm-editor,
+.short-answer-notebook .cm-gutters {
+  background: var(--code-surface);
+}
+
+.short-answer-notebook .cm-editor.cm-focused {
+  outline: none;
+}
+
+.short-answer-notebook .cm-gutters {
+  border-right: 1px solid var(--code-border);
+  color: var(--ink-soft);
+}
+
+.short-answer-notebook .cm-content,
+.short-answer-notebook .cm-scroller {
+  min-height: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.short-answer-notebook .cm-activeLine,
+.short-answer-notebook .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.short-answer-notebook .cm-tooltip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
 .result {
   border-radius: 12px;
   padding: 0.55rem 0.7rem;
@@ -985,6 +1114,47 @@ textarea {
 .markdown-math-content code {
   font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.92em;
+}
+
+.markdown-math-content .hljs {
+  color: var(--ink);
+  background: transparent;
+}
+
+.markdown-math-content .hljs-comment,
+.markdown-math-content .hljs-quote {
+  color: var(--code-comment);
+}
+
+.markdown-math-content .hljs-keyword,
+.markdown-math-content .hljs-selector-tag,
+.markdown-math-content .hljs-literal {
+  color: var(--code-keyword);
+}
+
+.markdown-math-content .hljs-string,
+.markdown-math-content .hljs-regexp,
+.markdown-math-content .hljs-meta-string {
+  color: var(--code-string);
+}
+
+.markdown-math-content .hljs-number,
+.markdown-math-content .hljs-symbol,
+.markdown-math-content .hljs-bullet {
+  color: var(--code-number);
+}
+
+.markdown-math-content .hljs-title,
+.markdown-math-content .hljs-title.function_,
+.markdown-math-content .hljs-function {
+  color: var(--code-function);
+}
+
+.markdown-math-content .hljs-type,
+.markdown-math-content .hljs-class .hljs-title,
+.markdown-math-content .hljs-attr,
+.markdown-math-content .hljs-property {
+  color: var(--code-type);
 }
 
 .markdown-math-content :not(pre) > code {

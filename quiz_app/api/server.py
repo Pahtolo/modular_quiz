@@ -382,8 +382,8 @@ def _attempt_from_payload(payload: dict[str, Any]) -> AttemptRecord:
             QuestionAttemptRecord(
                 question_id=str(item.get("question_id", "")).strip(),
                 question_type=str(item.get("question_type", "")).strip(),
-                user_answer=str(item.get("user_answer", "")).strip(),
-                correct_answer_or_expected=str(item.get("correct_answer_or_expected", "")).strip(),
+                user_answer=str(item.get("user_answer", "")),
+                correct_answer_or_expected=str(item.get("correct_answer_or_expected", "")),
                 points_awarded=_coerce_int(item.get("points_awarded"), "questions[].points_awarded", default=0),
                 max_points=_coerce_int(item.get("max_points"), "questions[].max_points", default=0),
                 feedback=str(item.get("feedback", "")).strip(),
@@ -1407,8 +1407,8 @@ def create_app(
         options_raw = question_raw.get("options")
         options = [str(item) for item in options_raw] if isinstance(options_raw, list) else []
 
-        user_answer = str(payload.get("user_answer", question_raw.get("user_answer", ""))).strip()
-        expected_answer = str(payload.get("expected_answer", question_raw.get("expected", ""))).strip()
+        user_answer = str(payload.get("user_answer", question_raw.get("user_answer", "")))
+        expected_answer = str(payload.get("expected_answer", question_raw.get("expected", "")))
 
         history_raw = payload.get("chat_history")
         history_entries: list[dict[str, str]] = []
