@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.4 - 2026-03-12
+
+### User-facing updates
+- Added a full-screen mode for the notebook short-answer code editor so longer code responses can be edited without the quiz layout constraints.
+- Preserved cursor position, selection, undo history, scroll position, and focus when entering or leaving the full-screen code editor.
+
+### Editor polish and fixes
+- Fixed full-screen notebook state restoration so cached CodeMirror document state does not leak into other short-answer questions.
+- Fixed full-screen notebook rendering so all lines render with the correct CodeMirror foreground and background styling, not just the active line.
+
 ## v0.2.3 - 2026-03-12
 
 ### User-facing updates
