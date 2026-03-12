@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.3 - 2026-03-12
+
+### User-facing updates
+- Added a notebook-style short-answer editor with Markdown and Code modes, Markdown preview, and VS Code-style syntax coloring.
+- Improved short-answer review and history rendering so notebook-authored code answers display as highlighted markdown code blocks.
+
+### Packaging and release fixes
+- Fixed packaged quiz generation to resolve `template_quiz.json` from the PyInstaller runtime bundle and ensured the sidecar build always includes that file.
+- Preserved notebook answer formatting through history storage and follow-up feedback requests, including indented code blocks and embedded backtick fences.
+
 ## v0.2.2 - 2026-03-09
 
 ### Hotfix
