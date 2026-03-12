@@ -57,14 +57,21 @@
   --banner-success-bg: #e9f8ee;
   --banner-success-border: #abd8b8;
   --input-bg: #ffffff;
-  --code-surface: #f7f2e8;
-  --code-border: #d6c8b3;
-  --code-keyword: #0b5cad;
-  --code-string: #9a3412;
-  --code-comment: #6b7280;
-  --code-function: #0f766e;
-  --code-number: #b45309;
-  --code-type: #14597f;
+  --code-surface: #ffffff;
+  --code-gutter-bg: #f3f3f3;
+  --code-border: #dddddd;
+  --code-ink: #1e1e1e;
+  --code-keyword: #0000ff;
+  --code-string: #a31515;
+  --code-comment: #008000;
+  --code-function: #795e26;
+  --code-number: #098658;
+  --code-type: #267f99;
+  --code-variable: #001080;
+  --code-attribute: #e50000;
+  --code-constant: #0070c1;
+  --code-selection: #add6ff;
+  --code-active-line: #f5f5f5;
 }
 
 :root[data-theme='dark'] {
@@ -126,14 +133,21 @@
   --banner-success-bg: #1f3e2e;
   --banner-success-border: #458060;
   --input-bg: #111d2f;
-  --code-surface: #162235;
-  --code-border: #314762;
-  --code-keyword: #7ecbff;
-  --code-string: #ffbe7a;
-  --code-comment: #93a4bc;
-  --code-function: #7de2cf;
-  --code-number: #f6c96c;
-  --code-type: #9bd6ff;
+  --code-surface: #1e1e1e;
+  --code-gutter-bg: #252526;
+  --code-border: #2d2d2d;
+  --code-ink: #d4d4d4;
+  --code-keyword: #569cd6;
+  --code-string: #ce9178;
+  --code-comment: #6a9955;
+  --code-function: #dcdcaa;
+  --code-number: #b5cea8;
+  --code-type: #4ec9b0;
+  --code-variable: #9cdcfe;
+  --code-attribute: #92c5f8;
+  --code-constant: #4fc1ff;
+  --code-selection: #264f78;
+  --code-active-line: #2a2d2e;
 }
 
 * {
@@ -897,6 +911,7 @@ textarea {
 }
 
 .short-answer-notebook .cm-gutters {
+  background: var(--code-gutter-bg);
   border-right: 1px solid var(--code-border);
   color: var(--ink-soft);
 }
@@ -909,7 +924,7 @@ textarea {
 
 .short-answer-notebook .cm-activeLine,
 .short-answer-notebook .cm-activeLineGutter {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--code-active-line);
 }
 
 .short-answer-notebook .cm-tooltip {
@@ -1117,8 +1132,8 @@ textarea {
 }
 
 .markdown-math-content .hljs {
-  color: var(--ink);
-  background: transparent;
+  color: var(--code-ink);
+  background: var(--code-surface);
 }
 
 .markdown-math-content .hljs-comment,
@@ -1155,6 +1170,25 @@ textarea {
 .markdown-math-content .hljs-attr,
 .markdown-math-content .hljs-property {
   color: var(--code-type);
+}
+
+.markdown-math-content .hljs-variable,
+.markdown-math-content .hljs-params,
+.markdown-math-content .hljs-template-variable {
+  color: var(--code-variable);
+}
+
+.markdown-math-content .hljs-attribute,
+.markdown-math-content .hljs-selector-attr,
+.markdown-math-content .hljs-selector-pseudo {
+  color: var(--code-attribute);
+}
+
+.markdown-math-content .hljs-built_in,
+.markdown-math-content .hljs-literal,
+.markdown-math-content .hljs-variable.constant_,
+.markdown-math-content .hljs-title.class_ {
+  color: var(--code-constant);
 }
 
 .markdown-math-content :not(pre) > code {

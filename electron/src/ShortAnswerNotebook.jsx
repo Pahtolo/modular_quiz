@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import CodeMirror, { oneDark } from '@uiw/react-codemirror';
+import CodeMirror from '@uiw/react-codemirror';
 import { cpp } from '@codemirror/lang-cpp';
 import { css } from '@codemirror/lang-css';
 import { html } from '@codemirror/lang-html';
@@ -20,6 +20,7 @@ import {
   NOTEBOOK_MODE_MARKDOWN,
   normalizeNotebookAnswer,
 } from './notebookAnswer';
+import { vscodeCodeThemeExtension } from './vscodeCodeTheme';
 
 const NOTEBOOK_EDITOR_BASIC_SETUP = {
   foldGutter: false,
@@ -67,8 +68,11 @@ export default function ShortAnswerNotebook({
 }) {
   const notebook = normalizeNotebookAnswer(value);
   const codeExtensions = useMemo(
-    () => codeLanguageExtension(notebook.language),
-    [notebook.language],
+    () => [
+      ...codeLanguageExtension(notebook.language),
+      ...vscodeCodeThemeExtension(themeMode),
+    ],
+    [notebook.language, themeMode],
   );
 
   function updateNotebook(nextPatch) {
@@ -132,7 +136,6 @@ export default function ShortAnswerNotebook({
           <CodeMirror
             value={notebook.text}
             height="220px"
-            theme={themeMode === 'dark' ? oneDark : undefined}
             editable={!disabled}
             basicSetup={NOTEBOOK_EDITOR_BASIC_SETUP}
             extensions={codeExtensions}

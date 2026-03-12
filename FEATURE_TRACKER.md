@@ -104,6 +104,7 @@ Use this file as the single source of truth for feature work across features.
 - [x] Replace the short-answer textarea with a notebook-style Markdown/Code editor with markdown preview, syntax-highlighted code mode, and fenced-code serialization for grading/history compatibility.
 - [x] Preserve leading indentation in stored short-answer answers and expected text so markdown code blocks survive history append/load round trips.
 - [x] Preserve notebook answer formatting in follow-up feedback payloads and use longer code fences when code answers contain embedded triple backticks.
+- [x] Align notebook code editor and rendered code-block syntax colors with VS Code-style Light+/Dark+ token coloring.
 - [x] Add 'Explain' button for short answer questions.
 - [x] Detect and render code for short answer responses.
 - [x] Add quiz clock metrics to performance history
