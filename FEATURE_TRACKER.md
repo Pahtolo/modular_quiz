@@ -106,6 +106,12 @@ Use this file as the single source of truth for feature work across features.
 - [x] Preserve notebook answer formatting in follow-up feedback payloads and use longer code fences when code answers contain embedded triple backticks.
 - [x] Align notebook code editor and rendered code-block syntax colors with VS Code-style Light+/Dark+ token coloring.
 - [x] Declare `@lezer/highlight` directly in the Electron renderer package so the VS Code notebook theme does not depend on a transitive install.
+- [x] Add a full-screen toggle for the short-answer code editor so longer notebook answers can be edited without the quiz layout constraints.
+- [x] Preserve the short-answer code editor cursor, selection, scroll position, and undo history when toggling full-screen mode.
+- [x] Limit full-screen editor state restoration to the current answer so cached CodeMirror state cannot leak into other short-answer questions.
+- [x] Only arm short-answer full-screen state restoration during full-screen transitions, not on normal editor updates or question changes.
+- [x] Keep short-answer full-screen viewport and focus restoration scoped to full-screen transitions so new answers do not inherit stale scroll/focus state.
+- [x] Apply the notebook CodeMirror foreground/background styling directly inside the portaled full-screen editor so non-active lines render correctly in full-screen mode.
 - [x] Add 'Explain' button for short answer questions.
 - [x] Detect and render code for short answer responses.
 - [x] Add quiz clock metrics to performance history
