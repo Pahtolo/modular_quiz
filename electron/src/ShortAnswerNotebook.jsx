@@ -124,7 +124,6 @@ export default function ShortAnswerNotebook({
       return;
     }
     codeEditorStateRef.current = view.state.toJSON(NOTEBOOK_EDITOR_STATE_FIELDS);
-    shouldRestoreCodeEditorStateRef.current = true;
     codeEditorViewportRef.current = {
       left: view.scrollDOM.scrollLeft,
       top: view.scrollDOM.scrollTop,
@@ -151,6 +150,7 @@ export default function ShortAnswerNotebook({
 
   function setCodeFullscreen(nextValue) {
     captureCodeEditorState();
+    shouldRestoreCodeEditorStateRef.current = true;
     setIsCodeFullscreen(nextValue);
   }
 
