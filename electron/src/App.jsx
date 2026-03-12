@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
 import renderMathInElement from 'katex/contrib/auto-render';
-import remarkGfm from 'remark-gfm';
 import {
   apiRequest,
   backendInfo,
@@ -17,6 +15,13 @@ import {
   stageDroppedFiles,
   subscribeToUpdaterStatus,
 } from './api';
+import MarkdownMathText from './MarkdownMathText';
+import ShortAnswerNotebook from './ShortAnswerNotebook';
+import {
+  createEmptyNotebookAnswer,
+  hydrateNotebookAnswer,
+  serializeNotebookAnswer,
+} from './notebookAnswer';
 
 const TABS = ['quiz', 'generate', 'manager', 'settings'];
 const THEME_STORAGE_KEY = 'modular-quiz-theme';
@@ -51,73 +56,10 @@ function MathText({ as = 'span', className, text }) {
   return <Element ref={ref} className={className}>{text || ''}</Element>;
 }
 
-function MarkdownMathText({ className, text }) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!ref.current) {
-      return;
-    }
-    renderMathInElement(ref.current, {
-      delimiters: KATEX_DELIMITERS,
-      throwOnError: false,
-      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option'],
-    });
-  }, [text]);
-
-  return (
-    <div ref={ref} className={className}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ node, href, children, ...props }) => {
-            void node;
-            const targetHref = String(href || '').trim();
-            if (!targetHref) {
-              return <span>{children}</span>;
-            }
-            return (
-              <a
-                {...props}
-                href={targetHref}
-                onClick={(event) => {
-                  event.preventDefault();
-                  void openExternal(targetHref);
-                }}
-              >
-                {children}
-              </a>
-            );
-          },
-        }}
-      >
-        {String(text || '')}
-      </ReactMarkdown>
-    </div>
-  );
-}
-
-function looksLikeCodeSnippet(text) {
-  const value = String(text || '');
-  if (!value.trim()) {
-    return false;
-  }
-  if (value.includes('```')) {
-    return true;
-  }
-  if (/`[^`\n]+`/.test(value)) {
-    return true;
-  }
-  if (/^( {4,}|\t).+/m.test(value)) {
-    return true;
-  }
-  return /[{};<>]/.test(value) && /\w+\s*[:=()]/.test(value);
-}
-
 function QuestionAnswerText({ questionType, text }) {
   const type = String(questionType || '').trim().toLowerCase();
   const value = String(text || '');
-  if (type === 'short' && looksLikeCodeSnippet(value)) {
+  if (type === 'short') {
     return <MarkdownMathText className="math-text markdown-math-content performance-answer-text" text={value} />;
   }
   return <MathText as="span" className="math-text" text={value} />;
@@ -1391,7 +1333,8 @@ function App() {
   const [questionResult, setQuestionResult] = useState(null);
   const [questionLocked, setQuestionLocked] = useState(false);
   const [mcqAnswer, setMcqAnswer] = useState('');
-  const [shortAnswer, setShortAnswer] = useState('');
+  const [shortAnswerNotebook, setShortAnswerNotebook] = useState(() => createEmptyNotebookAnswer());
+  const [shortAnswerMarkdownPreview, setShortAnswerMarkdownPreview] = useState(false);
   const [feedbackThreadsByQuestion, setFeedbackThreadsByQuestion] = useState({});
   const [feedbackDraftsByQuestion, setFeedbackDraftsByQuestion] = useState({});
   const [feedbackPendingByQuestion, setFeedbackPendingByQuestion] = useState({});
@@ -1548,6 +1491,7 @@ function App() {
     [currentQuestion, quizIndex],
   );
   const currentQuestionState = currentQuestion ? questionStates[quizIndex] : null;
+  const serializedShortAnswer = serializeNotebookAnswer(shortAnswerNotebook);
 
   const currentFeedbackThread = useMemo(() => {
     if (!currentFeedbackQuestionKey) {
@@ -2492,13 +2436,15 @@ function App() {
       setQuestionResult(state.result || null);
       setQuestionLocked(true);
       setMcqAnswer(state.mcq_answer || '');
-      setShortAnswer(state.short_answer || '');
+      setShortAnswerNotebook(hydrateNotebookAnswer(state.short_answer || ''));
+      setShortAnswerMarkdownPreview(false);
       return;
     }
     setQuestionResult(null);
     setQuestionLocked(false);
     setMcqAnswer('');
-    setShortAnswer('');
+    setShortAnswerNotebook(createEmptyNotebookAnswer());
+    setShortAnswerMarkdownPreview(false);
   }, [quiz, quizIndex, questionStates]);
 
   useEffect(() => {
@@ -2510,8 +2456,8 @@ function App() {
   }, [mcqAnswer]);
 
   useEffect(() => {
-    shortAnswerRef.current = shortAnswer;
-  }, [shortAnswer]);
+    shortAnswerRef.current = serializedShortAnswer;
+  }, [serializedShortAnswer]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -2792,7 +2738,7 @@ function App() {
     quizIndex,
     questionLocked,
     mcqAnswer,
-    shortAnswer,
+    serializedShortAnswer,
   ]);
 
   async function boot() {
@@ -3043,7 +2989,8 @@ function App() {
     setQuestionResult(null);
     setQuestionLocked(false);
     setMcqAnswer('');
-    setShortAnswer('');
+    setShortAnswerNotebook(createEmptyNotebookAnswer());
+    setShortAnswerMarkdownPreview(false);
     setFeedbackThreadsByQuestion({});
     setFeedbackDraftsByQuestion({});
     setFeedbackPendingByQuestion({});
@@ -3811,7 +3758,8 @@ function App() {
       setQuestionResult(null);
       setQuestionLocked(false);
       setMcqAnswer('');
-      setShortAnswer('');
+      setShortAnswerNotebook(createEmptyNotebookAnswer());
+      setShortAnswerMarkdownPreview(false);
       setFeedbackThreadsByQuestion({});
       setFeedbackDraftsByQuestion({});
       setFeedbackPendingByQuestion({});
@@ -4025,7 +3973,7 @@ function App() {
       provider: selected.provider,
       model: selected.model,
       question: currentQuestion,
-      user_answer: shortAnswer,
+      user_answer: serializedShortAnswer,
     };
     const trimmedContext = String(injectedContextText || '').trim();
     if (trimmedContext) {
@@ -4041,7 +3989,7 @@ function App() {
           feedback: 'No model selected. Response recorded as ungraded.',
           ungraded: true,
         },
-        shortAnswer,
+        serializedShortAnswer,
         currentQuestion.expected || '',
       );
       return;
@@ -4049,7 +3997,7 @@ function App() {
 
     try {
       const response = await apiRequest('/v1/grade/short', 'POST', body);
-      lockQuestionAfterResult(response.result, shortAnswer, currentQuestion.expected || '');
+      lockQuestionAfterResult(response.result, serializedShortAnswer, currentQuestion.expected || '');
     } catch (err) {
       setQuizLoadError(err.message);
     }
@@ -4108,7 +4056,7 @@ function App() {
       return;
     }
 
-    const userAnswer = String(questionStatesRef.current?.[quizIndex]?.short_answer || shortAnswer || '');
+    const userAnswer = String(questionStatesRef.current?.[quizIndex]?.short_answer || serializedShortAnswer || '');
 
     setQuizLoadError('');
     setQuizSelectorPanelTab('feedback');
@@ -4265,7 +4213,7 @@ function App() {
     const questionType = String(currentQuestion?.type || '');
     const questionState = questionStates[quizIndex];
     const userAnswer = questionType === 'short'
-      ? String(questionState?.short_answer || shortAnswer || '')
+      ? String(questionState?.short_answer || serializedShortAnswer || '')
       : String(questionState?.mcq_answer || mcqAnswer || '');
     const expectedAnswer = questionType === 'short'
       ? String(currentQuestion?.expected || '')
@@ -5483,11 +5431,13 @@ function App() {
                       </div>
                     ) : (
                       <div className="short-block">
-                        <textarea
-                          value={shortAnswer}
-                          onChange={(event) => setShortAnswer(event.target.value)}
+                        <ShortAnswerNotebook
+                          value={shortAnswerNotebook}
+                          onChange={setShortAnswerNotebook}
                           disabled={questionLocked || quizIsPaused}
-                          placeholder="Write your answer"
+                          previewEnabled={shortAnswerMarkdownPreview}
+                          onPreviewToggle={setShortAnswerMarkdownPreview}
+                          themeMode={themeMode}
                         />
 
                         {selectedProviderModel.provider === 'self' ? (

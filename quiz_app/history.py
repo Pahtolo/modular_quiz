@@ -64,8 +64,8 @@ def _question_from_mapping(raw: dict[str, Any]) -> QuestionAttemptRecord:
     return QuestionAttemptRecord(
         question_id=str(raw.get("question_id", "")).strip(),
         question_type=str(raw.get("question_type", "")).strip(),
-        user_answer=str(raw.get("user_answer", "")).strip(),
-        correct_answer_or_expected=str(raw.get("correct_answer_or_expected", "")).strip(),
+        user_answer=str(raw.get("user_answer", "")),
+        correct_answer_or_expected=str(raw.get("correct_answer_or_expected", "")),
         points_awarded=int(raw.get("points_awarded", 0) or 0),
         max_points=int(raw.get("max_points", 0) or 0),
         feedback=str(raw.get("feedback", "")).strip(),

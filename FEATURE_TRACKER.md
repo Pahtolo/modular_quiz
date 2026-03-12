@@ -101,6 +101,8 @@ Use this file as the single source of truth for feature work across features.
 ### Completed Tasks
 
 - [x] Restrict Performance History `Sort by` control to `Sessions` view and hide it in `Chart` view.
+- [x] Replace the short-answer textarea with a notebook-style Markdown/Code editor with markdown preview, syntax-highlighted code mode, and fenced-code serialization for grading/history compatibility.
+- [x] Preserve leading indentation in stored short-answer answers and expected text so markdown code blocks survive history append/load round trips.
 - [x] Add 'Explain' button for short answer questions.
 - [x] Detect and render code for short answer responses.
 - [x] Add quiz clock metrics to performance history
