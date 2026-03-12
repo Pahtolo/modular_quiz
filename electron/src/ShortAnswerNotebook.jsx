@@ -75,6 +75,7 @@ export default function ShortAnswerNotebook({
   const [isCodeFullscreen, setIsCodeFullscreen] = useState(false);
   const codeEditorViewRef = useRef(null);
   const codeEditorStateRef = useRef(null);
+  const shouldRestoreCodeEditorStateRef = useRef(false);
   const codeEditorViewportRef = useRef({ left: 0, top: 0, shouldRestore: false });
   const codeEditorFocusRef = useRef(false);
   const codeExtensions = useMemo(
@@ -99,7 +100,7 @@ export default function ShortAnswerNotebook({
 
     function onKeyDown(event) {
       if (event.key === 'Escape') {
-        setIsCodeFullscreen(false);
+        setCodeFullscreen(false);
       }
     }
 
@@ -123,6 +124,7 @@ export default function ShortAnswerNotebook({
       return;
     }
     codeEditorStateRef.current = view.state.toJSON(NOTEBOOK_EDITOR_STATE_FIELDS);
+    shouldRestoreCodeEditorStateRef.current = true;
     codeEditorViewportRef.current = {
       left: view.scrollDOM.scrollLeft,
       top: view.scrollDOM.scrollTop,
@@ -143,6 +145,7 @@ export default function ShortAnswerNotebook({
         view.focus();
       }
       codeEditorViewportRef.current.shouldRestore = false;
+      shouldRestoreCodeEditorStateRef.current = false;
     });
   }
 
@@ -176,7 +179,7 @@ export default function ShortAnswerNotebook({
         editable={!disabled}
         basicSetup={NOTEBOOK_EDITOR_BASIC_SETUP}
         extensions={codeExtensions}
-        initialState={codeEditorStateRef.current
+        initialState={shouldRestoreCodeEditorStateRef.current && codeEditorStateRef.current
           ? {
             json: codeEditorStateRef.current,
             fields: NOTEBOOK_EDITOR_STATE_FIELDS,
@@ -186,6 +189,9 @@ export default function ShortAnswerNotebook({
         onCreateEditor={(view) => {
           codeEditorViewRef.current = view;
           restoreCodeEditorViewport(view);
+          if (!codeEditorViewportRef.current.shouldRestore) {
+            shouldRestoreCodeEditorStateRef.current = false;
+          }
         }}
         onUpdate={(viewUpdate) => captureCodeEditorState(viewUpdate.view)}
         placeholder="Write your answer as code"

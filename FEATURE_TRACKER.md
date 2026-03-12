@@ -108,6 +108,7 @@ Use this file as the single source of truth for feature work across features.
 - [x] Declare `@lezer/highlight` directly in the Electron renderer package so the VS Code notebook theme does not depend on a transitive install.
 - [x] Add a full-screen toggle for the short-answer code editor so longer notebook answers can be edited without the quiz layout constraints.
 - [x] Preserve the short-answer code editor cursor, selection, scroll position, and undo history when toggling full-screen mode.
+- [x] Limit full-screen editor state restoration to the current answer so cached CodeMirror state cannot leak into other short-answer questions.
 - [x] Add 'Explain' button for short answer questions.
 - [x] Detect and render code for short answer responses.
 - [x] Add quiz clock metrics to performance history
