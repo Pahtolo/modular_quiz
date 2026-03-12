@@ -1069,6 +1069,38 @@ class APIServerTests(unittest.TestCase):
         self.assertIn("text", response)
         provider.feedback_chat.assert_called_once()
 
+    def test_feedback_chat_preserves_indented_answer_whitespace(self) -> None:
+        provider = MagicMock()
+        provider.feedback_chat.return_value = "Compare your code to the expected example."
+        user_answer = "    print('hello')\n    return total"
+        expected_answer = "    print('expected')\n    return total"
+        with patch("quiz_app.api.server._provider_client", return_value=provider):
+            response = self._post(
+                "/v1/feedback/chat",
+                {
+                    "provider": "openai",
+                    "model": "gpt-5-mini",
+                    "user_message": "Why is this wrong?",
+                    "feedback": "You are incorrect.",
+                    "question": {
+                        "id": "q1",
+                        "type": "short",
+                        "prompt": "Write the function.",
+                        "options": [],
+                    },
+                    "user_answer": user_answer,
+                    "expected_answer": expected_answer,
+                    "chat_history": [
+                        {"role": "assistant", "text": "You are incorrect."},
+                    ],
+                },
+            )
+
+        self.assertIn("text", response)
+        provider.feedback_chat.assert_called_once()
+        self.assertEqual(provider.feedback_chat.call_args.kwargs["user_answer"], user_answer)
+        self.assertEqual(provider.feedback_chat.call_args.kwargs["expected_answer"], expected_answer)
+
     def test_explain_short_endpoint(self) -> None:
         provider = MagicMock()
         provider.explain_short.return_value = "You are close, but your answer missed the growth-rate detail."

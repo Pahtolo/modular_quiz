@@ -21,7 +21,13 @@ const NOTEBOOK_CODE_LANGUAGE_SET = new Set(
   NOTEBOOK_CODE_LANGUAGE_OPTIONS.map((option) => option.value),
 );
 
-const SERIALIZED_CODE_BLOCK_PATTERN = /^```([A-Za-z0-9#+._-]*)[ \t]*\n([\s\S]*?)\n```$/;
+const SERIALIZED_CODE_BLOCK_PATTERN = /^(`{3,}|~{3,})([A-Za-z0-9#+._-]*)[ \t]*\n([\s\S]*?)\n\1$/;
+
+function notebookFenceForText(text) {
+  const matches = String(text || '').match(/`+/g) || [];
+  const longestRun = matches.reduce((maxRun, entry) => Math.max(maxRun, entry.length), 0);
+  return '`'.repeat(Math.max(3, longestRun + 1));
+}
 
 export function normalizeNotebookCodeLanguage(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -64,7 +70,8 @@ export function serializeNotebookAnswer(value) {
   }
   const language = normalizeNotebookCodeLanguage(notebook.language);
   const fenceLanguage = language === DEFAULT_NOTEBOOK_CODE_LANGUAGE ? '' : language;
-  return `\`\`\`${fenceLanguage}\n${text}\n\`\`\``;
+  const fence = notebookFenceForText(text);
+  return `${fence}${fenceLanguage}\n${text}\n${fence}`;
 }
 
 export function hydrateNotebookAnswer(value) {
@@ -78,8 +85,8 @@ export function hydrateNotebookAnswer(value) {
   if (codeMatch) {
     return {
       mode: NOTEBOOK_MODE_CODE,
-      text: codeMatch[2],
-      language: normalizeNotebookCodeLanguage(codeMatch[1]),
+      text: codeMatch[3],
+      language: normalizeNotebookCodeLanguage(codeMatch[2]),
     };
   }
   return {

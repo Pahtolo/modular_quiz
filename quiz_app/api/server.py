@@ -1407,8 +1407,8 @@ def create_app(
         options_raw = question_raw.get("options")
         options = [str(item) for item in options_raw] if isinstance(options_raw, list) else []
 
-        user_answer = str(payload.get("user_answer", question_raw.get("user_answer", ""))).strip()
-        expected_answer = str(payload.get("expected_answer", question_raw.get("expected", ""))).strip()
+        user_answer = str(payload.get("user_answer", question_raw.get("user_answer", "")))
+        expected_answer = str(payload.get("expected_answer", question_raw.get("expected", "")))
 
         history_raw = payload.get("chat_history")
         history_entries: list[dict[str, str]] = []

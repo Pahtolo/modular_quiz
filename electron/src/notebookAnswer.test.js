@@ -30,6 +30,21 @@ test('serializes code notebook answers as fenced blocks with the selected langua
   assert.equal(serialized, '```python\nprint("hi")\n```');
 });
 
+test('serializes code notebook answers with a longer fence when the body contains triple backticks', () => {
+  const serialized = serializeNotebookAnswer({
+    mode: NOTEBOOK_MODE_CODE,
+    text: 'print("hi")\n```\nprint("bye")',
+    language: 'python',
+  });
+
+  assert.equal(serialized, '````python\nprint("hi")\n```\nprint("bye")\n````');
+  assert.deepEqual(hydrateNotebookAnswer(serialized), {
+    mode: NOTEBOOK_MODE_CODE,
+    text: 'print("hi")\n```\nprint("bye")',
+    language: 'python',
+  });
+});
+
 test('hydrates a serialized code answer back into notebook state', () => {
   const hydrated = hydrateNotebookAnswer('```javascript\nconsole.log("hello");\n```');
 
