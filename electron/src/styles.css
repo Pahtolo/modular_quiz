@@ -994,10 +994,35 @@ body.short-answer-notebook-fullscreen-open {
   background: var(--code-surface);
 }
 
-.short-answer-notebook-fullscreen-body .cm-editor,
+.short-answer-notebook-fullscreen-body .cm-editor {
+  min-height: 100%;
+  font-size: 0.95rem;
+  color: var(--code-ink);
+  background: var(--code-surface);
+}
+
+.short-answer-notebook-fullscreen-body .cm-gutters {
+  background: var(--code-gutter-bg);
+  border-right: 1px solid var(--code-border);
+  color: var(--ink-soft);
+}
+
 .short-answer-notebook-fullscreen-body .cm-content,
 .short-answer-notebook-fullscreen-body .cm-scroller {
   min-height: 100%;
+  color: inherit;
+  background: var(--code-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.short-answer-notebook-fullscreen-body .cm-activeLine,
+.short-answer-notebook-fullscreen-body .cm-activeLineGutter {
+  background: var(--code-active-line);
+}
+
+.short-answer-notebook-fullscreen-body .cm-tooltip {
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .result {

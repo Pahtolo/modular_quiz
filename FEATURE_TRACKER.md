@@ -111,6 +111,7 @@ Use this file as the single source of truth for feature work across features.
 - [x] Limit full-screen editor state restoration to the current answer so cached CodeMirror state cannot leak into other short-answer questions.
 - [x] Only arm short-answer full-screen state restoration during full-screen transitions, not on normal editor updates or question changes.
 - [x] Keep short-answer full-screen viewport and focus restoration scoped to full-screen transitions so new answers do not inherit stale scroll/focus state.
+- [x] Apply the notebook CodeMirror foreground/background styling directly inside the portaled full-screen editor so non-active lines render correctly in full-screen mode.
 - [x] Add 'Explain' button for short answer questions.
 - [x] Detect and render code for short answer responses.
 - [x] Add quiz clock metrics to performance history
