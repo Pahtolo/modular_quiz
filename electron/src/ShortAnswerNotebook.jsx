@@ -127,7 +127,7 @@ export default function ShortAnswerNotebook({
     codeEditorViewportRef.current = {
       left: view.scrollDOM.scrollLeft,
       top: view.scrollDOM.scrollTop,
-      shouldRestore: true,
+      shouldRestore: codeEditorViewportRef.current.shouldRestore,
     };
     codeEditorFocusRef.current = view.hasFocus;
   }
@@ -151,6 +151,10 @@ export default function ShortAnswerNotebook({
   function setCodeFullscreen(nextValue) {
     captureCodeEditorState();
     shouldRestoreCodeEditorStateRef.current = true;
+    codeEditorViewportRef.current = {
+      ...codeEditorViewportRef.current,
+      shouldRestore: true,
+    };
     setIsCodeFullscreen(nextValue);
   }
 
