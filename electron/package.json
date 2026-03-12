@@ -1,6 +1,6 @@
 {
   "name": "modular-quiz-electron",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Electron + React frontend for Modular Quiz",
   "main": "main.cjs",
   "author": "",
