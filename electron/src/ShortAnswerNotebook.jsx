@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import CodeMirror from '@uiw/react-codemirror';
 import { cpp } from '@codemirror/lang-cpp';
 import { css } from '@codemirror/lang-css';
@@ -67,6 +68,7 @@ export default function ShortAnswerNotebook({
   themeMode = 'light',
 }) {
   const notebook = normalizeNotebookAnswer(value);
+  const [isCodeFullscreen, setIsCodeFullscreen] = useState(false);
   const codeExtensions = useMemo(
     () => [
       ...codeLanguageExtension(notebook.language),
@@ -75,11 +77,68 @@ export default function ShortAnswerNotebook({
     [notebook.language, themeMode],
   );
 
+  useEffect(() => {
+    if (notebook.mode === NOTEBOOK_MODE_CODE) {
+      return;
+    }
+    setIsCodeFullscreen(false);
+  }, [notebook.mode]);
+
+  useEffect(() => {
+    if (!isCodeFullscreen) {
+      return undefined;
+    }
+
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        setIsCodeFullscreen(false);
+      }
+    }
+
+    document.body.classList.add('short-answer-notebook-fullscreen-open');
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.classList.remove('short-answer-notebook-fullscreen-open');
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isCodeFullscreen]);
+
   function updateNotebook(nextPatch) {
     onChange({
       ...notebook,
       ...nextPatch,
     });
+  }
+
+  function renderLanguagePicker() {
+    return (
+      <label className="short-answer-notebook-language">
+        <span>Language</span>
+        <select
+          value={notebook.language}
+          onChange={(event) => updateNotebook({ language: event.target.value || DEFAULT_NOTEBOOK_CODE_LANGUAGE })}
+          disabled={disabled}
+        >
+          {NOTEBOOK_CODE_LANGUAGE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  function renderCodeEditor(height) {
+    return (
+      <CodeMirror
+        value={notebook.text}
+        height={height}
+        editable={!disabled}
+        basicSetup={NOTEBOOK_EDITOR_BASIC_SETUP}
+        extensions={codeExtensions}
+        onChange={(nextValue) => updateNotebook({ text: nextValue })}
+        placeholder="Write your answer as code"
+      />
+    );
   }
 
   return (
@@ -107,18 +166,16 @@ export default function ShortAnswerNotebook({
         </div>
 
         {notebook.mode === NOTEBOOK_MODE_CODE ? (
-          <label className="short-answer-notebook-language">
-            <span>Language</span>
-            <select
-              value={notebook.language}
-              onChange={(event) => updateNotebook({ language: event.target.value || DEFAULT_NOTEBOOK_CODE_LANGUAGE })}
-              disabled={disabled}
+          <div className="short-answer-notebook-code-actions">
+            {renderLanguagePicker()}
+            <button
+              type="button"
+              className={`secondary short-answer-notebook-fullscreen-toggle ${isCodeFullscreen ? 'active' : ''}`}
+              onClick={() => setIsCodeFullscreen((current) => !current)}
             >
-              {NOTEBOOK_CODE_LANGUAGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
+              {isCodeFullscreen ? 'Exit Full Screen' : 'Full Screen'}
+            </button>
+          </div>
         ) : (
           <button
             type="button"
@@ -133,15 +190,13 @@ export default function ShortAnswerNotebook({
 
       <div className="short-answer-notebook-surface">
         {notebook.mode === NOTEBOOK_MODE_CODE ? (
-          <CodeMirror
-            value={notebook.text}
-            height="220px"
-            editable={!disabled}
-            basicSetup={NOTEBOOK_EDITOR_BASIC_SETUP}
-            extensions={codeExtensions}
-            onChange={(nextValue) => updateNotebook({ text: nextValue })}
-            placeholder="Write your answer as code"
-          />
+          isCodeFullscreen ? (
+            <div className="short-answer-notebook-fullscreen-placeholder">
+              Code editor is open in full screen mode.
+            </div>
+          ) : (
+            renderCodeEditor('220px')
+          )
         ) : previewEnabled ? (
           notebook.text.trim() ? (
             <div className="short-answer-notebook-preview">
@@ -162,6 +217,32 @@ export default function ShortAnswerNotebook({
           />
         )}
       </div>
+
+      {notebook.mode === NOTEBOOK_MODE_CODE && isCodeFullscreen && typeof document !== 'undefined'
+        ? createPortal(
+          <div className="short-answer-notebook-fullscreen" role="dialog" aria-modal="true" aria-label="Full screen code editor">
+            <div className="short-answer-notebook-fullscreen-shell">
+              <div className="short-answer-notebook-fullscreen-header">
+                <span className="short-answer-notebook-fullscreen-title">Code Answer Editor</span>
+                <div className="short-answer-notebook-code-actions">
+                  {renderLanguagePicker()}
+                  <button
+                    type="button"
+                    className="secondary short-answer-notebook-fullscreen-toggle active"
+                    onClick={() => setIsCodeFullscreen(false)}
+                  >
+                    Exit Full Screen
+                  </button>
+                </div>
+              </div>
+              <div className="short-answer-notebook-fullscreen-body">
+                {renderCodeEditor('calc(100vh - 140px)')}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+        : null}
     </div>
   );
 }
