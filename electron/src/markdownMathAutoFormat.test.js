@@ -21,6 +21,7 @@ test('auto-formats standalone and inline plain-text math in markdown preview con
   const formatted = autoFormatMathMarkdown([
     'Solve x^2 + y^2 = z^2 before continuing.',
     'Then compare sqrt(x) with 1/2.',
+    'The terms 5x and 5x^2 both matter.',
   ].join('\n'));
 
   assert.equal(
@@ -28,6 +29,7 @@ test('auto-formats standalone and inline plain-text math in markdown preview con
     [
       'Solve $x^2 + y^2 = z^2$ before continuing.',
       'Then compare $\\sqrt{x}$ with $\\frac{1}{2}$.',
+      'The terms $5x$ and $5x^2$ both matter.',
     ].join('\n'),
   );
 });
@@ -79,5 +81,19 @@ test('leaves relative paths untouched even on lines that also contain real math'
   assert.equal(
     autoFormatMathMarkdown(source),
     'Refer to src/utils before solving $x+1=2$ and $\\frac{1}{2}$.',
+  );
+});
+
+test('renders implicit-multiplication expressions inside larger equations', () => {
+  assert.equal(
+    autoFormatMathMarkdown('Solve 5x + 3 = 8.'),
+    'Solve $5x + 3 = 8$.',
+  );
+});
+
+test('does not treat unit-like tokens as implicit multiplication math', () => {
+  assert.equal(
+    autoFormatMathMarkdown('Use 5g service on campus.'),
+    'Use 5g service on campus.',
   );
 });

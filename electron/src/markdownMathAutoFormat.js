@@ -1,4 +1,19 @@
-const STRONG_MATH_RUN_PATTERN = /(?:sqrt\([^()\n]+\)|\b(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))\s*(?:<=|>=|!=|=|<|>|\+|\*|\^)\s*(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))(?:(?:\s*(?:<=|>=|!=|=|<|>|\+|-|\*|\/|\^)\s*(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))))*)/g;
+const IMPLICIT_PRODUCT_TERM_SOURCE = String.raw`\d+(?:\.\d+)?(?:[xyzXYZ]|[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+))`;
+const MATH_TERM_SOURCE = [
+  IMPLICIT_PRODUCT_TERM_SOURCE,
+  String.raw`[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)`,
+  String.raw`[A-Za-z][A-Za-z0-9_]*`,
+  String.raw`\d+(?:\.\d+)?`,
+  String.raw`\([^()\n]+\)`,
+].join('|');
+const STRONG_OPERATOR_SOURCE = String.raw`<=|>=|!=|=|<|>|\+|\*|\^`;
+const CONTINUATION_OPERATOR_SOURCE = String.raw`<=|>=|!=|=|<|>|\+|-|\*|\/|\^`;
+const STRONG_MATH_RUN_PATTERN = new RegExp(
+  String.raw`(?:sqrt\([^()\n]+\)|\b(?:${MATH_TERM_SOURCE})\s*(?:${STRONG_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE})(?:(?:\s*(?:${CONTINUATION_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE}))*))`,
+  'g',
+);
+const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${IMPLICIT_PRODUCT_TERM_SOURCE}$`);
+const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
 const FENCE_START_PATTERN = /^(\s*)(`{3,}|~{3,})/;
 const SIMPLE_FRACTION_PATTERN = /^(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)$/;
 const SIMPLE_FRACTION_RUN_PATTERN = /\b(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\b/g;
@@ -110,6 +125,9 @@ function shouldWrapMathRun(run, source, offset) {
   if (looksLikeRelativePathToken(trimmed)) {
     return false;
   }
+  if (IMPLICIT_PRODUCT_PATTERN.test(trimmed)) {
+    return true;
+  }
   if (SIMPLE_FRACTION_PATTERN.test(trimmed)) {
     const surroundingText = `${source.slice(0, offset)} ${source.slice(offset + run.length)}`;
     return hasStrongMathCue(surroundingText);
@@ -132,7 +150,8 @@ function wrapMathRuns(text) {
   }
 
   const withStrongRuns = wrapMatchedRuns(text, STRONG_MATH_RUN_PATTERN);
-  return wrapMatchedRuns(withStrongRuns, SIMPLE_FRACTION_RUN_PATTERN);
+  const withFractions = wrapMatchedRuns(withStrongRuns, SIMPLE_FRACTION_RUN_PATTERN);
+  return wrapMatchedRuns(withFractions, IMPLICIT_PRODUCT_RUN_PATTERN);
 }
 
 function splitInlineCodeSegments(line) {
