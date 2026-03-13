@@ -105,6 +105,10 @@ test('renders implicit-multiplication expressions inside larger equations', () =
     autoFormatMathMarkdown('Solve 12xy - 4 = 0.'),
     'Solve $12xy - 4 = 0$.',
   );
+  assert.equal(
+    autoFormatMathMarkdown('Solve 2a_1 + 3b^2 = 0.'),
+    'Solve $2a_1 + 3b^2 = 0$.',
+  );
 });
 
 test('does not treat unit-like tokens as implicit multiplication math', () => {
@@ -127,6 +131,14 @@ test('does not treat unit-like tokens as implicit multiplication math', () => {
   assert.equal(
     autoFormatMathMarkdown('The app supports 2x playback and 3x zoom.'),
     'The app supports 2x playback and 3x zoom.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Variable 2a_1 is stored.'),
+    'Variable 2a_1 is stored.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Use 2x_speed mode.'),
+    'Use 2x_speed mode.',
   );
 });
 

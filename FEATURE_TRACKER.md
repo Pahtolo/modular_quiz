@@ -100,6 +100,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Keep decorated algebra like `2a_1 + 3b^2 = 0` in a single live KaTeX span while leaving decorated identifier prose such as `2a_1` and `2x_speed` unformatted.
 - [x] Fix live math auto-formatting so composite terms like `2ab/3cd` normalize into valid fractions and neighboring prose tokens like `2x`/`3x` do not falsely trigger each other.
 - [x] Hide the short-answer live preview pane whenever the `KaTeX` toggle is turned off.
 - [x] Rename the short-answer math auto-format toggle button to `KaTeX` for clearer quiz UI wording.

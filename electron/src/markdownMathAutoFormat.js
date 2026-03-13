@@ -19,7 +19,7 @@ const MATH_RUN_PATTERN = new RegExp(
 );
 const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}$`);
 const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
-const DECORATED_IMPLICIT_PRODUCT_CUE_PATTERN = /\b\d+(?:\.\d+)?[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)\b/;
+const EXPONENT_IMPLICIT_PRODUCT_CUE_PATTERN = /\b\d+(?:\.\d+)?[A-Za-z]+\^[A-Za-z0-9]+\b/;
 const FENCE_START_PATTERN = /^(\s*)(`{3,}|~{3,})/;
 const SIMPLE_FRACTION_PATTERN = /^(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)$/;
 const SIMPLE_FRACTION_RUN_PATTERN = /\b(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\b/g;
@@ -62,8 +62,8 @@ function hasStrongMathCue(text) {
   return /(?:sqrt\(|\\sqrt\{|<=|>=|!=|=|<|>|\+|\*|\^)/.test(String(text || ''));
 }
 
-function hasDecoratedImplicitProductCue(text) {
-  return DECORATED_IMPLICIT_PRODUCT_CUE_PATTERN.test(String(text || ''));
+function hasExponentImplicitProductCue(text) {
+  return EXPONENT_IMPLICIT_PRODUCT_CUE_PATTERN.test(String(text || ''));
 }
 
 function stripProtectedSegmentPrefix(text) {
@@ -93,6 +93,61 @@ function looksLikeRelativePathToken(text) {
     return true;
   }
   return COMMON_RELATIVE_PATH_HEADS.has(segments[0].toLowerCase());
+}
+
+function splitExistingMathSegments(text) {
+  const segments = [];
+  const raw = String(text || '');
+  let cursor = 0;
+
+  while (cursor < raw.length) {
+    let start = -1;
+    for (let index = cursor; index < raw.length; index += 1) {
+      if (raw[index] === '$' && raw[index - 1] !== '\\') {
+        start = index;
+        break;
+      }
+    }
+
+    if (start === -1) {
+      segments.push({ type: 'text', value: raw.slice(cursor), start: cursor });
+      break;
+    }
+
+    if (start > cursor) {
+      segments.push({ type: 'text', value: raw.slice(cursor, start), start: cursor });
+    }
+
+    const fence = raw[start + 1] === '$' ? '$$' : '$';
+    let end = start + fence.length;
+    let foundEnd = -1;
+
+    while (end < raw.length) {
+      const nextIndex = raw.indexOf(fence, end);
+      if (nextIndex === -1) {
+        break;
+      }
+      if (raw[nextIndex - 1] !== '\\') {
+        foundEnd = nextIndex;
+        break;
+      }
+      end = nextIndex + fence.length;
+    }
+
+    if (foundEnd === -1) {
+      segments.push({ type: 'text', value: raw.slice(start), start });
+      break;
+    }
+
+    segments.push({
+      type: 'math',
+      value: raw.slice(start, foundEnd + fence.length),
+      start,
+    });
+    cursor = foundEnd + fence.length;
+  }
+
+  return segments;
 }
 
 function replaceBalancedFunctionCalls(expression, functionName, replacementBuilder) {
@@ -198,16 +253,21 @@ function shouldWrapMathRun(run, source, offset) {
   }
   if (IMPLICIT_PRODUCT_PATTERN.test(trimmed)) {
     const surroundingText = `${source.slice(0, offset)} ${source.slice(offset + run.length)}`;
+    const hasSubscript = trimmed.includes('_');
+    const hasExponent = trimmed.includes('^');
     if (String(source || '').trim() === trimmed) {
       return true;
     }
-    if (/[_^]/.test(trimmed)) {
+    if (hasSubscript) {
+      return hasStrongMathCue(surroundingText);
+    }
+    if (hasExponent) {
       return true;
     }
     if (hasStrongMathCue(surroundingText)) {
       return true;
     }
-    if (hasDecoratedImplicitProductCue(surroundingText)) {
+    if (hasExponentImplicitProductCue(surroundingText)) {
       return true;
     }
     return false;
@@ -220,12 +280,20 @@ function shouldWrapMathRun(run, source, offset) {
 }
 
 function wrapMatchedRuns(text, pattern) {
-  return text.replace(pattern, (run, offset, source) => {
-    if (!shouldWrapMathRun(run, source, offset)) {
-      return run;
-    }
-    return `$${normalizeMathExpression(run)}$`;
-  });
+  return splitExistingMathSegments(text)
+    .map((segment) => {
+      if (segment.type !== 'text') {
+        return segment.value;
+      }
+      return segment.value.replace(pattern, (run, offset) => {
+        const globalOffset = segment.start + offset;
+        if (!shouldWrapMathRun(run, text, globalOffset)) {
+          return run;
+        }
+        return `$${normalizeMathExpression(run)}$`;
+      });
+    })
+    .join('');
 }
 
 function wrapMathRuns(text) {
