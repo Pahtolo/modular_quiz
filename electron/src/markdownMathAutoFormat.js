@@ -1,10 +1,18 @@
-const MATH_RUN_PATTERN = /(?:sqrt\([^()\n]+\)|\b(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))\s*(?:<=|>=|!=|=|<|>|\+|-|\*|\/|\^)\s*(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))(?:(?:\s*(?:<=|>=|!=|=|<|>|\+|-|\*|\/|\^)\s*(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))))*)/g;
-const EXPLICIT_TEX_PATTERN = /(?:^|[^\\])(?:\$\$?[^$]+?\$\$?|\\\(|\\\[)/;
+const STRONG_MATH_RUN_PATTERN = /(?:sqrt\([^()\n]+\)|\b(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))\s*(?:<=|>=|!=|=|<|>|\+|\*|\^)\s*(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))(?:(?:\s*(?:<=|>=|!=|=|<|>|\+|-|\*|\/|\^)\s*(?:[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\([^()\n]+\))))*)/g;
 const FENCE_START_PATTERN = /^(\s*)(`{3,}|~{3,})/;
+const SIMPLE_FRACTION_PATTERN = /^(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)$/;
+const SIMPLE_FRACTION_RUN_PATTERN = /\b(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\b/g;
+const MARKDOWN_LINK_PATTERN = /!?\[[^\]\n]+\]\([^) \n]+(?:\s+["'][^"\n]+["'])?\)/g;
+const URL_PATTERN = /https?:\/\/[^\s)]+/g;
+const ROOT_PATH_PATTERN = /(?:^|[\s(])(?:\/[A-Za-z0-9._-]+){2,}(?=$|[\s),.;:!?])/g;
 const COMMON_TEX_FUNCTIONS = ['sin', 'cos', 'tan', 'log', 'ln', 'max', 'min'];
 
 function isBoundaryCharacter(character) {
   return !character || /[\s()[\]{}.,;:!?'"`~-]/.test(character);
+}
+
+function hasStrongMathCue(text) {
+  return /(?:sqrt\(|\\sqrt\{|<=|>=|!=|=|<|>|\+|\*|\^)/.test(String(text || ''));
 }
 
 function replaceBalancedFunctionCalls(expression, functionName, replacementBuilder) {
@@ -94,20 +102,29 @@ function shouldWrapMathRun(run, source, offset) {
   if (/^\d+(?:\s*\/\s*\d+){2,}$/.test(trimmed)) {
     return false;
   }
-  return /(?:sqrt\(|<=|>=|!=|=|<|>|\+|-|\*|\/|\^)/.test(trimmed);
+  if (SIMPLE_FRACTION_PATTERN.test(trimmed)) {
+    const surroundingText = `${source.slice(0, offset)} ${source.slice(offset + run.length)}`;
+    return hasStrongMathCue(surroundingText);
+  }
+  return hasStrongMathCue(trimmed);
 }
 
-function wrapMathRuns(text) {
-  if (!text || EXPLICIT_TEX_PATTERN.test(text)) {
-    return text;
-  }
-
-  return text.replace(MATH_RUN_PATTERN, (run, offset, source) => {
+function wrapMatchedRuns(text, pattern) {
+  return text.replace(pattern, (run, offset, source) => {
     if (!shouldWrapMathRun(run, source, offset)) {
       return run;
     }
     return `$${normalizeMathExpression(run)}$`;
   });
+}
+
+function wrapMathRuns(text) {
+  if (!text) {
+    return text;
+  }
+
+  const withStrongRuns = wrapMatchedRuns(text, STRONG_MATH_RUN_PATTERN);
+  return wrapMatchedRuns(withStrongRuns, SIMPLE_FRACTION_RUN_PATTERN);
 }
 
 function splitInlineCodeSegments(line) {
@@ -147,13 +164,73 @@ function splitInlineCodeSegments(line) {
   return segments;
 }
 
+function findNextProtectedMarkdownSegment(text, startIndex) {
+  const patterns = [MARKDOWN_LINK_PATTERN, URL_PATTERN, ROOT_PATH_PATTERN];
+  let bestMatch = null;
+
+  for (const pattern of patterns) {
+    pattern.lastIndex = startIndex;
+    const match = pattern.exec(text);
+    if (!match) {
+      continue;
+    }
+    if (!bestMatch || match.index < bestMatch.index) {
+      bestMatch = {
+        index: match.index,
+        value: match[0],
+      };
+    }
+  }
+
+  return bestMatch;
+}
+
+function splitProtectedMarkdownSegments(text) {
+  const segments = [];
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const nextMatch = findNextProtectedMarkdownSegment(text, cursor);
+    if (!nextMatch) {
+      segments.push({ type: 'text', value: text.slice(cursor) });
+      break;
+    }
+
+    let matchStart = nextMatch.index;
+    let matchValue = nextMatch.value;
+
+    if ((matchValue[0] === ' ' || matchValue[0] === '(')) {
+      const prefix = matchValue[0];
+      if (matchStart >= cursor) {
+        segments.push({ type: 'text', value: text.slice(cursor, matchStart + 1) });
+      }
+      matchStart += 1;
+      matchValue = matchValue.slice(1);
+    } else if (matchStart > cursor) {
+      segments.push({ type: 'text', value: text.slice(cursor, matchStart) });
+    }
+
+    segments.push({ type: 'protected', value: matchValue });
+    cursor = nextMatch.index + nextMatch.value.length;
+  }
+
+  return segments;
+}
+
 function autoFormatMarkdownLine(line) {
   if (!line) {
     return line;
   }
 
   return splitInlineCodeSegments(line)
-    .map((segment) => (segment.type === 'text' ? wrapMathRuns(segment.value) : segment.value))
+    .map((segment) => {
+      if (segment.type !== 'text') {
+        return segment.value;
+      }
+      return splitProtectedMarkdownSegments(segment.value)
+        .map((subsegment) => (subsegment.type === 'text' ? wrapMathRuns(subsegment.value) : subsegment.value))
+        .join('');
+    })
     .join('');
 }
 

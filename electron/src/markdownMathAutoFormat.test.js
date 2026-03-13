@@ -46,3 +46,25 @@ test('does not mistake slash-separated dates for fractions', () => {
     'Class moved to 3/12/2026.',
   );
 });
+
+test('leaves markdown links and API-style paths untouched', () => {
+  const source = [
+    '[a-b guide](https://example.com/a-b)',
+    'POST to /v1/history/update before retrying.',
+  ].join('\n');
+
+  assert.equal(autoFormatMathMarkdown(source), source);
+});
+
+test('does not auto-format hyphenated prose, ranges, or isolated chapter fractions', () => {
+  const source = 'Filename a-b.txt and Between pages 3-5, review chapter 1/2.';
+
+  assert.equal(autoFormatMathMarkdown(source), source);
+});
+
+test('still formats a standalone fraction when the same line already has stronger math context', () => {
+  assert.equal(
+    autoFormatMathMarkdown('Then compare sqrt(x) with 1/2.'),
+    'Then compare $\\sqrt{x}$ with $\\frac{1}{2}$.',
+  );
+});
