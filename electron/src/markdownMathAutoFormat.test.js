@@ -97,12 +97,28 @@ test('renders implicit-multiplication expressions inside larger equations', () =
     autoFormatMathMarkdown('Solve 2n + 1 = 5.'),
     'Solve $2n + 1 = 5$.',
   );
+  assert.equal(
+    autoFormatMathMarkdown('Solve 2ab + 1 = 0.'),
+    'Solve $2ab + 1 = 0$.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Solve 12xy - 4 = 0.'),
+    'Solve $12xy - 4 = 0$.',
+  );
 });
 
 test('does not treat unit-like tokens as implicit multiplication math', () => {
   assert.equal(
     autoFormatMathMarkdown('Use 5g service on campus.'),
     'Use 5g service on campus.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Use 10x magnification.'),
+    'Use 10x magnification.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Model o4-mini is preferred over gpt-5x.'),
+    'Model o4-mini is preferred over gpt-5x.',
   );
 });
 

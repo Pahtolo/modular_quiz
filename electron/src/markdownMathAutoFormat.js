@@ -1,5 +1,5 @@
 const STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE = String.raw`\d+(?:\.\d+)?(?:[xyzXYZ]|[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+))`;
-const EQUATION_IMPLICIT_PRODUCT_TERM_SOURCE = String.raw`\d+(?:\.\d+)?(?:[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)?)`;
+const EQUATION_IMPLICIT_PRODUCT_TERM_SOURCE = String.raw`\d+(?:\.\d+)?(?:[A-Za-z]+(?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)?)`;
 const ATOMIC_MATH_TERM_SOURCE = [
   String.raw`[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)`,
   String.raw`[A-Za-z][A-Za-z0-9_]*`,
@@ -12,10 +12,9 @@ const MATH_TERM_SOURCE = [
   EQUATION_IMPLICIT_PRODUCT_TERM_SOURCE,
   ATOMIC_MATH_TERM_SOURCE,
 ].join('|');
-const STRONG_OPERATOR_SOURCE = String.raw`<=|>=|!=|=|<|>|\+|\*|\^`;
-const CONTINUATION_OPERATOR_SOURCE = String.raw`<=|>=|!=|=|<|>|\+|-|\*|\/|\^`;
-const STRONG_MATH_RUN_PATTERN = new RegExp(
-  String.raw`(?:sqrt\([^()\n]+\)|\b(?:${MATH_TERM_SOURCE})\s*(?:${STRONG_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE})(?:(?:\s*(?:${CONTINUATION_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE}))*))`,
+const MATH_OPERATOR_SOURCE = String.raw`<=|>=|!=|=|<|>|\+|-|\*|\/|\^`;
+const MATH_RUN_PATTERN = new RegExp(
+  String.raw`(?:sqrt\([^()\n]+\)|\b(?:${MATH_TERM_SOURCE})(?:(?:\s*(?:${MATH_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE}))+))`,
   'g',
 );
 const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}$`);
@@ -54,6 +53,10 @@ function isBoundaryCharacter(character) {
 
 function hasStrongMathCue(text) {
   return /(?:sqrt\(|\\sqrt\{|<=|>=|!=|=|<|>|\+|\*|\^)/.test(String(text || ''));
+}
+
+function hasImplicitProductCue(text) {
+  return new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`).test(String(text || ''));
 }
 
 function stripProtectedSegmentPrefix(text) {
@@ -161,6 +164,8 @@ function normalizeMathExpression(expression) {
 function shouldWrapMathRun(run, source, offset) {
   const previous = offset > 0 ? source[offset - 1] : '';
   const next = offset + run.length < source.length ? source[offset + run.length] : '';
+  const beforePrevious = offset > 1 ? source[offset - 2] : '';
+  const afterNext = offset + run.length + 1 < source.length ? source[offset + run.length + 1] : '';
   const trimmed = String(run || '').trim();
 
   if (!trimmed) {
@@ -172,11 +177,30 @@ function shouldWrapMathRun(run, source, offset) {
   if (/^\d+(?:\s*\/\s*\d+){2,}$/.test(trimmed)) {
     return false;
   }
+  if (
+    (previous === '-' && /[A-Za-z0-9]/.test(beforePrevious))
+    || (next === '-' && /[A-Za-z0-9]/.test(afterNext))
+  ) {
+    return false;
+  }
   if (looksLikeRelativePathToken(trimmed)) {
     return false;
   }
   if (IMPLICIT_PRODUCT_PATTERN.test(trimmed)) {
-    return true;
+    const surroundingText = `${source.slice(0, offset)} ${source.slice(offset + run.length)}`;
+    if (String(source || '').trim() === trimmed) {
+      return true;
+    }
+    if (/[_^]/.test(trimmed)) {
+      return true;
+    }
+    if (hasStrongMathCue(surroundingText)) {
+      return true;
+    }
+    if (hasImplicitProductCue(surroundingText)) {
+      return true;
+    }
+    return false;
   }
   if (SIMPLE_FRACTION_PATTERN.test(trimmed)) {
     const surroundingText = `${source.slice(0, offset)} ${source.slice(offset + run.length)}`;
@@ -199,8 +223,8 @@ function wrapMathRuns(text) {
     return text;
   }
 
-  const withStrongRuns = wrapMatchedRuns(text, STRONG_MATH_RUN_PATTERN);
-  const withFractions = wrapMatchedRuns(withStrongRuns, SIMPLE_FRACTION_RUN_PATTERN);
+  const withMathRuns = wrapMatchedRuns(text, MATH_RUN_PATTERN);
+  const withFractions = wrapMatchedRuns(withMathRuns, SIMPLE_FRACTION_RUN_PATTERN);
   return wrapMatchedRuns(withFractions, IMPLICIT_PRODUCT_RUN_PATTERN);
 }
 

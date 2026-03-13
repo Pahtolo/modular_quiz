@@ -100,6 +100,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Refine live math auto-formatting so prose tokens like `10x` and `gpt-5x` stay plain text while multi-letter algebra like `2ab` and `12xy` still renders in full equations.
 - [x] Remove stale short-answer markdown preview reset calls so quiz start no longer throws `setShortAnswerMarkdownPreview is not defined` or leave the sidebar stuck on Performance History.
 - [x] Replace the markdown preview button with an always-on live render pane so markdown and KaTeX update while short-answer text is being typed.
 - [x] Broaden math auto-formatting to cover ordinary implicit variables like `3a` and symbolic fractions like `ab/cd` while still protecting actual relative paths such as `src/utils`.
