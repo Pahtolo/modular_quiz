@@ -1,10 +1,16 @@
-const IMPLICIT_PRODUCT_TERM_SOURCE = String.raw`\d+(?:\.\d+)?(?:[xyzXYZ]|[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+))`;
-const MATH_TERM_SOURCE = [
-  IMPLICIT_PRODUCT_TERM_SOURCE,
+const STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE = String.raw`\d+(?:\.\d+)?(?:[xyzXYZ]|[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+))`;
+const EQUATION_IMPLICIT_PRODUCT_TERM_SOURCE = String.raw`\d+(?:\.\d+)?(?:[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)?)`;
+const ATOMIC_MATH_TERM_SOURCE = [
   String.raw`[A-Za-z][A-Za-z0-9_]*\([^)\n]+\)`,
   String.raw`[A-Za-z][A-Za-z0-9_]*`,
   String.raw`\d+(?:\.\d+)?`,
   String.raw`\([^()\n]+\)`,
+].join('|');
+const FRACTION_MATH_TERM_SOURCE = String.raw`(?:${ATOMIC_MATH_TERM_SOURCE})\s*\/\s*(?:${ATOMIC_MATH_TERM_SOURCE})`;
+const MATH_TERM_SOURCE = [
+  FRACTION_MATH_TERM_SOURCE,
+  EQUATION_IMPLICIT_PRODUCT_TERM_SOURCE,
+  ATOMIC_MATH_TERM_SOURCE,
 ].join('|');
 const STRONG_OPERATOR_SOURCE = String.raw`<=|>=|!=|=|<|>|\+|\*|\^`;
 const CONTINUATION_OPERATOR_SOURCE = String.raw`<=|>=|!=|=|<|>|\+|-|\*|\/|\^`;
@@ -12,16 +18,35 @@ const STRONG_MATH_RUN_PATTERN = new RegExp(
   String.raw`(?:sqrt\([^()\n]+\)|\b(?:${MATH_TERM_SOURCE})\s*(?:${STRONG_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE})(?:(?:\s*(?:${CONTINUATION_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE}))*))`,
   'g',
 );
-const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${IMPLICIT_PRODUCT_TERM_SOURCE}$`);
-const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
+const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}$`);
+const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
 const FENCE_START_PATTERN = /^(\s*)(`{3,}|~{3,})/;
 const SIMPLE_FRACTION_PATTERN = /^(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)$/;
 const SIMPLE_FRACTION_RUN_PATTERN = /\b(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\b/g;
 const MARKDOWN_LINK_PATTERN = /!?\[[^\]\n]+\]\([^) \n]+(?:\s+["'][^"\n]+["'])?\)/g;
 const URL_PATTERN = /https?:\/\/[^\s)]+/g;
 const ROOT_PATH_PATTERN = /(?:^|[\s(])(?:\/[A-Za-z0-9._-]+){2,}(?=$|[\s),.;:!?])/g;
-const RELATIVE_PATH_PATTERN = /(?:^|[\s(])(?:[A-Za-z][A-Za-z0-9._-]{1,}\/)+[A-Za-z][A-Za-z0-9._-]{1,}(?=$|[\s),.;:!?])/g;
+const RELATIVE_PATH_CANDIDATE_PATTERN = /(?:^|[\s(])(?:[A-Za-z][A-Za-z0-9._-]{0,}\/)+[A-Za-z][A-Za-z0-9._-]{0,}(?=$|[\s),.;:!?])/g;
+const STRICT_RELATIVE_PATH_TOKEN_PATTERN = /^(?:[A-Za-z][A-Za-z0-9._-]*\/)+[A-Za-z][A-Za-z0-9._-]*$/;
 const COMMON_TEX_FUNCTIONS = ['sin', 'cos', 'tan', 'log', 'ln', 'max', 'min'];
+const COMMON_RELATIVE_PATH_HEADS = new Set([
+  'app',
+  'assets',
+  'components',
+  'dist',
+  'docs',
+  'hooks',
+  'lib',
+  'node_modules',
+  'pages',
+  'public',
+  'scripts',
+  'src',
+  'styles',
+  'test',
+  'tests',
+  'utils',
+]);
 
 function isBoundaryCharacter(character) {
   return !character || /[\s()[\]{}.,;:!?'"`~-]/.test(character);
@@ -31,8 +56,33 @@ function hasStrongMathCue(text) {
   return /(?:sqrt\(|\\sqrt\{|<=|>=|!=|=|<|>|\+|\*|\^)/.test(String(text || ''));
 }
 
+function stripProtectedSegmentPrefix(text) {
+  const raw = String(text || '');
+  if (raw[0] === ' ' || raw[0] === '(') {
+    return raw.slice(1);
+  }
+  return raw;
+}
+
 function looksLikeRelativePathToken(text) {
-  return /^(?:[A-Za-z][A-Za-z0-9._-]{1,}\/)+[A-Za-z][A-Za-z0-9._-]{1,}$/.test(String(text || '').trim());
+  const trimmed = stripProtectedSegmentPrefix(text).trim();
+  if (!STRICT_RELATIVE_PATH_TOKEN_PATTERN.test(trimmed)) {
+    return false;
+  }
+  const segments = trimmed.split('/').filter(Boolean);
+  if (segments.length < 2) {
+    return false;
+  }
+  if (segments.every((segment) => /^\d+$/.test(segment))) {
+    return false;
+  }
+  if (segments.length >= 3) {
+    return true;
+  }
+  if (segments.some((segment) => /[._-]|\d/.test(segment))) {
+    return true;
+  }
+  return COMMON_RELATIVE_PATH_HEADS.has(segments[0].toLowerCase());
 }
 
 function replaceBalancedFunctionCalls(expression, functionName, replacementBuilder) {
@@ -192,20 +242,28 @@ function splitInlineCodeSegments(line) {
 }
 
 function findNextProtectedMarkdownSegment(text, startIndex) {
-  const patterns = [MARKDOWN_LINK_PATTERN, URL_PATTERN, ROOT_PATH_PATTERN, RELATIVE_PATH_PATTERN];
+  const patterns = [
+    { pattern: MARKDOWN_LINK_PATTERN },
+    { pattern: URL_PATTERN },
+    { pattern: ROOT_PATH_PATTERN },
+    { pattern: RELATIVE_PATH_CANDIDATE_PATTERN, predicate: looksLikeRelativePathToken },
+  ];
   let bestMatch = null;
 
-  for (const pattern of patterns) {
+  for (const { pattern, predicate } of patterns) {
     pattern.lastIndex = startIndex;
-    const match = pattern.exec(text);
-    if (!match) {
-      continue;
-    }
-    if (!bestMatch || match.index < bestMatch.index) {
-      bestMatch = {
-        index: match.index,
-        value: match[0],
-      };
+    let match = pattern.exec(text);
+    while (match) {
+      if (!predicate || predicate(match[0])) {
+        if (!bestMatch || match.index < bestMatch.index) {
+          bestMatch = {
+            index: match.index,
+            value: match[0],
+          };
+        }
+        break;
+      }
+      match = pattern.exec(text);
     }
   }
 

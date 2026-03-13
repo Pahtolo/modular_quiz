@@ -89,11 +89,34 @@ test('renders implicit-multiplication expressions inside larger equations', () =
     autoFormatMathMarkdown('Solve 5x + 3 = 8.'),
     'Solve $5x + 3 = 8$.',
   );
+  assert.equal(
+    autoFormatMathMarkdown('Solve 3a + 1 = 4.'),
+    'Solve $3a + 1 = 4$.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Solve 2n + 1 = 5.'),
+    'Solve $2n + 1 = 5$.',
+  );
 });
 
 test('does not treat unit-like tokens as implicit multiplication math', () => {
   assert.equal(
     autoFormatMathMarkdown('Use 5g service on campus.'),
     'Use 5g service on campus.',
+  );
+});
+
+test('renders symbolic fractions while still protecting code-style relative paths', () => {
+  assert.equal(
+    autoFormatMathMarkdown('Solve ab/cd = 2.'),
+    'Solve $\\frac{ab}{cd} = 2$.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Solve theta/phi = 1.'),
+    'Solve $\\frac{theta}{phi} = 1$.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Refer to src/utils before solving x+1=2 and 1/2.'),
+    'Refer to src/utils before solving $x+1=2$ and $\\frac{1}{2}$.',
   );
 });

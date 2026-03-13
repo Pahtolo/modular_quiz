@@ -887,6 +887,11 @@ textarea {
   overflow: hidden;
 }
 
+.short-answer-notebook-markdown-live {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .short-answer-notebook-fullscreen-placeholder {
   min-height: 220px;
   display: flex;
@@ -905,6 +910,20 @@ textarea {
 
 .short-answer-notebook-textarea:focus {
   outline: none;
+}
+
+.short-answer-notebook-live-preview {
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+}
+
+.short-answer-notebook-live-preview-label {
+  padding: 0.7rem 0.95rem 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
 }
 
 .short-answer-notebook-preview {

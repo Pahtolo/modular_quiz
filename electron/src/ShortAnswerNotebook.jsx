@@ -67,8 +67,6 @@ export default function ShortAnswerNotebook({
   value,
   onChange,
   disabled = false,
-  previewEnabled = false,
-  onPreviewToggle,
   autoFormatMathEnabled = false,
   onAutoFormatMathToggle,
   themeMode = 'light',
@@ -244,14 +242,6 @@ export default function ShortAnswerNotebook({
           <div className="short-answer-notebook-markdown-actions">
             <button
               type="button"
-              className={`secondary short-answer-notebook-preview-toggle ${previewEnabled ? 'active' : ''}`}
-              onClick={() => onPreviewToggle?.(!previewEnabled)}
-              aria-pressed={previewEnabled}
-            >
-              {previewEnabled ? 'Show Editor' : 'Show Preview'}
-            </button>
-            <button
-              type="button"
               className={`secondary short-answer-notebook-preview-toggle ${autoFormatMathEnabled ? 'active' : ''}`}
               onClick={() => onAutoFormatMathToggle?.(!autoFormatMathEnabled)}
               aria-pressed={autoFormatMathEnabled}
@@ -271,28 +261,32 @@ export default function ShortAnswerNotebook({
           ) : (
             renderCodeEditor('220px')
           )
-        ) : previewEnabled ? (
-          notebook.text.trim() ? (
-            <div className="short-answer-notebook-preview">
-              <MarkdownMathText
-                className="math-text markdown-math-content"
-                text={notebook.text}
-                autoFormatMath={autoFormatMathEnabled}
-              />
-            </div>
-          ) : (
-            <div className="short-answer-notebook-preview short-answer-notebook-preview-empty">
-              Nothing to preview yet.
-            </div>
-          )
         ) : (
-          <textarea
-            className="short-answer-notebook-textarea"
-            value={notebook.text}
-            onChange={(event) => updateNotebook({ text: event.target.value })}
-            disabled={disabled}
-            placeholder="Write your answer"
-          />
+          <div className="short-answer-notebook-markdown-live">
+            <textarea
+              className="short-answer-notebook-textarea"
+              value={notebook.text}
+              onChange={(event) => updateNotebook({ text: event.target.value })}
+              disabled={disabled}
+              placeholder="Write your answer"
+            />
+            <div className="short-answer-notebook-live-preview">
+              <div className="short-answer-notebook-live-preview-label">Live Render</div>
+              {notebook.text.trim() ? (
+                <div className="short-answer-notebook-preview">
+                  <MarkdownMathText
+                    className="math-text markdown-math-content"
+                    text={notebook.text}
+                    autoFormatMath={autoFormatMathEnabled}
+                  />
+                </div>
+              ) : (
+                <div className="short-answer-notebook-preview short-answer-notebook-preview-empty">
+                  Math will render live as you type.
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
 

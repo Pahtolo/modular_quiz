@@ -100,6 +100,8 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Replace the markdown preview button with an always-on live render pane so markdown and KaTeX update while short-answer text is being typed.
+- [x] Broaden math auto-formatting to cover ordinary implicit variables like `3a` and symbolic fractions like `ab/cd` while still protecting actual relative paths such as `src/utils`.
 - [x] Extend short-answer math auto-formatting to render implicit multiplication terms like `5x` and `5x^2` while leaving unit-like prose such as `5g` alone.
 - [x] Fix markdown math auto-format named-function escaping and keep relative path references from being rewritten as fractions in preview.
 - [x] Tighten short-answer math auto-format heuristics so markdown links, API paths, hyphenated prose, numeric ranges, and isolated chapter-style fractions remain plain text in preview.

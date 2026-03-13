@@ -1342,7 +1342,6 @@ function App() {
   const [questionLocked, setQuestionLocked] = useState(false);
   const [mcqAnswer, setMcqAnswer] = useState('');
   const [shortAnswerNotebook, setShortAnswerNotebook] = useState(() => createEmptyNotebookAnswer());
-  const [shortAnswerMarkdownPreview, setShortAnswerMarkdownPreview] = useState(false);
   const [feedbackThreadsByQuestion, setFeedbackThreadsByQuestion] = useState({});
   const [feedbackDraftsByQuestion, setFeedbackDraftsByQuestion] = useState({});
   const [feedbackPendingByQuestion, setFeedbackPendingByQuestion] = useState({});
@@ -2445,14 +2444,12 @@ function App() {
       setQuestionLocked(true);
       setMcqAnswer(state.mcq_answer || '');
       setShortAnswerNotebook(hydrateNotebookAnswer(state.short_answer || ''));
-      setShortAnswerMarkdownPreview(false);
       return;
     }
     setQuestionResult(null);
     setQuestionLocked(false);
     setMcqAnswer('');
     setShortAnswerNotebook(createEmptyNotebookAnswer());
-    setShortAnswerMarkdownPreview(false);
   }, [quiz, quizIndex, questionStates]);
 
   useEffect(() => {
@@ -5454,8 +5451,6 @@ function App() {
                           value={shortAnswerNotebook}
                           onChange={setShortAnswerNotebook}
                           disabled={questionLocked || quizIsPaused}
-                          previewEnabled={shortAnswerMarkdownPreview}
-                          onPreviewToggle={setShortAnswerMarkdownPreview}
                           autoFormatMathEnabled={shortAnswerAutoFormatMath}
                           onAutoFormatMathToggle={setShortAnswerAutoFormatMath}
                           themeMode={themeMode}
