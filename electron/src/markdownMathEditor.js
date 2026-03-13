@@ -43,7 +43,7 @@ export function selectionTouchesMathRange(selection, from, to) {
     if (range.empty) {
       return range.head >= from && range.head < to;
     }
-    return range.from <= to && range.to >= from;
+    return range.from < to && range.to > from;
   });
 }
 

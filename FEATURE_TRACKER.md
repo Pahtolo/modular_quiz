@@ -100,6 +100,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Keep adjacent text selections from collapsing neighboring inline KaTeX widgets by treating markdown editor selection overlaps as half-open ranges.
 - [x] Render inline short-answer KaTeX as soon as the caret reaches the end of a math expression, without requiring a trailing space.
 - [x] Render short-answer KaTeX inline inside the markdown notebook editor so math appears in the same editor box and the raw markdown source returns when the cursor enters an expression.
 - [x] Preserve explicit `\(...\)` and `\[...\]` math through `react-markdown` by rewriting those delimiters to markdown-safe KaTeX sentinels before live rendering.
