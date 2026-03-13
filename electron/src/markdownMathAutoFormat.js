@@ -17,8 +17,10 @@ const MATH_RUN_PATTERN = new RegExp(
   String.raw`(?:sqrt\([^()\n]+\)|\b(?:${MATH_TERM_SOURCE})(?:(?:\s*(?:${MATH_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE}))+))`,
   'g',
 );
-const AUTO_INLINE_MATH_OPEN = String.raw`\(`;
-const AUTO_INLINE_MATH_CLOSE = String.raw`\)`;
+// ReactMarkdown strips `\(...\)` escapes before KaTeX auto-render runs, so generated
+// math uses markdown-safe sentinels that survive through the markdown pipeline.
+const AUTO_INLINE_MATH_OPEN = '@@KATEX_INLINE_OPEN@@';
+const AUTO_INLINE_MATH_CLOSE = '@@KATEX_INLINE_CLOSE@@';
 const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}$`);
 const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
 const EXPONENT_IMPLICIT_PRODUCT_CUE_PATTERN = /\b\d+(?:\.\d+)?[A-Za-z]+\^[A-Za-z0-9]+\b/;
@@ -102,6 +104,12 @@ function nextMathFence(text, startIndex) {
   let nextFence = '';
 
   for (let index = startIndex; index < text.length; index += 1) {
+    if (text.startsWith(AUTO_INLINE_MATH_OPEN, index)) {
+      nextIndex = index;
+      nextFence = AUTO_INLINE_MATH_OPEN;
+      break;
+    }
+
     const current = text[index];
     const previous = text[index - 1];
 
@@ -122,6 +130,9 @@ function nextMathFence(text, startIndex) {
 }
 
 function matchingMathFence(fence) {
+  if (fence === AUTO_INLINE_MATH_OPEN) {
+    return AUTO_INLINE_MATH_CLOSE;
+  }
   if (fence === '\\(') {
     return '\\)';
   }
@@ -484,4 +495,8 @@ export function autoFormatMathMarkdown(text) {
   return result.join('\n');
 }
 
-export { normalizeMathExpression };
+export {
+  AUTO_INLINE_MATH_CLOSE,
+  AUTO_INLINE_MATH_OPEN,
+  normalizeMathExpression,
+};

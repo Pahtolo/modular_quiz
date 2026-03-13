@@ -100,7 +100,8 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
-- [x] Prevent lone `$` text such as currency and shell variables from corrupting later live KaTeX auto-formatting by wrapping generated math with `\(...\)` and only skipping closed math spans.
+- [x] Prevent lone `$` text such as currency and shell variables from corrupting later live KaTeX auto-formatting by wrapping generated math with markdown-safe sentinel delimiters and only skipping closed math spans.
+- [x] Keep auto-generated inline math visible through `react-markdown` by teaching the live KaTeX renderer to consume those markdown-safe sentinel delimiters.
 - [x] Keep decorated algebra like `2a_1 + 3b^2 = 0` in a single live KaTeX span while leaving decorated identifier prose such as `2a_1` and `2x_speed` unformatted.
 - [x] Fix live math auto-formatting so composite terms like `2ab/3cd` normalize into valid fractions and neighboring prose tokens like `2x`/`3x` do not falsely trigger each other.
 - [x] Hide the short-answer live preview pane whenever the `KaTeX` toggle is turned off.

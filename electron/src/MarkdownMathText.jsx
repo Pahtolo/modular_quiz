@@ -5,9 +5,14 @@ import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 
 import { openExternal } from './api';
-import { autoFormatMathMarkdown } from './markdownMathAutoFormat';
+import {
+  AUTO_INLINE_MATH_CLOSE,
+  AUTO_INLINE_MATH_OPEN,
+  autoFormatMathMarkdown,
+} from './markdownMathAutoFormat';
 
 const KATEX_DELIMITERS = [
+  { left: AUTO_INLINE_MATH_OPEN, right: AUTO_INLINE_MATH_CLOSE, display: false },
   { left: '$$', right: '$$', display: true },
   { left: '$', right: '$', display: false },
   { left: '\\(', right: '\\)', display: false },
