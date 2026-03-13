@@ -246,7 +246,7 @@ export default function ShortAnswerNotebook({
               onClick={() => onAutoFormatMathToggle?.(!autoFormatMathEnabled)}
               aria-pressed={autoFormatMathEnabled}
             >
-              Auto-format Math
+              KaTeX
             </button>
           </div>
         )}
