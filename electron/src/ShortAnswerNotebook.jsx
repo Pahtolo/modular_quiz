@@ -270,22 +270,24 @@ export default function ShortAnswerNotebook({
               disabled={disabled}
               placeholder="Write your answer"
             />
-            <div className="short-answer-notebook-live-preview">
-              <div className="short-answer-notebook-live-preview-label">Live Render</div>
-              {notebook.text.trim() ? (
-                <div className="short-answer-notebook-preview">
-                  <MarkdownMathText
-                    className="math-text markdown-math-content"
-                    text={notebook.text}
-                    autoFormatMath={autoFormatMathEnabled}
-                  />
-                </div>
-              ) : (
-                <div className="short-answer-notebook-preview short-answer-notebook-preview-empty">
-                  Math will render live as you type.
-                </div>
-              )}
-            </div>
+            {autoFormatMathEnabled ? (
+              <div className="short-answer-notebook-live-preview">
+                <div className="short-answer-notebook-live-preview-label">Live Render</div>
+                {notebook.text.trim() ? (
+                  <div className="short-answer-notebook-preview">
+                    <MarkdownMathText
+                      className="math-text markdown-math-content"
+                      text={notebook.text}
+                      autoFormatMath={autoFormatMathEnabled}
+                    />
+                  </div>
+                ) : (
+                  <div className="short-answer-notebook-preview short-answer-notebook-preview-empty">
+                    Math will render live as you type.
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
       </div>
