@@ -17,10 +17,12 @@ const MATH_RUN_PATTERN = new RegExp(
   String.raw`(?:sqrt\([^()\n]+\)|\b(?:${MATH_TERM_SOURCE})(?:(?:\s*(?:${MATH_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE}))+))`,
   'g',
 );
-// ReactMarkdown strips `\(...\)` escapes before KaTeX auto-render runs, so generated
-// math uses markdown-safe sentinels that survive through the markdown pipeline.
+// ReactMarkdown strips standard `\(...\)` / `\[...\]` escapes before KaTeX auto-render
+// runs, so rendered markdown math uses sentinels that survive the markdown pipeline.
 const AUTO_INLINE_MATH_OPEN = '@@KATEX_INLINE_OPEN@@';
 const AUTO_INLINE_MATH_CLOSE = '@@KATEX_INLINE_CLOSE@@';
+const AUTO_DISPLAY_MATH_OPEN = '@@KATEX_DISPLAY_OPEN@@';
+const AUTO_DISPLAY_MATH_CLOSE = '@@KATEX_DISPLAY_CLOSE@@';
 const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}$`);
 const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
 const EXPONENT_IMPLICIT_PRODUCT_CUE_PATTERN = /\b\d+(?:\.\d+)?[A-Za-z]+\^[A-Za-z0-9]+\b/;
@@ -109,6 +111,11 @@ function nextMathFence(text, startIndex) {
       nextFence = AUTO_INLINE_MATH_OPEN;
       break;
     }
+    if (text.startsWith(AUTO_DISPLAY_MATH_OPEN, index)) {
+      nextIndex = index;
+      nextFence = AUTO_DISPLAY_MATH_OPEN;
+      break;
+    }
 
     const current = text[index];
     const previous = text[index - 1];
@@ -132,6 +139,9 @@ function nextMathFence(text, startIndex) {
 function matchingMathFence(fence) {
   if (fence === AUTO_INLINE_MATH_OPEN) {
     return AUTO_INLINE_MATH_CLOSE;
+  }
+  if (fence === AUTO_DISPLAY_MATH_OPEN) {
+    return AUTO_DISPLAY_MATH_CLOSE;
   }
   if (fence === '\\(') {
     return '\\)';
@@ -389,6 +399,61 @@ function splitInlineCodeSegments(line) {
   return segments;
 }
 
+function replaceStandardMathDelimiters(text) {
+  const raw = String(text || '');
+  let cursor = 0;
+  let result = '';
+
+  while (cursor < raw.length) {
+    let start = -1;
+    let fence = '';
+
+    for (let index = cursor; index < raw.length - 1; index += 1) {
+      if (raw[index] === '\\' && (raw[index + 1] === '(' || raw[index + 1] === '[')) {
+        start = index;
+        fence = raw.slice(index, index + 2);
+        break;
+      }
+    }
+
+    if (start === -1) {
+      result += raw.slice(cursor);
+      break;
+    }
+
+    result += raw.slice(cursor, start);
+
+    const closingFence = fence === '\\(' ? '\\)' : '\\]';
+    const replacementOpen = fence === '\\(' ? AUTO_INLINE_MATH_OPEN : AUTO_DISPLAY_MATH_OPEN;
+    const replacementClose = fence === '\\(' ? AUTO_INLINE_MATH_CLOSE : AUTO_DISPLAY_MATH_CLOSE;
+    let end = start + fence.length;
+    let foundEnd = -1;
+
+    while (end < raw.length) {
+      const nextIndex = raw.indexOf(closingFence, end);
+      if (nextIndex === -1) {
+        break;
+      }
+      if (raw[nextIndex - 1] !== '\\') {
+        foundEnd = nextIndex;
+        break;
+      }
+      end = nextIndex + closingFence.length;
+    }
+
+    if (foundEnd === -1) {
+      result += raw.slice(start, start + fence.length);
+      cursor = start + fence.length;
+      continue;
+    }
+
+    result += `${replacementOpen}${raw.slice(start + fence.length, foundEnd)}${replacementClose}`;
+    cursor = foundEnd + closingFence.length;
+  }
+
+  return result;
+}
+
 function findNextProtectedMarkdownSegment(text, startIndex) {
   const patterns = [
     { pattern: MARKDOWN_LINK_PATTERN },
@@ -495,7 +560,41 @@ export function autoFormatMathMarkdown(text) {
   return result.join('\n');
 }
 
+export function prepareMarkdownMathForRendering(text) {
+  const lines = String(text || '').split('\n');
+  const result = [];
+  let activeFence = '';
+
+  for (const line of lines) {
+    const fenceMatch = line.match(FENCE_START_PATTERN);
+
+    if (activeFence) {
+      result.push(line);
+      if (fenceMatch && fenceMatch[2] === activeFence) {
+        activeFence = '';
+      }
+      continue;
+    }
+
+    if (fenceMatch) {
+      activeFence = fenceMatch[2];
+      result.push(line);
+      continue;
+    }
+
+    result.push(
+      splitInlineCodeSegments(line)
+        .map((segment) => (segment.type === 'text' ? replaceStandardMathDelimiters(segment.value) : segment.value))
+        .join(''),
+    );
+  }
+
+  return result.join('\n');
+}
+
 export {
+  AUTO_DISPLAY_MATH_CLOSE,
+  AUTO_DISPLAY_MATH_OPEN,
   AUTO_INLINE_MATH_CLOSE,
   AUTO_INLINE_MATH_OPEN,
   normalizeMathExpression,

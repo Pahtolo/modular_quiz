@@ -6,12 +6,16 @@ import remarkGfm from 'remark-gfm';
 
 import { openExternal } from './api';
 import {
+  AUTO_DISPLAY_MATH_CLOSE,
+  AUTO_DISPLAY_MATH_OPEN,
   AUTO_INLINE_MATH_CLOSE,
   AUTO_INLINE_MATH_OPEN,
   autoFormatMathMarkdown,
+  prepareMarkdownMathForRendering,
 } from './markdownMathAutoFormat';
 
 const KATEX_DELIMITERS = [
+  { left: AUTO_DISPLAY_MATH_OPEN, right: AUTO_DISPLAY_MATH_CLOSE, display: true },
   { left: AUTO_INLINE_MATH_OPEN, right: AUTO_INLINE_MATH_CLOSE, display: false },
   { left: '$$', right: '$$', display: true },
   { left: '$', right: '$', display: false },
@@ -21,7 +25,8 @@ const KATEX_DELIMITERS = [
 
 export default function MarkdownMathText({ className, text, autoFormatMath = false }) {
   const ref = useRef(null);
-  const renderedText = autoFormatMath ? autoFormatMathMarkdown(text) : String(text || '');
+  const sourceText = autoFormatMath ? autoFormatMathMarkdown(text) : String(text || '');
+  const renderedText = prepareMarkdownMathForRendering(sourceText);
 
   useEffect(() => {
     if (!ref.current) {

@@ -5,14 +5,21 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 
 import {
+  AUTO_DISPLAY_MATH_CLOSE,
+  AUTO_DISPLAY_MATH_OPEN,
   AUTO_INLINE_MATH_CLOSE,
   AUTO_INLINE_MATH_OPEN,
   autoFormatMathMarkdown,
   normalizeMathExpression,
+  prepareMarkdownMathForRendering,
 } from './markdownMathAutoFormat.js';
 
 function wrapAutoInlineMath(expression) {
   return `${AUTO_INLINE_MATH_OPEN}${expression}${AUTO_INLINE_MATH_CLOSE}`;
+}
+
+function wrapAutoDisplayMath(expression) {
+  return `${AUTO_DISPLAY_MATH_OPEN}${expression}${AUTO_DISPLAY_MATH_CLOSE}`;
 }
 
 test('normalizes common plain-text math syntax into TeX-friendly expressions', () => {
@@ -44,12 +51,45 @@ test('auto-formats standalone and inline plain-text math in markdown preview con
 });
 
 test('auto-generated math delimiters survive react-markdown rendering', () => {
-  const formatted = autoFormatMathMarkdown('Then compare x+1=2.');
+  const formatted = prepareMarkdownMathForRendering(autoFormatMathMarkdown('Then compare x+1=2.'));
   const rendered = renderToStaticMarkup(createElement(ReactMarkdown, null, formatted));
 
   assert.match(
     rendered,
     new RegExp(`${AUTO_INLINE_MATH_OPEN}x\\+1=2${AUTO_INLINE_MATH_CLOSE}`),
+  );
+});
+
+test('explicit standard TeX delimiters are rewritten to markdown-safe sentinels for rendering', () => {
+  const prepared = prepareMarkdownMathForRendering([
+    'Explicit \\(x+1\\) and \\[y=2\\] should survive.',
+    'Inline code `\\(literal\\)` stays literal.',
+    '```txt',
+    '\\[skip me\\]',
+    '```',
+  ].join('\n'));
+
+  assert.equal(
+    prepared,
+    [
+      `Explicit ${wrapAutoInlineMath('x+1')} and ${wrapAutoDisplayMath('y=2')} should survive.`,
+      'Inline code `\\(literal\\)` stays literal.',
+      '```txt',
+      '\\[skip me\\]',
+      '```',
+    ].join('\n'),
+  );
+});
+
+test('explicit standard TeX delimiters survive react-markdown rendering', () => {
+  const prepared = prepareMarkdownMathForRendering('Explicit \\(x+1\\) and \\[y=2\\] should survive.');
+  const rendered = renderToStaticMarkup(createElement(ReactMarkdown, null, prepared));
+
+  assert.match(
+    rendered,
+    new RegExp(
+      `Explicit ${AUTO_INLINE_MATH_OPEN}x\\+1${AUTO_INLINE_MATH_CLOSE} and ${AUTO_DISPLAY_MATH_OPEN}y=2${AUTO_DISPLAY_MATH_CLOSE} should survive\\.`,
+    ),
   );
 });
 

@@ -100,6 +100,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Preserve explicit `\(...\)` and `\[...\]` math through `react-markdown` by rewriting those delimiters to markdown-safe KaTeX sentinels before live rendering.
 - [x] Prevent lone `$` text such as currency and shell variables from corrupting later live KaTeX auto-formatting by wrapping generated math with markdown-safe sentinel delimiters and only skipping closed math spans.
 - [x] Keep auto-generated inline math visible through `react-markdown` by teaching the live KaTeX renderer to consume those markdown-safe sentinel delimiters.
 - [x] Keep decorated algebra like `2a_1 + 3b^2 = 0` in a single live KaTeX span while leaving decorated identifier prose such as `2a_1` and `2x_speed` unformatted.
