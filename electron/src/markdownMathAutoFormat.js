@@ -5,6 +5,7 @@ const SIMPLE_FRACTION_RUN_PATTERN = /\b(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+
 const MARKDOWN_LINK_PATTERN = /!?\[[^\]\n]+\]\([^) \n]+(?:\s+["'][^"\n]+["'])?\)/g;
 const URL_PATTERN = /https?:\/\/[^\s)]+/g;
 const ROOT_PATH_PATTERN = /(?:^|[\s(])(?:\/[A-Za-z0-9._-]+){2,}(?=$|[\s),.;:!?])/g;
+const RELATIVE_PATH_PATTERN = /(?:^|[\s(])(?:[A-Za-z][A-Za-z0-9._-]{1,}\/)+[A-Za-z][A-Za-z0-9._-]{1,}(?=$|[\s),.;:!?])/g;
 const COMMON_TEX_FUNCTIONS = ['sin', 'cos', 'tan', 'log', 'ln', 'max', 'min'];
 
 function isBoundaryCharacter(character) {
@@ -13,6 +14,10 @@ function isBoundaryCharacter(character) {
 
 function hasStrongMathCue(text) {
   return /(?:sqrt\(|\\sqrt\{|<=|>=|!=|=|<|>|\+|\*|\^)/.test(String(text || ''));
+}
+
+function looksLikeRelativePathToken(text) {
+  return /^(?:[A-Za-z][A-Za-z0-9._-]{1,}\/)+[A-Za-z][A-Za-z0-9._-]{1,}$/.test(String(text || '').trim());
 }
 
 function replaceBalancedFunctionCalls(expression, functionName, replacementBuilder) {
@@ -77,7 +82,7 @@ function normalizeMathExpression(expression) {
 
   for (const functionName of COMMON_TEX_FUNCTIONS) {
     const pattern = new RegExp(`\\b${functionName}\\s*\\(`, 'g');
-    normalized = normalized.replace(pattern, `\\\\${functionName}(`);
+    normalized = normalized.replace(pattern, () => `\\${functionName}(`);
   }
 
   normalized = normalized.replace(
@@ -100,6 +105,9 @@ function shouldWrapMathRun(run, source, offset) {
     return false;
   }
   if (/^\d+(?:\s*\/\s*\d+){2,}$/.test(trimmed)) {
+    return false;
+  }
+  if (looksLikeRelativePathToken(trimmed)) {
     return false;
   }
   if (SIMPLE_FRACTION_PATTERN.test(trimmed)) {
@@ -165,7 +173,7 @@ function splitInlineCodeSegments(line) {
 }
 
 function findNextProtectedMarkdownSegment(text, startIndex) {
-  const patterns = [MARKDOWN_LINK_PATTERN, URL_PATTERN, ROOT_PATH_PATTERN];
+  const patterns = [MARKDOWN_LINK_PATTERN, URL_PATTERN, ROOT_PATH_PATTERN, RELATIVE_PATH_PATTERN];
   let bestMatch = null;
 
   for (const pattern of patterns) {

@@ -11,6 +11,10 @@ test('normalizes common plain-text math syntax into TeX-friendly expressions', (
     normalizeMathExpression('sqrt(x^2 + 1) = 1/2'),
     '\\sqrt{x^2 + 1} = \\frac{1}{2}',
   );
+  assert.equal(
+    normalizeMathExpression('sin(x) + max(y, z)'),
+    '\\sin(x) + \\max(y, z)',
+  );
 });
 
 test('auto-formats standalone and inline plain-text math in markdown preview content', () => {
@@ -66,5 +70,14 @@ test('still formats a standalone fraction when the same line already has stronge
   assert.equal(
     autoFormatMathMarkdown('Then compare sqrt(x) with 1/2.'),
     'Then compare $\\sqrt{x}$ with $\\frac{1}{2}$.',
+  );
+});
+
+test('leaves relative paths untouched even on lines that also contain real math', () => {
+  const source = 'Refer to src/utils before solving x+1=2 and 1/2.';
+
+  assert.equal(
+    autoFormatMathMarkdown(source),
+    'Refer to src/utils before solving $x+1=2$ and $\\frac{1}{2}$.',
   );
 });
