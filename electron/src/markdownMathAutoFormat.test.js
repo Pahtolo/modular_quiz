@@ -120,6 +120,14 @@ test('does not treat unit-like tokens as implicit multiplication math', () => {
     autoFormatMathMarkdown('Model o4-mini is preferred over gpt-5x.'),
     'Model o4-mini is preferred over gpt-5x.',
   );
+  assert.equal(
+    autoFormatMathMarkdown('Speed increased by 2x and 3x.'),
+    'Speed increased by 2x and 3x.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('The app supports 2x playback and 3x zoom.'),
+    'The app supports 2x playback and 3x zoom.',
+  );
 });
 
 test('renders symbolic fractions while still protecting code-style relative paths', () => {
@@ -134,5 +142,9 @@ test('renders symbolic fractions while still protecting code-style relative path
   assert.equal(
     autoFormatMathMarkdown('Refer to src/utils before solving x+1=2 and 1/2.'),
     'Refer to src/utils before solving $x+1=2$ and $\\frac{1}{2}$.',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Solve 2ab/3cd = 1.'),
+    'Solve $\\frac{2ab}{3cd} = 1$.',
   );
 });

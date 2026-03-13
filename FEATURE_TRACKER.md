@@ -100,6 +100,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Fix live math auto-formatting so composite terms like `2ab/3cd` normalize into valid fractions and neighboring prose tokens like `2x`/`3x` do not falsely trigger each other.
 - [x] Hide the short-answer live preview pane whenever the `KaTeX` toggle is turned off.
 - [x] Rename the short-answer math auto-format toggle button to `KaTeX` for clearer quiz UI wording.
 - [x] Refine live math auto-formatting so prose tokens like `10x` and `gpt-5x` stay plain text while multi-letter algebra like `2ab` and `12xy` still renders in full equations.

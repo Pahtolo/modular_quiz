@@ -19,9 +19,16 @@ const MATH_RUN_PATTERN = new RegExp(
 );
 const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}$`);
 const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
+const DECORATED_IMPLICIT_PRODUCT_CUE_PATTERN = /\b\d+(?:\.\d+)?[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)\b/;
 const FENCE_START_PATTERN = /^(\s*)(`{3,}|~{3,})/;
 const SIMPLE_FRACTION_PATTERN = /^(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)$/;
 const SIMPLE_FRACTION_RUN_PATTERN = /\b(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(?:\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\b/g;
+const FRACTION_NORMALIZATION_TERM_SOURCE = [
+  String.raw`\([^()\n]+\)`,
+  EQUATION_IMPLICIT_PRODUCT_TERM_SOURCE,
+  String.raw`[A-Za-z][A-Za-z0-9_]*`,
+  String.raw`\d+(?:\.\d+)?`,
+].join('|');
 const MARKDOWN_LINK_PATTERN = /!?\[[^\]\n]+\]\([^) \n]+(?:\s+["'][^"\n]+["'])?\)/g;
 const URL_PATTERN = /https?:\/\/[^\s)]+/g;
 const ROOT_PATH_PATTERN = /(?:^|[\s(])(?:\/[A-Za-z0-9._-]+){2,}(?=$|[\s),.;:!?])/g;
@@ -55,8 +62,8 @@ function hasStrongMathCue(text) {
   return /(?:sqrt\(|\\sqrt\{|<=|>=|!=|=|<|>|\+|\*|\^)/.test(String(text || ''));
 }
 
-function hasImplicitProductCue(text) {
-  return new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`).test(String(text || ''));
+function hasDecoratedImplicitProductCue(text) {
+  return DECORATED_IMPLICIT_PRODUCT_CUE_PATTERN.test(String(text || ''));
 }
 
 function stripProtectedSegmentPrefix(text) {
@@ -154,7 +161,10 @@ function normalizeMathExpression(expression) {
   }
 
   normalized = normalized.replace(
-    /(^|[^\\])(\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)\s*\/\s*(\([^()\n]+\)|[A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?)/g,
+    new RegExp(
+      String.raw`(^|[^\\])(${FRACTION_NORMALIZATION_TERM_SOURCE})\s*\/\s*(${FRACTION_NORMALIZATION_TERM_SOURCE})`,
+      'g',
+    ),
     (match, prefix, numerator, denominator) => `${prefix}\\frac{${numerator}}{${denominator}}`,
   );
 
@@ -197,7 +207,7 @@ function shouldWrapMathRun(run, source, offset) {
     if (hasStrongMathCue(surroundingText)) {
       return true;
     }
-    if (hasImplicitProductCue(surroundingText)) {
+    if (hasDecoratedImplicitProductCue(surroundingText)) {
       return true;
     }
     return false;
