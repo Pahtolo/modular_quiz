@@ -69,6 +69,8 @@ export default function ShortAnswerNotebook({
   disabled = false,
   previewEnabled = false,
   onPreviewToggle,
+  autoFormatMathEnabled = false,
+  onAutoFormatMathToggle,
   themeMode = 'light',
 }) {
   const notebook = normalizeNotebookAnswer(value);
@@ -239,14 +241,24 @@ export default function ShortAnswerNotebook({
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            className={`secondary short-answer-notebook-preview-toggle ${previewEnabled ? 'active' : ''}`}
-            onClick={() => onPreviewToggle?.(!previewEnabled)}
-            aria-pressed={previewEnabled}
-          >
-            {previewEnabled ? 'Show Editor' : 'Show Preview'}
-          </button>
+          <div className="short-answer-notebook-markdown-actions">
+            <button
+              type="button"
+              className={`secondary short-answer-notebook-preview-toggle ${previewEnabled ? 'active' : ''}`}
+              onClick={() => onPreviewToggle?.(!previewEnabled)}
+              aria-pressed={previewEnabled}
+            >
+              {previewEnabled ? 'Show Editor' : 'Show Preview'}
+            </button>
+            <button
+              type="button"
+              className={`secondary short-answer-notebook-preview-toggle ${autoFormatMathEnabled ? 'active' : ''}`}
+              onClick={() => onAutoFormatMathToggle?.(!autoFormatMathEnabled)}
+              aria-pressed={autoFormatMathEnabled}
+            >
+              Auto-format Math
+            </button>
+          </div>
         )}
       </div>
 
@@ -262,7 +274,11 @@ export default function ShortAnswerNotebook({
         ) : previewEnabled ? (
           notebook.text.trim() ? (
             <div className="short-answer-notebook-preview">
-              <MarkdownMathText className="math-text markdown-math-content" text={notebook.text} />
+              <MarkdownMathText
+                className="math-text markdown-math-content"
+                text={notebook.text}
+                autoFormatMath={autoFormatMathEnabled}
+              />
             </div>
           ) : (
             <div className="short-answer-notebook-preview short-answer-notebook-preview-empty">

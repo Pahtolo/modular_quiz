@@ -851,6 +851,13 @@ textarea {
   padding: 0.38rem 0.72rem;
 }
 
+.short-answer-notebook-markdown-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
 .short-answer-notebook-mode-group button.active,
 .short-answer-notebook-preview-toggle.active {
   background: var(--primary-gradient);

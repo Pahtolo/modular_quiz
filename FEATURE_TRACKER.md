@@ -100,6 +100,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Add a short-answer markdown preview toggle that auto-formats plain-text math into KaTeX-style rendering without changing the saved answer text.
 - [x] Restrict Performance History `Sort by` control to `Sessions` view and hide it in `Chart` view.
 - [x] Replace the short-answer textarea with a notebook-style Markdown/Code editor with markdown preview, syntax-highlighted code mode, and fenced-code serialization for grading/history compatibility.
 - [x] Preserve leading indentation in stored short-answer answers and expected text so markdown code blocks survive history append/load round trips.

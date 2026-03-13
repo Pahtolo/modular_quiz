@@ -5,6 +5,7 @@ import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 
 import { openExternal } from './api';
+import { autoFormatMathMarkdown } from './markdownMathAutoFormat';
 
 const KATEX_DELIMITERS = [
   { left: '$$', right: '$$', display: true },
@@ -13,8 +14,9 @@ const KATEX_DELIMITERS = [
   { left: '\\[', right: '\\]', display: true },
 ];
 
-export default function MarkdownMathText({ className, text }) {
+export default function MarkdownMathText({ className, text, autoFormatMath = false }) {
   const ref = useRef(null);
+  const renderedText = autoFormatMath ? autoFormatMathMarkdown(text) : String(text || '');
 
   useEffect(() => {
     if (!ref.current) {
@@ -25,7 +27,7 @@ export default function MarkdownMathText({ className, text }) {
       throwOnError: false,
       ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option'],
     });
-  }, [text]);
+  }, [renderedText]);
 
   return (
     <div ref={ref} className={className}>
@@ -54,7 +56,7 @@ export default function MarkdownMathText({ className, text }) {
           },
         }}
       >
-        {String(text || '')}
+        {renderedText}
       </ReactMarkdown>
     </div>
   );
