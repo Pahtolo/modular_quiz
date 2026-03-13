@@ -27,9 +27,9 @@ test('auto-formats standalone and inline plain-text math in markdown preview con
   assert.equal(
     formatted,
     [
-      'Solve $x^2 + y^2 = z^2$ before continuing.',
-      'Then compare $\\sqrt{x}$ with $\\frac{1}{2}$.',
-      'The terms $5x$ and $5x^2$ both matter.',
+      'Solve \\(x^2 + y^2 = z^2\\) before continuing.',
+      'Then compare \\(\\sqrt{x}\\) with \\(\\frac{1}{2}\\).',
+      'The terms \\(5x\\) and \\(5x^2\\) both matter.',
     ].join('\n'),
   );
 });
@@ -71,7 +71,7 @@ test('does not auto-format hyphenated prose, ranges, or isolated chapter fractio
 test('still formats a standalone fraction when the same line already has stronger math context', () => {
   assert.equal(
     autoFormatMathMarkdown('Then compare sqrt(x) with 1/2.'),
-    'Then compare $\\sqrt{x}$ with $\\frac{1}{2}$.',
+    'Then compare \\(\\sqrt{x}\\) with \\(\\frac{1}{2}\\).',
   );
 });
 
@@ -80,34 +80,34 @@ test('leaves relative paths untouched even on lines that also contain real math'
 
   assert.equal(
     autoFormatMathMarkdown(source),
-    'Refer to src/utils before solving $x+1=2$ and $\\frac{1}{2}$.',
+    'Refer to src/utils before solving \\(x+1=2\\) and \\(\\frac{1}{2}\\).',
   );
 });
 
 test('renders implicit-multiplication expressions inside larger equations', () => {
   assert.equal(
     autoFormatMathMarkdown('Solve 5x + 3 = 8.'),
-    'Solve $5x + 3 = 8$.',
+    'Solve \\(5x + 3 = 8\\).',
   );
   assert.equal(
     autoFormatMathMarkdown('Solve 3a + 1 = 4.'),
-    'Solve $3a + 1 = 4$.',
+    'Solve \\(3a + 1 = 4\\).',
   );
   assert.equal(
     autoFormatMathMarkdown('Solve 2n + 1 = 5.'),
-    'Solve $2n + 1 = 5$.',
+    'Solve \\(2n + 1 = 5\\).',
   );
   assert.equal(
     autoFormatMathMarkdown('Solve 2ab + 1 = 0.'),
-    'Solve $2ab + 1 = 0$.',
+    'Solve \\(2ab + 1 = 0\\).',
   );
   assert.equal(
     autoFormatMathMarkdown('Solve 12xy - 4 = 0.'),
-    'Solve $12xy - 4 = 0$.',
+    'Solve \\(12xy - 4 = 0\\).',
   );
   assert.equal(
     autoFormatMathMarkdown('Solve 2a_1 + 3b^2 = 0.'),
-    'Solve $2a_1 + 3b^2 = 0$.',
+    'Solve \\(2a_1 + 3b^2 = 0\\).',
   );
 });
 
@@ -145,18 +145,33 @@ test('does not treat unit-like tokens as implicit multiplication math', () => {
 test('renders symbolic fractions while still protecting code-style relative paths', () => {
   assert.equal(
     autoFormatMathMarkdown('Solve ab/cd = 2.'),
-    'Solve $\\frac{ab}{cd} = 2$.',
+    'Solve \\(\\frac{ab}{cd} = 2\\).',
   );
   assert.equal(
     autoFormatMathMarkdown('Solve theta/phi = 1.'),
-    'Solve $\\frac{theta}{phi} = 1$.',
+    'Solve \\(\\frac{theta}{phi} = 1\\).',
   );
   assert.equal(
     autoFormatMathMarkdown('Refer to src/utils before solving x+1=2 and 1/2.'),
-    'Refer to src/utils before solving $x+1=2$ and $\\frac{1}{2}$.',
+    'Refer to src/utils before solving \\(x+1=2\\) and \\(\\frac{1}{2}\\).',
   );
   assert.equal(
     autoFormatMathMarkdown('Solve 2ab/3cd = 1.'),
-    'Solve $\\frac{2ab}{3cd} = 1$.',
+    'Solve \\(\\frac{2ab}{3cd} = 1\\).',
+  );
+});
+
+test('lone dollar text does not corrupt later auto-generated math spans', () => {
+  assert.equal(
+    autoFormatMathMarkdown('Price is $5 and equation x+1=2.'),
+    'Price is $5 and equation \\(x+1=2\\).',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('The shell var $PATH and equation x+1=2.'),
+    'The shell var $PATH and equation \\(x+1=2\\).',
+  );
+  assert.equal(
+    autoFormatMathMarkdown('Cost $5, solve 2a_1 + 3b^2 = 0.'),
+    'Cost $5, solve \\(2a_1 + 3b^2 = 0\\).',
   );
 });

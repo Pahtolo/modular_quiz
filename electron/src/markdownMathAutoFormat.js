@@ -17,6 +17,8 @@ const MATH_RUN_PATTERN = new RegExp(
   String.raw`(?:sqrt\([^()\n]+\)|\b(?:${MATH_TERM_SOURCE})(?:(?:\s*(?:${MATH_OPERATOR_SOURCE})\s*(?:${MATH_TERM_SOURCE}))+))`,
   'g',
 );
+const AUTO_INLINE_MATH_OPEN = String.raw`\(`;
+const AUTO_INLINE_MATH_CLOSE = String.raw`\)`;
 const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}$`);
 const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
 const EXPONENT_IMPLICIT_PRODUCT_CUE_PATTERN = /\b\d+(?:\.\d+)?[A-Za-z]+\^[A-Za-z0-9]+\b/;
@@ -95,19 +97,47 @@ function looksLikeRelativePathToken(text) {
   return COMMON_RELATIVE_PATH_HEADS.has(segments[0].toLowerCase());
 }
 
+function nextMathFence(text, startIndex) {
+  let nextIndex = -1;
+  let nextFence = '';
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const current = text[index];
+    const previous = text[index - 1];
+
+    if (current === '$' && previous !== '\\') {
+      nextIndex = index;
+      nextFence = text[index + 1] === '$' ? '$$' : '$';
+      break;
+    }
+
+    if (current === '\\' && (text[index + 1] === '(' || text[index + 1] === '[')) {
+      nextIndex = index;
+      nextFence = text.slice(index, index + 2);
+      break;
+    }
+  }
+
+  return { nextIndex, nextFence };
+}
+
+function matchingMathFence(fence) {
+  if (fence === '\\(') {
+    return '\\)';
+  }
+  if (fence === '\\[') {
+    return '\\]';
+  }
+  return fence;
+}
+
 function splitExistingMathSegments(text) {
   const segments = [];
   const raw = String(text || '');
   let cursor = 0;
 
   while (cursor < raw.length) {
-    let start = -1;
-    for (let index = cursor; index < raw.length; index += 1) {
-      if (raw[index] === '$' && raw[index - 1] !== '\\') {
-        start = index;
-        break;
-      }
-    }
+    const { nextIndex: start, nextFence: fence } = nextMathFence(raw, cursor);
 
     if (start === -1) {
       segments.push({ type: 'text', value: raw.slice(cursor), start: cursor });
@@ -118,33 +148,38 @@ function splitExistingMathSegments(text) {
       segments.push({ type: 'text', value: raw.slice(cursor, start), start: cursor });
     }
 
-    const fence = raw[start + 1] === '$' ? '$$' : '$';
+    const closingFence = matchingMathFence(fence);
     let end = start + fence.length;
     let foundEnd = -1;
 
     while (end < raw.length) {
-      const nextIndex = raw.indexOf(fence, end);
+      const nextIndex = raw.indexOf(closingFence, end);
       if (nextIndex === -1) {
         break;
       }
-      if (raw[nextIndex - 1] !== '\\') {
+      if (closingFence.startsWith('\\') || raw[nextIndex - 1] !== '\\') {
         foundEnd = nextIndex;
         break;
       }
-      end = nextIndex + fence.length;
+      end = nextIndex + closingFence.length;
     }
 
     if (foundEnd === -1) {
-      segments.push({ type: 'text', value: raw.slice(start), start });
-      break;
+      segments.push({
+        type: 'text',
+        value: raw.slice(start, start + fence.length),
+        start,
+      });
+      cursor = start + fence.length;
+      continue;
     }
 
     segments.push({
       type: 'math',
-      value: raw.slice(start, foundEnd + fence.length),
+      value: raw.slice(start, foundEnd + closingFence.length),
       start,
     });
-    cursor = foundEnd + fence.length;
+    cursor = foundEnd + closingFence.length;
   }
 
   return segments;
@@ -290,7 +325,7 @@ function wrapMatchedRuns(text, pattern) {
         if (!shouldWrapMathRun(run, text, globalOffset)) {
           return run;
         }
-        return `$${normalizeMathExpression(run)}$`;
+        return `${AUTO_INLINE_MATH_OPEN}${normalizeMathExpression(run)}${AUTO_INLINE_MATH_CLOSE}`;
       });
     })
     .join('');
