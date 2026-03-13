@@ -3006,7 +3006,6 @@ function App() {
     setQuestionLocked(false);
     setMcqAnswer('');
     setShortAnswerNotebook(createEmptyNotebookAnswer());
-    setShortAnswerMarkdownPreview(false);
     setFeedbackThreadsByQuestion({});
     setFeedbackDraftsByQuestion({});
     setFeedbackPendingByQuestion({});
@@ -3775,7 +3774,6 @@ function App() {
       setQuestionLocked(false);
       setMcqAnswer('');
       setShortAnswerNotebook(createEmptyNotebookAnswer());
-      setShortAnswerMarkdownPreview(false);
       setFeedbackThreadsByQuestion({});
       setFeedbackDraftsByQuestion({});
       setFeedbackPendingByQuestion({});
