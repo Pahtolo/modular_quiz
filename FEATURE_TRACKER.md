@@ -100,6 +100,7 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Add an in-app KaTeX reference dialog beside the notebook `KaTeX` toggle with common syntax examples, live previews, and a link to the full supported-function docs.
 - [x] Move internal markdown KaTeX sentinels off literal `@@KATEX...@@` strings so typed/model-emitted placeholder text stays plain text instead of rendering as math.
 - [x] Keep adjacent text selections from collapsing neighboring inline KaTeX widgets by treating markdown editor selection overlaps as half-open ranges.
 - [x] Render inline short-answer KaTeX as soon as the caret reaches the end of a math expression, without requiring a trailing space.
