@@ -100,6 +100,25 @@ Use this file as the single source of truth for feature work across features.
 
 ### Completed Tasks
 
+- [x] Move internal markdown KaTeX sentinels off literal `@@KATEX...@@` strings so typed/model-emitted placeholder text stays plain text instead of rendering as math.
+- [x] Keep adjacent text selections from collapsing neighboring inline KaTeX widgets by treating markdown editor selection overlaps as half-open ranges.
+- [x] Render inline short-answer KaTeX as soon as the caret reaches the end of a math expression, without requiring a trailing space.
+- [x] Render short-answer KaTeX inline inside the markdown notebook editor so math appears in the same editor box and the raw markdown source returns when the cursor enters an expression.
+- [x] Preserve explicit `\(...\)` and `\[...\]` math through `react-markdown` by rewriting those delimiters to markdown-safe KaTeX sentinels before live rendering.
+- [x] Prevent lone `$` text such as currency and shell variables from corrupting later live KaTeX auto-formatting by wrapping generated math with markdown-safe sentinel delimiters and only skipping closed math spans.
+- [x] Keep auto-generated inline math visible through `react-markdown` by teaching the live KaTeX renderer to consume those markdown-safe sentinel delimiters.
+- [x] Keep decorated algebra like `2a_1 + 3b^2 = 0` in a single live KaTeX span while leaving decorated identifier prose such as `2a_1` and `2x_speed` unformatted.
+- [x] Fix live math auto-formatting so composite terms like `2ab/3cd` normalize into valid fractions and neighboring prose tokens like `2x`/`3x` do not falsely trigger each other.
+- [x] Hide the short-answer live preview pane whenever the `KaTeX` toggle is turned off.
+- [x] Rename the short-answer math auto-format toggle button to `KaTeX` for clearer quiz UI wording.
+- [x] Refine live math auto-formatting so prose tokens like `10x` and `gpt-5x` stay plain text while multi-letter algebra like `2ab` and `12xy` still renders in full equations.
+- [x] Remove stale short-answer markdown preview reset calls so quiz start no longer throws `setShortAnswerMarkdownPreview is not defined` or leave the sidebar stuck on Performance History.
+- [x] Replace the markdown preview button with an always-on live render pane so markdown and KaTeX update while short-answer text is being typed.
+- [x] Broaden math auto-formatting to cover ordinary implicit variables like `3a` and symbolic fractions like `ab/cd` while still protecting actual relative paths such as `src/utils`.
+- [x] Extend short-answer math auto-formatting to render implicit multiplication terms like `5x` and `5x^2` while leaving unit-like prose such as `5g` alone.
+- [x] Fix markdown math auto-format named-function escaping and keep relative path references from being rewritten as fractions in preview.
+- [x] Tighten short-answer math auto-format heuristics so markdown links, API paths, hyphenated prose, numeric ranges, and isolated chapter-style fractions remain plain text in preview.
+- [x] Add a short-answer markdown preview toggle that auto-formats plain-text math into KaTeX-style rendering without changing the saved answer text.
 - [x] Restrict Performance History `Sort by` control to `Sessions` view and hide it in `Chart` view.
 - [x] Replace the short-answer textarea with a notebook-style Markdown/Code editor with markdown preview, syntax-highlighted code mode, and fenced-code serialization for grading/history compatibility.
 - [x] Preserve leading indentation in stored short-answer answers and expected text so markdown code blocks survive history append/load round trips.

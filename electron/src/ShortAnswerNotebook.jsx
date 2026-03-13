@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import CodeMirror from '@uiw/react-codemirror';
+import CodeMirror, { EditorView } from '@uiw/react-codemirror';
 import { historyField } from '@codemirror/commands';
 import { cpp } from '@codemirror/lang-cpp';
 import { css } from '@codemirror/lang-css';
@@ -14,7 +14,7 @@ import { python } from '@codemirror/lang-python';
 import { sql } from '@codemirror/lang-sql';
 import { csharp } from '@replit/codemirror-lang-csharp';
 
-import MarkdownMathText from './MarkdownMathText';
+import { markdownMathEditorExtension } from './markdownMathEditor';
 import {
   DEFAULT_NOTEBOOK_CODE_LANGUAGE,
   NOTEBOOK_CODE_LANGUAGE_OPTIONS,
@@ -30,9 +30,46 @@ const NOTEBOOK_EDITOR_BASIC_SETUP = {
   highlightActiveLine: true,
   highlightActiveLineGutter: true,
 };
+const NOTEBOOK_MARKDOWN_BASIC_SETUP = {
+  foldGutter: false,
+  lineNumbers: false,
+  highlightActiveLine: false,
+  highlightActiveLineGutter: false,
+};
 const NOTEBOOK_EDITOR_STATE_FIELDS = {
   history: historyField,
 };
+const NOTEBOOK_MARKDOWN_THEME = EditorView.theme({
+  '&': {
+    backgroundColor: 'transparent',
+    color: 'inherit',
+  },
+  '.cm-scroller': {
+    font: 'inherit',
+    minHeight: '220px',
+  },
+  '.cm-content': {
+    minHeight: '220px',
+    padding: '0.85rem 0.95rem',
+    caretColor: 'var(--ink)',
+    lineHeight: '1.55',
+  },
+  '.cm-line': {
+    padding: '0',
+  },
+  '.cm-cursor, .cm-dropCursor': {
+    borderLeftColor: 'var(--ink)',
+  },
+  '&.cm-focused': {
+    outline: 'none',
+  },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+    backgroundColor: 'color-mix(in srgb, var(--primary) 26%, transparent)',
+  },
+  '.cm-placeholder': {
+    color: 'var(--ink-soft)',
+  },
+});
 
 function codeLanguageExtension(language) {
   switch (language) {
@@ -67,8 +104,8 @@ export default function ShortAnswerNotebook({
   value,
   onChange,
   disabled = false,
-  previewEnabled = false,
-  onPreviewToggle,
+  autoFormatMathEnabled = false,
+  onAutoFormatMathToggle,
   themeMode = 'light',
 }) {
   const notebook = normalizeNotebookAnswer(value);
@@ -84,6 +121,12 @@ export default function ShortAnswerNotebook({
       ...vscodeCodeThemeExtension(themeMode),
     ],
     [notebook.language, themeMode],
+  );
+  const markdownExtensions = useMemo(
+    () => (autoFormatMathEnabled
+      ? [NOTEBOOK_MARKDOWN_THEME, ...markdownMathEditorExtension]
+      : [NOTEBOOK_MARKDOWN_THEME, EditorView.lineWrapping]),
+    [autoFormatMathEnabled],
   );
 
   useEffect(() => {
@@ -178,6 +221,7 @@ export default function ShortAnswerNotebook({
   function renderCodeEditor(height) {
     return (
       <CodeMirror
+        className="short-answer-notebook-code-editor"
         value={notebook.text}
         height={height}
         editable={!disabled}
@@ -199,6 +243,20 @@ export default function ShortAnswerNotebook({
         }}
         onUpdate={(viewUpdate) => captureCodeEditorState(viewUpdate.view)}
         placeholder="Write your answer as code"
+      />
+    );
+  }
+
+  function renderMarkdownEditor() {
+    return (
+      <CodeMirror
+        className="short-answer-notebook-markdown-editor"
+        value={notebook.text}
+        editable={!disabled}
+        basicSetup={NOTEBOOK_MARKDOWN_BASIC_SETUP}
+        extensions={markdownExtensions}
+        onChange={(nextValue) => updateNotebook({ text: nextValue })}
+        placeholder="Write your answer"
       />
     );
   }
@@ -239,14 +297,16 @@ export default function ShortAnswerNotebook({
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            className={`secondary short-answer-notebook-preview-toggle ${previewEnabled ? 'active' : ''}`}
-            onClick={() => onPreviewToggle?.(!previewEnabled)}
-            aria-pressed={previewEnabled}
-          >
-            {previewEnabled ? 'Show Editor' : 'Show Preview'}
-          </button>
+          <div className="short-answer-notebook-markdown-actions">
+            <button
+              type="button"
+              className={`secondary short-answer-notebook-preview-toggle ${autoFormatMathEnabled ? 'active' : ''}`}
+              onClick={() => onAutoFormatMathToggle?.(!autoFormatMathEnabled)}
+              aria-pressed={autoFormatMathEnabled}
+            >
+              KaTeX
+            </button>
+          </div>
         )}
       </div>
 
@@ -259,24 +319,10 @@ export default function ShortAnswerNotebook({
           ) : (
             renderCodeEditor('220px')
           )
-        ) : previewEnabled ? (
-          notebook.text.trim() ? (
-            <div className="short-answer-notebook-preview">
-              <MarkdownMathText className="math-text markdown-math-content" text={notebook.text} />
-            </div>
-          ) : (
-            <div className="short-answer-notebook-preview short-answer-notebook-preview-empty">
-              Nothing to preview yet.
-            </div>
-          )
         ) : (
-          <textarea
-            className="short-answer-notebook-textarea"
-            value={notebook.text}
-            onChange={(event) => updateNotebook({ text: event.target.value })}
-            disabled={disabled}
-            placeholder="Write your answer"
-          />
+          <div className="short-answer-notebook-markdown-live">
+            {renderMarkdownEditor()}
+          </div>
         )}
       </div>
 

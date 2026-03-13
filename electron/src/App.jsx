@@ -25,6 +25,7 @@ import {
 
 const TABS = ['quiz', 'generate', 'manager', 'settings'];
 const THEME_STORAGE_KEY = 'modular-quiz-theme';
+const SHORT_ANSWER_AUTO_MATH_STORAGE_KEY = 'modular-quiz-short-answer-auto-math';
 const QUIZ_EXIT_CONFIRM_MESSAGE = 'Are you sure you want to exit the quiz? Your progress will not be saved.';
 const MAX_INJECTED_CONTEXT_CHARS = 12000;
 const DEFAULT_QUIZ_TIMER_DURATION_SECONDS = 15 * 60;
@@ -1272,6 +1273,13 @@ function App() {
     return 'light';
   });
   const [activeTab, setActiveTab] = useState('quiz');
+  const [shortAnswerAutoFormatMath, setShortAnswerAutoFormatMath] = useState(() => {
+    try {
+      return window.localStorage.getItem(SHORT_ANSWER_AUTO_MATH_STORAGE_KEY) === 'true';
+    } catch (_err) {
+      return false;
+    }
+  });
   const [startupError, setStartupError] = useState('');
 
   const [settings, setSettings] = useState(null);
@@ -1334,7 +1342,6 @@ function App() {
   const [questionLocked, setQuestionLocked] = useState(false);
   const [mcqAnswer, setMcqAnswer] = useState('');
   const [shortAnswerNotebook, setShortAnswerNotebook] = useState(() => createEmptyNotebookAnswer());
-  const [shortAnswerMarkdownPreview, setShortAnswerMarkdownPreview] = useState(false);
   const [feedbackThreadsByQuestion, setFeedbackThreadsByQuestion] = useState({});
   const [feedbackDraftsByQuestion, setFeedbackDraftsByQuestion] = useState({});
   const [feedbackPendingByQuestion, setFeedbackPendingByQuestion] = useState({});
@@ -2437,14 +2444,12 @@ function App() {
       setQuestionLocked(true);
       setMcqAnswer(state.mcq_answer || '');
       setShortAnswerNotebook(hydrateNotebookAnswer(state.short_answer || ''));
-      setShortAnswerMarkdownPreview(false);
       return;
     }
     setQuestionResult(null);
     setQuestionLocked(false);
     setMcqAnswer('');
     setShortAnswerNotebook(createEmptyNotebookAnswer());
-    setShortAnswerMarkdownPreview(false);
   }, [quiz, quizIndex, questionStates]);
 
   useEffect(() => {
@@ -2468,6 +2473,17 @@ function App() {
       // Ignore storage write failures.
     }
   }, [themeMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SHORT_ANSWER_AUTO_MATH_STORAGE_KEY,
+        shortAnswerAutoFormatMath ? 'true' : 'false',
+      );
+    } catch (_err) {
+      // Ignore storage failures and keep the in-memory toggle state.
+    }
+  }, [shortAnswerAutoFormatMath]);
 
   useEffect(() => {
     if (!quiz || quizStartedAt <= 0 || quizClockPaused || quizCompleted || quizClockMode === 'off') {
@@ -2990,7 +3006,6 @@ function App() {
     setQuestionLocked(false);
     setMcqAnswer('');
     setShortAnswerNotebook(createEmptyNotebookAnswer());
-    setShortAnswerMarkdownPreview(false);
     setFeedbackThreadsByQuestion({});
     setFeedbackDraftsByQuestion({});
     setFeedbackPendingByQuestion({});
@@ -3759,7 +3774,6 @@ function App() {
       setQuestionLocked(false);
       setMcqAnswer('');
       setShortAnswerNotebook(createEmptyNotebookAnswer());
-      setShortAnswerMarkdownPreview(false);
       setFeedbackThreadsByQuestion({});
       setFeedbackDraftsByQuestion({});
       setFeedbackPendingByQuestion({});
@@ -5435,8 +5449,8 @@ function App() {
                           value={shortAnswerNotebook}
                           onChange={setShortAnswerNotebook}
                           disabled={questionLocked || quizIsPaused}
-                          previewEnabled={shortAnswerMarkdownPreview}
-                          onPreviewToggle={setShortAnswerMarkdownPreview}
+                          autoFormatMathEnabled={shortAnswerAutoFormatMath}
+                          onAutoFormatMathToggle={setShortAnswerAutoFormatMath}
                           themeMode={themeMode}
                         />
 
