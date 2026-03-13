@@ -23,6 +23,8 @@ function wrapAutoDisplayMath(expression) {
   return `${AUTO_DISPLAY_MATH_OPEN}${expression}${AUTO_DISPLAY_MATH_CLOSE}`;
 }
 
+const LEGACY_LITERAL_INLINE_SENTINEL = '@@KATEX_INLINE_OPEN@@fake@@KATEX_INLINE_CLOSE@@';
+
 test('normalizes common plain-text math syntax into TeX-friendly expressions', () => {
   assert.equal(
     normalizeMathExpression('sqrt(x^2 + 1) = 1/2'),
@@ -296,4 +298,11 @@ test('ignores inline code and fenced code when collecting inline editor math ran
       display: false,
     },
   ]);
+});
+
+test('treats literal legacy KaTeX sentinel text as plain text instead of math', () => {
+  const source = `Text with ${LEGACY_LITERAL_INLINE_SENTINEL} token.`;
+
+  assert.equal(autoFormatMathMarkdown(source), source);
+  assert.deepEqual(collectMarkdownMathRanges(source, { autoFormatMath: true }), []);
 });

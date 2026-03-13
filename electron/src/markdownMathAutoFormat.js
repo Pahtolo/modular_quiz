@@ -18,11 +18,12 @@ const MATH_RUN_PATTERN = new RegExp(
   'g',
 );
 // ReactMarkdown strips standard `\(...\)` / `\[...\]` escapes before KaTeX auto-render
-// runs, so rendered markdown math uses sentinels that survive the markdown pipeline.
-const AUTO_INLINE_MATH_OPEN = '@@KATEX_INLINE_OPEN@@';
-const AUTO_INLINE_MATH_CLOSE = '@@KATEX_INLINE_CLOSE@@';
-const AUTO_DISPLAY_MATH_OPEN = '@@KATEX_DISPLAY_OPEN@@';
-const AUTO_DISPLAY_MATH_CLOSE = '@@KATEX_DISPLAY_CLOSE@@';
+// runs, so rendered markdown math uses internal sentinels that survive the markdown
+// pipeline without colliding with human-typable placeholder text.
+const AUTO_INLINE_MATH_OPEN = '\uE000KATEX_INLINE_OPEN\uE001';
+const AUTO_INLINE_MATH_CLOSE = '\uE000KATEX_INLINE_CLOSE\uE001';
+const AUTO_DISPLAY_MATH_OPEN = '\uE000KATEX_DISPLAY_OPEN\uE001';
+const AUTO_DISPLAY_MATH_CLOSE = '\uE000KATEX_DISPLAY_CLOSE\uE001';
 const IMPLICIT_PRODUCT_PATTERN = new RegExp(String.raw`^${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}$`);
 const IMPLICIT_PRODUCT_RUN_PATTERN = new RegExp(String.raw`\b${STANDALONE_IMPLICIT_PRODUCT_TERM_SOURCE}\b`, 'g');
 const EXPONENT_IMPLICIT_PRODUCT_CUE_PATTERN = /\b\d+(?:\.\d+)?[A-Za-z]+\^[A-Za-z0-9]+\b/;
