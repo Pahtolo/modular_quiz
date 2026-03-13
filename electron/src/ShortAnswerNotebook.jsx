@@ -14,6 +14,7 @@ import { python } from '@codemirror/lang-python';
 import { sql } from '@codemirror/lang-sql';
 import { csharp } from '@replit/codemirror-lang-csharp';
 
+import KaTeXReferenceDialog from './KaTeXReferenceDialog';
 import { markdownMathEditorExtension } from './markdownMathEditor';
 import {
   DEFAULT_NOTEBOOK_CODE_LANGUAGE,
@@ -110,6 +111,7 @@ export default function ShortAnswerNotebook({
 }) {
   const notebook = normalizeNotebookAnswer(value);
   const [isCodeFullscreen, setIsCodeFullscreen] = useState(false);
+  const [isKaTeXReferenceOpen, setIsKaTeXReferenceOpen] = useState(false);
   const codeEditorViewRef = useRef(null);
   const codeEditorStateRef = useRef(null);
   const shouldRestoreCodeEditorStateRef = useRef(false);
@@ -131,6 +133,7 @@ export default function ShortAnswerNotebook({
 
   useEffect(() => {
     if (notebook.mode === NOTEBOOK_MODE_CODE) {
+      setIsKaTeXReferenceOpen(false);
       return;
     }
     setIsCodeFullscreen(false);
@@ -306,6 +309,13 @@ export default function ShortAnswerNotebook({
             >
               KaTeX
             </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setIsKaTeXReferenceOpen(true)}
+            >
+              Reference
+            </button>
           </div>
         )}
       </div>
@@ -351,6 +361,11 @@ export default function ShortAnswerNotebook({
           document.body,
         )
         : null}
+
+      <KaTeXReferenceDialog
+        open={isKaTeXReferenceOpen}
+        onClose={() => setIsKaTeXReferenceOpen(false)}
+      />
     </div>
   );
 }
