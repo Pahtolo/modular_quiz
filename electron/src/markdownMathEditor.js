@@ -7,7 +7,7 @@ import {
   WidgetType,
 } from '@uiw/react-codemirror';
 
-import { collectMarkdownMathRanges } from './markdownMathAutoFormat';
+import { collectMarkdownMathRanges } from './markdownMathAutoFormat.js';
 
 class MarkdownMathWidget extends WidgetType {
   constructor(expression, display) {
@@ -38,10 +38,10 @@ class MarkdownMathWidget extends WidgetType {
   }
 }
 
-function selectionTouchesRange(selection, from, to) {
+export function selectionTouchesMathRange(selection, from, to) {
   return selection.ranges.some((range) => {
     if (range.empty) {
-      return range.head >= from && range.head <= to;
+      return range.head >= from && range.head < to;
     }
     return range.from <= to && range.to >= from;
   });
@@ -52,7 +52,7 @@ function buildMathDecorations(view) {
   const ranges = collectMarkdownMathRanges(view.state.doc.toString(), { autoFormatMath: true });
 
   for (const range of ranges) {
-    if (selectionTouchesRange(view.state.selection, range.from, range.to)) {
+    if (selectionTouchesMathRange(view.state.selection, range.from, range.to)) {
       continue;
     }
 
