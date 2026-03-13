@@ -369,12 +369,12 @@ function splitInlineCodeSegments(line) {
   while (cursor < line.length) {
     const start = line.indexOf('`', cursor);
     if (start === -1) {
-      segments.push({ type: 'text', value: line.slice(cursor) });
+      segments.push({ type: 'text', value: line.slice(cursor), start: cursor });
       break;
     }
 
     if (start > cursor) {
-      segments.push({ type: 'text', value: line.slice(cursor, start) });
+      segments.push({ type: 'text', value: line.slice(cursor, start), start: cursor });
     }
 
     let tickLength = 1;
@@ -392,6 +392,7 @@ function splitInlineCodeSegments(line) {
     segments.push({
       type: 'code',
       value: line.slice(start, end + tickLength),
+      start,
     });
     cursor = end + tickLength;
   }
@@ -490,7 +491,7 @@ function splitProtectedMarkdownSegments(text) {
   while (cursor < text.length) {
     const nextMatch = findNextProtectedMarkdownSegment(text, cursor);
     if (!nextMatch) {
-      segments.push({ type: 'text', value: text.slice(cursor) });
+      segments.push({ type: 'text', value: text.slice(cursor), start: cursor });
       break;
     }
 
@@ -500,19 +501,231 @@ function splitProtectedMarkdownSegments(text) {
     if ((matchValue[0] === ' ' || matchValue[0] === '(')) {
       const prefix = matchValue[0];
       if (matchStart >= cursor) {
-        segments.push({ type: 'text', value: text.slice(cursor, matchStart + 1) });
+        segments.push({ type: 'text', value: text.slice(cursor, matchStart + 1), start: cursor });
       }
       matchStart += 1;
       matchValue = matchValue.slice(1);
     } else if (matchStart > cursor) {
-      segments.push({ type: 'text', value: text.slice(cursor, matchStart) });
+      segments.push({ type: 'text', value: text.slice(cursor, matchStart), start: cursor });
     }
 
-    segments.push({ type: 'protected', value: matchValue });
+    segments.push({ type: 'protected', value: matchValue, start: matchStart });
     cursor = nextMatch.index + nextMatch.value.length;
   }
 
   return segments;
+}
+
+function maskInlineCodeSegments(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => splitInlineCodeSegments(line)
+      .map((segment) => (segment.type === 'code' ? ' '.repeat(segment.value.length) : segment.value))
+      .join(''))
+    .join('\n');
+}
+
+function collectWrappedMathSegments(text, source, offsetBase) {
+  let segments = [{ type: 'text', value: text, start: 0 }];
+
+  for (const pattern of [MATH_RUN_PATTERN, SIMPLE_FRACTION_RUN_PATTERN, IMPLICIT_PRODUCT_RUN_PATTERN]) {
+    segments = segments.flatMap((segment) => {
+      if (segment.type !== 'text') {
+        return [segment];
+      }
+
+      pattern.lastIndex = 0;
+      let cursor = 0;
+      let match = pattern.exec(segment.value);
+      const nextSegments = [];
+
+      while (match) {
+        const run = match[0];
+        const matchStart = match.index;
+        const globalOffset = offsetBase + segment.start + matchStart;
+
+        if (shouldWrapMathRun(run, source, globalOffset)) {
+          if (matchStart > cursor) {
+            nextSegments.push({
+              type: 'text',
+              value: segment.value.slice(cursor, matchStart),
+              start: segment.start + cursor,
+            });
+          }
+          nextSegments.push({
+            type: 'math',
+            raw: run,
+            expression: normalizeMathExpression(run),
+            display: false,
+            start: segment.start + matchStart,
+          });
+          cursor = matchStart + run.length;
+        }
+
+        match = pattern.exec(segment.value);
+      }
+
+      if (!nextSegments.length) {
+        return [segment];
+      }
+
+      if (cursor < segment.value.length) {
+        nextSegments.push({
+          type: 'text',
+          value: segment.value.slice(cursor),
+          start: segment.start + cursor,
+        });
+      }
+
+      return nextSegments;
+    });
+  }
+
+  return segments.filter((segment) => segment.type === 'math');
+}
+
+function parseMathSegment(segmentValue) {
+  const value = String(segmentValue || '');
+  const patterns = [
+    { open: AUTO_DISPLAY_MATH_OPEN, close: AUTO_DISPLAY_MATH_CLOSE, display: true },
+    { open: AUTO_INLINE_MATH_OPEN, close: AUTO_INLINE_MATH_CLOSE, display: false },
+    { open: '$$', close: '$$', display: true },
+    { open: '$', close: '$', display: false },
+    { open: '\\[', close: '\\]', display: true },
+    { open: '\\(', close: '\\)', display: false },
+  ];
+
+  for (const pattern of patterns) {
+    if (value.startsWith(pattern.open) && value.endsWith(pattern.close)) {
+      return {
+        expression: value.slice(pattern.open.length, value.length - pattern.close.length),
+        display: pattern.display,
+      };
+    }
+  }
+
+  return {
+    expression: value,
+    display: false,
+  };
+}
+
+function collectAutoFormatMathRanges(text, baseStart) {
+  const ranges = [];
+  const lines = String(text || '').split('\n');
+  let offset = 0;
+
+  for (const line of lines) {
+    for (const segment of splitInlineCodeSegments(line)) {
+      if (segment.type !== 'text') {
+        continue;
+      }
+
+      for (const subsegment of splitProtectedMarkdownSegments(segment.value)) {
+        if (subsegment.type !== 'text') {
+          continue;
+        }
+
+        const offsetBase = segment.start + subsegment.start;
+        const matches = collectWrappedMathSegments(subsegment.value, line, offsetBase);
+        for (const match of matches) {
+          ranges.push({
+            from: baseStart + offset + offsetBase + match.start,
+            to: baseStart + offset + offsetBase + match.start + match.raw.length,
+            expression: match.expression,
+            display: false,
+          });
+        }
+      }
+    }
+
+    offset += line.length + 1;
+  }
+
+  return ranges;
+}
+
+function collectMarkdownTextBlocks(text) {
+  const raw = String(text || '');
+  const blocks = [];
+  const lines = raw.split('\n');
+  let activeFence = '';
+  let blockStart = null;
+  let offset = 0;
+
+  lines.forEach((line, index) => {
+    const fenceMatch = line.match(FENCE_START_PATTERN);
+    const nextOffset = offset + line.length + (index < lines.length - 1 ? 1 : 0);
+
+    if (activeFence) {
+      if (fenceMatch && fenceMatch[2] === activeFence) {
+        activeFence = '';
+      }
+      offset = nextOffset;
+      return;
+    }
+
+    if (fenceMatch) {
+      if (blockStart !== null && blockStart < offset) {
+        blocks.push({
+          start: blockStart,
+          value: raw.slice(blockStart, offset),
+        });
+      }
+      blockStart = null;
+      activeFence = fenceMatch[2];
+      offset = nextOffset;
+      return;
+    }
+
+    if (blockStart === null) {
+      blockStart = offset;
+    }
+
+    offset = nextOffset;
+  });
+
+  if (blockStart !== null && blockStart < raw.length) {
+    blocks.push({
+      start: blockStart,
+      value: raw.slice(blockStart),
+    });
+  }
+
+  return blocks;
+}
+
+export function collectMarkdownMathRanges(text, options = {}) {
+  const { autoFormatMath = false } = options;
+  const ranges = [];
+
+  for (const block of collectMarkdownTextBlocks(text)) {
+    const maskedValue = maskInlineCodeSegments(block.value);
+    const segments = splitExistingMathSegments(maskedValue);
+
+    for (const segment of segments) {
+      if (segment.type === 'math') {
+        const originalValue = block.value.slice(segment.start, segment.start + segment.value.length);
+        const parsed = parseMathSegment(originalValue);
+        ranges.push({
+          from: block.start + segment.start,
+          to: block.start + segment.start + segment.value.length,
+          expression: parsed.expression,
+          display: parsed.display,
+        });
+        continue;
+      }
+
+      if (!autoFormatMath) {
+        continue;
+      }
+
+      const originalValue = block.value.slice(segment.start, segment.start + segment.value.length);
+      ranges.push(...collectAutoFormatMathRanges(originalValue, block.start + segment.start));
+    }
+  }
+
+  return ranges.sort((left, right) => left.from - right.from || left.to - right.to);
 }
 
 function autoFormatMarkdownLine(line) {

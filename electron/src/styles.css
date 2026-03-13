@@ -888,8 +888,7 @@ textarea {
 }
 
 .short-answer-notebook-markdown-live {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  min-height: 220px;
 }
 
 .short-answer-notebook-fullscreen-placeholder {
@@ -901,41 +900,37 @@ textarea {
   color: var(--ink-soft);
 }
 
-.short-answer-notebook-textarea {
-  min-height: 220px;
-  border: 0;
-  border-radius: 0;
-  resize: vertical;
+.short-answer-notebook-markdown-editor .cm-editor,
+.short-answer-notebook-markdown-editor .cm-scroller,
+.short-answer-notebook-markdown-editor .cm-content {
+  background: transparent;
 }
 
-.short-answer-notebook-textarea:focus {
-  outline: none;
+.short-answer-notebook-markdown-editor .cm-content {
+  font-size: 0.98rem;
 }
 
-.short-answer-notebook-live-preview {
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 76%, transparent);
+.short-answer-notebook-markdown-editor .cm-line {
+  word-break: break-word;
 }
 
-.short-answer-notebook-live-preview-label {
-  padding: 0.7rem 0.95rem 0;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
+.short-answer-notebook-markdown-editor .cm-markdown-math-widget {
+  vertical-align: middle;
 }
 
-.short-answer-notebook-preview {
-  min-height: 220px;
-  padding: 0.85rem 0.95rem;
-  overflow: auto;
-}
-
-.short-answer-notebook-preview-empty {
-  display: flex;
+.short-answer-notebook-markdown-editor .cm-markdown-math-widget.inline {
+  display: inline-flex;
   align-items: center;
-  color: var(--ink-soft);
+  max-width: 100%;
+}
+
+.short-answer-notebook-markdown-editor .cm-markdown-math-widget.display {
+  display: block;
+  padding: 0.25rem 0;
+}
+
+.short-answer-notebook-markdown-editor .cm-markdown-math-widget .katex-display {
+  margin: 0.35rem 0;
 }
 
 .short-answer-notebook .cm-editor {
@@ -943,8 +938,8 @@ textarea {
   font-size: 0.95rem;
 }
 
-.short-answer-notebook .cm-editor,
-.short-answer-notebook .cm-gutters {
+.short-answer-notebook-code-editor .cm-editor,
+.short-answer-notebook-code-editor .cm-gutters {
   background: var(--code-surface);
 }
 
@@ -952,20 +947,20 @@ textarea {
   outline: none;
 }
 
-.short-answer-notebook .cm-gutters {
+.short-answer-notebook-code-editor .cm-gutters {
   background: var(--code-gutter-bg);
   border-right: 1px solid var(--code-border);
   color: var(--ink-soft);
 }
 
-.short-answer-notebook .cm-content,
-.short-answer-notebook .cm-scroller {
+.short-answer-notebook-code-editor .cm-content,
+.short-answer-notebook-code-editor .cm-scroller {
   min-height: 220px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.short-answer-notebook .cm-activeLine,
-.short-answer-notebook .cm-activeLineGutter {
+.short-answer-notebook-code-editor .cm-activeLine,
+.short-answer-notebook-code-editor .cm-activeLineGutter {
   background: var(--code-active-line);
 }
 

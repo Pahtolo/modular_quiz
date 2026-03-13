@@ -10,6 +10,7 @@ import {
   AUTO_INLINE_MATH_CLOSE,
   AUTO_INLINE_MATH_OPEN,
   autoFormatMathMarkdown,
+  collectMarkdownMathRanges,
   normalizeMathExpression,
   prepareMarkdownMathForRendering,
 } from './markdownMathAutoFormat.js';
@@ -233,4 +234,66 @@ test('lone dollar text does not corrupt later auto-generated math spans', () => 
     autoFormatMathMarkdown('Cost $5, solve 2a_1 + 3b^2 = 0.'),
     `Cost $5, solve ${wrapAutoInlineMath('2a_1 + 3b^2 = 0')}.`,
   );
+});
+
+test('collects explicit and auto-formatted math ranges for inline editor rendering', () => {
+  const source = [
+    'Solve $x^2$ before checking y^2 = z^2.',
+    'Then show $$',
+    'a^2 + b^2 = c^2',
+    '$$ in display mode.',
+  ].join('\n');
+
+  const ranges = collectMarkdownMathRanges(source, { autoFormatMath: true }).map((range) => ({
+    raw: source.slice(range.from, range.to),
+    expression: range.expression,
+    display: range.display,
+  }));
+
+  assert.deepEqual(ranges, [
+    {
+      raw: '$x^2$',
+      expression: 'x^2',
+      display: false,
+    },
+    {
+      raw: 'y^2 = z^2',
+      expression: 'y^2 = z^2',
+      display: false,
+    },
+    {
+      raw: '$$\na^2 + b^2 = c^2\n$$',
+      expression: '\na^2 + b^2 = c^2\n',
+      display: true,
+    },
+  ]);
+});
+
+test('ignores inline code and fenced code when collecting inline editor math ranges', () => {
+  const source = [
+    'Keep `$x^2$` literal but render x^2 = 4.',
+    '```python',
+    'value = x^2 + 1',
+    '```',
+    'Render \\(y+1\\) after the code fence.',
+  ].join('\n');
+
+  const ranges = collectMarkdownMathRanges(source, { autoFormatMath: true }).map((range) => ({
+    raw: source.slice(range.from, range.to),
+    expression: range.expression,
+    display: range.display,
+  }));
+
+  assert.deepEqual(ranges, [
+    {
+      raw: 'x^2 = 4',
+      expression: 'x^2 = 4',
+      display: false,
+    },
+    {
+      raw: '\\(y+1\\)',
+      expression: 'y+1',
+      display: false,
+    },
+  ]);
 });
